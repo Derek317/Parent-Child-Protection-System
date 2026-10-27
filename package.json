@@ -1,0 +1,14 @@
+{
+  "name": "safeguard-family",
+  "version": "1.0.0",
+  "description": "SafeGuard Family P2P Child Protection & Parental Mode Auditor",
+  "scripts": {
+    "build": "echo 'Static bundle ready in www/'"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/ios": "^6.0.0"
+  }
+}
