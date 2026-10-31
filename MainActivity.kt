@@ -17,17 +17,17 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Parcelable
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.text.InputType
-import android.view.Gravity
-import android.view.View
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
@@ -51,9 +51,19 @@ import kotlin.concurrent.thread
 object GuardEngine {
     const val ACTION_UI_REFRESH = "com.example.igguard.ACTION_UI_REFRESH"
     private const val PREFS_NAME = "ig_guard_prefs"
-    private const val MAX_SEEN = 500
-    private val seenKeys = LinkedHashSet<String>()
+
+    // Time-windowed deduplication (20 seconds) so repeated messages ("Hi" or "Sent a photo") are NOT permanently dropped
+    private const val DEDUPE_WINDOW_MS = 20_000L
+    private val recentAlerts = LinkedHashMap<String, Long>()
     private val pollLock = Any()
+
+    // Live Checkpoint States for on-screen debugging
+    @Volatile var cpNotifConnected: Boolean = false
+    @Volatile var cpLastNotifTime: String = "Never"
+    @Volatile var cpAccConnected: Boolean = false
+    @Volatile var cpLastAccTime: String = "Never"
+    @Volatile var cpLastHttpStatus: String = "No request yet"
+    @Volatile var cpParentStreamState: String = "Idle"
 
     // shortcut: regex keyword matching for EN + HK Cantonese sexual/grooming text, upgrade to on-device ML classifier when false-negatives appear
     val SEXUAL_PATTERN = Regex(
@@ -63,7 +73,7 @@ object GuardEngine {
     )
 
     private val IGNORED_NOTIFICATIONS = Regex(
-        "^(Instagram|Checking for new messages|正在檢查新訊息|Uploading|傳送中).*$",
+        "^(Instagram|Checking for new messages|正在檢查新訊息|Uploading|傳送中|\\d+ new messages|\\d+ 則新訊息).*$",
         RegexOption.IGNORE_CASE
     )
 
@@ -72,7 +82,28 @@ object GuardEngine {
 
     private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    // Roles: "unconfigured", "parent", "child"
+    fun nowTimeStr(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+
+    // Appends a timestamped checkpoint log visible inside the app UI on both phones
+    @Synchronized
+    fun addCheckpointLog(ctx: Context, step: String, detail: String) {
+        val entry = "[${nowTimeStr()}] $step: $detail"
+        val raw = prefs(ctx).getString("checkpoint_logs", "") ?: ""
+        val lines = if (raw.isEmpty()) emptyList() else raw.split("\n")
+        val updated = (listOf(entry) + lines).take(40).joinToString("\n")
+        prefs(ctx).edit().putString("checkpoint_logs", updated).apply()
+        ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
+    }
+
+    fun getCheckpointLogs(ctx: Context): String {
+        return prefs(ctx).getString("checkpoint_logs", "No checkpoint events recorded yet.") ?: ""
+    }
+
+    fun clearCheckpointLogs(ctx: Context) {
+        prefs(ctx).edit().putString("checkpoint_logs", "").apply()
+        ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
+    }
+
     fun getRole(ctx: Context): String = prefs(ctx).getString("role", "unconfigured") ?: "unconfigured"
     fun setRole(ctx: Context, role: String) = prefs(ctx).edit().putString("role", role).apply()
     fun isChildMode(ctx: Context): Boolean = getRole(ctx) == "child"
@@ -94,33 +125,46 @@ object GuardEngine {
         prefs(ctx).edit().putString("trusted_csv", clean.joinToString(",")).apply()
     }
 
-    // Derives an unguessable relay topic URL from the Family Pairing Code so no external app or account is needed
     // shortcut: uses public ntfy.sh JSON pub/sub topic derived via SHA-256 of pair code, upgrade to self-hosted relay for enterprise deployments
     fun getChannelTopic(ctx: Context): String {
         val code = getPairCode(ctx).trim().uppercase(Locale.US)
-        val digest = MessageDigest.getInstance("SHA-256").digest("ig_guard_hk_v2:$code".toByteArray(Charsets.UTF_8))
+        val digest = MessageDigest.getInstance("SHA-256").digest("ig_guard_hk_v3:$code".toByteArray(Charsets.UTF_8))
         val hex = digest.joinToString("") { "%02x".format(it) }.take(24)
-        return "ig_guard_$hex"
+        return "ig_hk_$hex"
     }
 
     @Synchronized
-    fun rememberKey(key: String): Boolean {
-        if (seenKeys.contains(key)) return false
-        if (seenKeys.size >= MAX_SEEN) {
-            val first = seenKeys.iterator().next()
-            seenKeys.remove(first)
+    fun shouldSendAlert(key: String, bypassDedupe: Boolean = false): Boolean {
+        if (bypassDedupe) return true
+        val now = System.currentTimeMillis()
+        val iter = recentAlerts.entries.iterator()
+        while (iter.hasNext()) {
+            if (now - iter.next().value > DEDUPE_WINDOW_MS) iter.remove()
         }
-        seenKeys.add(key)
+        val prev = recentAlerts[key]
+        if (prev != null && now - prev <= DEDUPE_WINDOW_MS) {
+            return false
+        }
+        recentAlerts[key] = now
         return true
     }
 
     fun isTrustedSender(ctx: Context, rawTitle: String, rawText: String): Boolean {
         val trustedSet = getTrustedHandles(ctx)
         val titleNorm = rawTitle.trim().lowercase().removePrefix("@")
+        if (titleNorm.isEmpty() || titleNorm == "instagram") return false
         if (titleNorm in trustedSet) return true
+        // Also check prefix before colon in title or body (e.g. "Instagram • sender_name" or "sender_name: hello")
+        val bodyPrefix = rawText.substringBefore(":", "").trim().lowercase().removePrefix("@")
+        if (bodyPrefix.isNotEmpty() && bodyPrefix in trustedSet) return true
+
         for (trusted in trustedSet) {
-            if (titleNorm.contains("(@$trusted)") || titleNorm == trusted) return true
-            if (rawText.trim().lowercase().startsWith("$trusted:")) return true
+            if (titleNorm.contains("(@$trusted)") ||
+                titleNorm.startsWith("$trusted ") ||
+                titleNorm.endsWith(" $trusted")
+            ) {
+                return true
+            }
         }
         return false
     }
@@ -137,12 +181,25 @@ object GuardEngine {
         return null
     }
 
-    // Sends an encrypted/structured JSON event from Child Phone -> Parent Phone
-    fun sendAlertFromChild(ctx: Context, reason: String, sender: String, text: String) {
+    fun sendAlertFromChild(
+        ctx: Context,
+        reason: String,
+        sender: String,
+        text: String,
+        bypassDedupe: Boolean = false,
+        onComplete: ((Boolean, String) -> Unit)? = null
+    ) {
         val cleanSender = sender.trim().ifEmpty { "unknown" }.take(80)
         val cleanText = text.trim().take(300)
         val dedupeKey = "$reason|$cleanSender|$cleanText"
-        if (!rememberKey(dedupeKey)) return
+
+        if (!shouldSendAlert(dedupeKey, bypassDedupe = bypassDedupe || reason == "test_alert")) {
+            addCheckpointLog(ctx, "CP2-DEDUPE", "Skipped duplicate within 20s: $cleanSender")
+            onComplete?.invoke(false, "Duplicate suppressed (20s window)")
+            return
+        }
+
+        addCheckpointLog(ctx, "CP2-MATCH", "[$reason] @$cleanSender: ${cleanText.take(45)}")
 
         val topic = getChannelTopic(ctx)
         val payload = JSONObject().apply {
@@ -154,10 +211,9 @@ object GuardEngine {
             put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
         }.toString()
 
-        postToChannel(topic, payload)
+        postToChannel(ctx, topic, payload, onComplete)
     }
 
-    // Sends updated Trusted Handles list from Parent Phone -> Child Phone
     fun syncTrustedFromParent(ctx: Context) {
         val topic = getChannelTopic(ctx)
         val payload = JSONObject().apply {
@@ -165,79 +221,114 @@ object GuardEngine {
             put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
             put("time", SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date()))
         }.toString()
-        postToChannel(topic, payload)
+        postToChannel(ctx, topic, payload, null)
     }
 
-    private fun postToChannel(topic: String, jsonBody: String) {
+    private fun postToChannel(
+        ctx: Context,
+        topic: String,
+        jsonBody: String,
+        onComplete: ((Boolean, String) -> Unit)?
+    ) {
         thread {
             try {
                 val conn = (URL("https://ntfy.sh/$topic").openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 6000
-                    readTimeout = 6000
+                    connectTimeout = 8000
+                    readTimeout = 8000
                     doOutput = true
                     setRequestProperty("Content-Type", "text/plain; charset=utf-8")
                 }
                 conn.outputStream.use { it.write(jsonBody.toByteArray(Charsets.UTF_8)) }
-                conn.responseCode
+                val code = conn.responseCode
                 conn.disconnect()
-            } catch (_: Exception) {
+
+                val statusMsg = if (code in 200..299) {
+                    "HTTP $code OK (Topic: ${topic.takeLast(6)})"
+                } else if (code == 429) {
+                    "HTTP 429 Rate Limit (ntfy.sh throttled IP)"
+                } else {
+                    "HTTP $code Error"
+                }
+                cpLastHttpStatus = "${nowTimeStr()} -> $statusMsg"
+                addCheckpointLog(ctx, "CP3-NET", statusMsg)
+                onComplete?.invoke(code in 200..299, statusMsg)
+            } catch (e: Exception) {
+                val err = "Net Fail: ${e.javaClass.simpleName} (${e.message?.take(35)})"
+                cpLastHttpStatus = "${nowTimeStr()} -> $err"
+                addCheckpointLog(ctx, "CP3-ERR", err)
+                onComplete?.invoke(false, err)
             }
         }
     }
 
-    // Polls the relay channel so Parent Phone receives alerts and Child Phone receives updated Trusted Handles
-    fun pollChannelOnce(ctx: Context, onNewAlertForParent: ((JSONObject) -> Unit)? = null) = synchronized(pollLock) {
+    // One-off catch-up poll (used on startup or manual refresh; respects rate limits)
+    fun pollChannelOnce(ctx: Context, since: String = "30m", onNewAlertForParent: ((JSONObject) -> Unit)? = null) = synchronized(pollLock) {
         val role = getRole(ctx)
         if (role == "unconfigured") return
         val topic = getChannelTopic(ctx)
         try {
-            val url = URL("https://ntfy.sh/$topic/json?poll=1&since=12h")
+            val url = URL("https://ntfy.sh/$topic/json?poll=1&since=$since")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 6000
-                readTimeout = 6000
+                connectTimeout = 8000
+                readTimeout = 8000
             }
-            val seenIds = prefs(ctx).getStringSet("seen_msg_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
-            var changed = false
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                cpLastHttpStatus = "${nowTimeStr()} -> Poll HTTP $code"
+                addCheckpointLog(ctx, "CP4-POLL", "Poll returned HTTP $code")
+                conn.disconnect()
+                return
+            }
 
             BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
-                    val outer = try { JSONObject(line!!) } catch (_: Exception) { continue }
-                    if (outer.optString("event") != "message") continue
-                    val msgId = outer.optString("id")
-                    val innerStr = outer.optString("message")
-                    val inner = try { JSONObject(innerStr) } catch (_: Exception) { continue }
-                    val msgType = inner.optString("type")
-
-                    // Both parent and child apply the latest sync_trusted broadcast
-                    if (msgType == "sync_trusted") {
-                        val csv = inner.optString("trusted_csv")
-                        if (csv.isNotEmpty() && !seenIds.contains(msgId)) {
-                            seenIds.add(msgId)
-                            changed = true
-                            val list = csv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                            setTrustedHandles(ctx, list)
-                            ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
-                        }
-                    } else if (msgType == "alert" && role == "parent") {
-                        if (!seenIds.contains(msgId)) {
-                            seenIds.add(msgId)
-                            changed = true
-                            saveAlertToParentHistory(ctx, inner)
-                            onNewAlertForParent?.invoke(inner)
-                            ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
-                        }
-                    }
+                    processIncomingRelayLine(ctx, line!!, role, onNewAlertForParent)
                 }
             }
-            if (changed) {
-                val trimmed = if (seenIds.size > 300) seenIds.toList().takeLast(300).toSet() else seenIds
-                prefs(ctx).edit().putStringSet("seen_msg_ids", trimmed).apply()
-            }
+            cpLastHttpStatus = "${nowTimeStr()} -> Poll HTTP 200 OK"
             conn.disconnect()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            cpLastHttpStatus = "${nowTimeStr()} -> Poll Err: ${e.javaClass.simpleName}"
+        }
+    }
+
+    fun processIncomingRelayLine(
+        ctx: Context,
+        line: String,
+        role: String,
+        onNewAlertForParent: ((JSONObject) -> Unit)?
+    ) {
+        val outer = try { JSONObject(line) } catch (_: Exception) { return }
+        if (outer.optString("event") != "message") return
+        val msgId = outer.optString("id")
+        if (msgId.isEmpty()) return
+
+        val innerStr = outer.optString("message")
+        val inner = try { JSONObject(innerStr) } catch (_: Exception) { return }
+        val msgType = inner.optString("type")
+
+        val seenIds = prefs(ctx).getStringSet("seen_msg_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+        if (seenIds.contains(msgId)) return
+
+        seenIds.add(msgId)
+        val trimmed = if (seenIds.size > 300) seenIds.toList().takeLast(300).toSet() else seenIds
+        prefs(ctx).edit().putStringSet("seen_msg_ids", trimmed).apply()
+
+        if (msgType == "sync_trusted") {
+            val csv = inner.optString("trusted_csv")
+            if (csv.isNotEmpty()) {
+                val list = csv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                setTrustedHandles(ctx, list)
+                addCheckpointLog(ctx, "CP4-SYNC", "Updated trusted list (${list.size} handles)")
+            }
+        } else if (msgType == "alert" && role == "parent") {
+            saveAlertToParentHistory(ctx, inner)
+            addCheckpointLog(ctx, "CP4-RECV", "Received ${inner.optString("reason")} from ${inner.optString("sender")}")
+            onNewAlertForParent?.invoke(inner)
+            ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
         }
     }
 
@@ -267,62 +358,155 @@ object GuardEngine {
     }
 }
 
-// 1. CHILD ONLY: Reads incoming Instagram DM notifications
+// 1. CHILD ONLY: Reads all incoming Instagram DM notifications (including MessagingStyle bundles!)
 class IgNotificationListener : NotificationListenerService() {
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        GuardEngine.cpNotifConnected = true
+        GuardEngine.addCheckpointLog(this, "CP1-NOTIF", "NotificationListener CONNECTED ✅")
+    }
+
+    override fun onListenerDisconnected() {
+        GuardEngine.cpNotifConnected = false
+        GuardEngine.addCheckpointLog(this, "CP1-NOTIF", "NotificationListener DISCONNECTED ❌")
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                requestRebind(ComponentName(this, IgNotificationListener::class.java))
+            } catch (_: Exception) {
+            }
+        }
+        super.onListenerDisconnected()
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        // Strictly disabled unless this phone is set to Child Mode
         if (!GuardEngine.isChildMode(this)) return
         if (sbn == null || sbn.packageName != "com.instagram.android") return
         val notif = sbn.notification ?: return
-        if ((notif.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
-
         val extras = notif.extras ?: return
-        val title = (extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)
+
+        GuardEngine.cpNotifConnected = true
+        GuardEngine.cpLastNotifTime = GuardEngine.nowTimeStr()
+
+        val convTitle = (extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)
             ?: extras.getCharSequence(Notification.EXTRA_TITLE)
-            ?: "Instagram").toString()
-        val body = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
+            ?: "").toString().trim()
+
+        // Extract every message from MessagingStyle EXTRA_MESSAGES array (fixes missed stacked/consecutive DMs!)
+        val extractedPairs = ArrayList<Pair<String, String>>()
+        val msgBundles = getParcelableArrayCompat(extras, Notification.EXTRA_MESSAGES)
+        if (msgBundles != null) {
+            for (p in msgBundles) {
+                val b = p as? Bundle ?: continue
+                val msgText = b.getCharSequence("text")?.toString()?.trim() ?: ""
+                val msgSender = (b.getCharSequence("sender") ?: convTitle).toString().trim()
+                if (msgText.isNotEmpty()) {
+                    extractedPairs.add(msgSender.ifEmpty { convTitle } to msgText)
+                }
+            }
+        }
+
+        // Also check standard EXTRA_BIG_TEXT / EXTRA_TEXT / EXTRA_TEXT_LINES
+        val fallbackBody = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
             ?: extras.getCharSequence(Notification.EXTRA_TEXT)
-            ?: "").toString()
+            ?: "").toString().trim()
+        if (fallbackBody.isNotEmpty()) {
+            var sender = convTitle
+            var body = fallbackBody
+            // Instagram often formats group/stacked DMs as "sender_handle: message"
+            if (body.contains(": ")) {
+                val possibleSender = body.substringBefore(": ").trim()
+                val possibleMsg = body.substringAfter(": ").trim()
+                if (possibleSender.isNotEmpty() && !possibleSender.contains(" ") && possibleMsg.isNotEmpty()) {
+                    sender = possibleSender
+                    body = possibleMsg
+                }
+            }
+            extractedPairs.add(sender to body)
+        }
 
-        val reason = GuardEngine.evaluateDm(this, title, body) ?: return
-        GuardEngine.sendAlertFromChild(this, reason, title, body)
+        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+        if (textLines != null) {
+            for (cs in textLines) {
+                val line = cs?.toString()?.trim() ?: continue
+                if (line.contains(": ")) {
+                    extractedPairs.add(line.substringBefore(": ").trim() to line.substringAfter(": ").trim())
+                } else if (line.isNotEmpty()) {
+                    extractedPairs.add(convTitle to line)
+                }
+            }
+        }
 
-        if (reason == "sexual_or_grooming_content") {
+        if (extractedPairs.isEmpty()) return
+
+        var wipeNotification = false
+        for ((sender, body) in extractedPairs.distinct()) {
+            val reason = GuardEngine.evaluateDm(this, sender, body)
+            if (reason == null) {
+                GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "Ignored trusted/system notif: @$sender")
+                continue
+            }
+            GuardEngine.sendAlertFromChild(this, reason, sender, body)
+            if (reason == "sexual_or_grooming_content") {
+                wipeNotification = true
+            }
+        }
+
+        if (wipeNotification) {
             try {
                 cancelNotification(sbn.key)
             } catch (_: Exception) {
             }
         }
     }
+
+    @Suppress("DEPRECATION")
+    private fun getParcelableArrayCompat(extras: Bundle, key: String): Array<Parcelable>? {
+        return try {
+            extras.getParcelableArray(key)
+        } catch (_: Exception) {
+            null
+        }
+    }
 }
 
-// 2. CHILD ONLY: Forces Instagram notifications ON + blocks Settings tampering + scans open chats
+// 2. CHILD ONLY: Forces Instagram notifications ON + scans live open Instagram DM threads for BOTH strangers & sexual content
 class IgAccessibilityService : AccessibilityService() {
 
     private var lastScanMs = 0L
-    private var lastSyncPollMs = 0L
+
+    // Reserved UI strings inside Instagram DM screens that are not the peer's username or message bubble
+    private val igUiChrome = setOf(
+        "message...", "訊息⋯⋯", "發送訊息...", "傳送訊息...", "send", "傳送", "search", "搜尋",
+        "instagram", "chats", "聊天室", "requests", "陌生訊息", "general", "一般", "primary", "主要",
+        "active now", "目前在線上", "online", "在線", "typing...", "輸入中...", "seen", "已讀",
+        "today", "今天", "yesterday", "昨天", "reply", "回覆"
+    )
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        GuardEngine.cpAccConnected = true
+        // Grant a 60s setup grace window right when Accessibility is switched ON so the parent isn't kicked out of Settings immediately
+        GuardEngine.pauseTamperUntilMs = maxOf(GuardEngine.pauseTamperUntilMs, System.currentTimeMillis() + 60_000L)
+        GuardEngine.addCheckpointLog(this, "CP1-ACC", "Accessibility Connected ✅ (60s setup grace active)")
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Strictly disabled unless this phone is set to Child Mode
         if (!GuardEngine.isChildMode(this)) return
 
         val pkg = event?.packageName?.toString() ?: return
         val now = System.currentTimeMillis()
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastScanMs < 350L) {
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastScanMs < 400L) {
             return
         }
         lastScanMs = now
-
-        // Every 20s while active, check if Parent Phone pushed an updated Trusted Handles list
-        if (now - lastSyncPollMs > 20_000L) {
-            lastSyncPollMs = now
-            thread { GuardEngine.pollChannelOnce(applicationContext) }
-        }
+        GuardEngine.cpAccConnected = true
+        GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
 
         val root = rootInActiveWindow ?: return
-        val texts = ArrayList<String>(64)
+        val texts = ArrayList<String>(80)
         collectTexts(root, texts)
+        if (texts.isEmpty()) return
         val joined = texts.joinToString(" ")
 
         val tamperPaused = now < GuardEngine.pauseTamperUntilMs
@@ -352,14 +536,15 @@ class IgAccessibilityService : AccessibilityService() {
                     this,
                     "tamper_attempt",
                     "Android Settings",
-                    "Child tried to open Settings for Instagram / IG Guard: ${joined.take(120)}"
+                    "Child tried to open Settings for Instagram / IG Guard: ${joined.take(100)}"
                 )
                 return
             }
         }
 
-        // B. Inside native Instagram app: block in-app notification/chat muting AND block live sexual/grooming DMs
+        // B. Inside native Instagram app:
         if (pkg == "com.instagram.android") {
+            // 1. Block muting notifications or muting a DM thread inside Instagram
             val isMutingInApp = joined.contains("Pause all", ignoreCase = true) ||
                 joined.contains("暫停所有") ||
                 joined.contains("Mute messages", ignoreCase = true) ||
@@ -381,11 +566,41 @@ class IgAccessibilityService : AccessibilityService() {
                 return
             }
 
+            // 2. Scan all visible lines for Sexual / Grooming content first
             for (line in texts) {
                 if (GuardEngine.SEXUAL_PATTERN.containsMatchIn(line)) {
                     performGlobalAction(GLOBAL_ACTION_HOME)
                     GuardEngine.sendAlertFromChild(this, "sexual_or_grooming_content", "Instagram Live Screen", line)
                     return
+                }
+            }
+
+            // 3. Live Open-Chat Stranger Detection (catches messages when child is already inside an open DM thread so OS notifications are suppressed!)
+            val isInboxList = (joined.contains("Chats", ignoreCase = true) && joined.contains("Requests", ignoreCase = true)) ||
+                (joined.contains("聊天室") && joined.contains("陌生訊息"))
+            val isInsideDmThread = !isInboxList && texts.any {
+                val low = it.lowercase()
+                low.contains("message...") || low.contains("發送訊息") || low.contains("傳送訊息") || low.contains("訊息...") || low.contains("訊息⋯")
+            }
+            if (isInsideDmThread) {
+                val candidateHeader = texts.firstOrNull { line ->
+                    val low = line.lowercase()
+                    line.length in 2..35 &&
+                        low !in igUiChrome &&
+                        !low.matches(Regex("^\\d{1,2}:\\d{2}.*"))
+                } ?: "unknown_open_chat"
+
+                if (!GuardEngine.isTrustedSender(this, candidateHeader, "")) {
+                    val sampleMsg = texts.lastOrNull { line ->
+                        val low = line.lowercase()
+                        line != candidateHeader &&
+                            low !in igUiChrome &&
+                            !low.contains("message...") &&
+                            !low.contains("訊息") &&
+                            line.length >= 2
+                    } ?: "Active open chat with untrusted account"
+
+                    GuardEngine.sendAlertFromChild(this, "stranger_message", candidateHeader, sampleMsg)
                 }
             }
         }
@@ -398,9 +613,8 @@ class IgAccessibilityService : AccessibilityService() {
     }
 
     private fun collectTexts(node: AccessibilityNodeInfo?, out: MutableList<String>) {
-        if (node == null || out.size >= 120) return
+        if (node == null || out.size >= 100) return
         node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { out.add(it) }
-        node.contentDescription?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { out.add(it) }
         for (i in 0 until node.childCount) {
             collectTexts(node.getChild(i), out)
         }
@@ -420,7 +634,7 @@ class IgAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 }
 
-// 3. PARENT ONLY: Built-in Background Alert Receiver (Replaces the ntfy app completely)
+// 3. PARENT ONLY: Persistent Real-Time Stream Receiver (Avoids HTTP 429 rate limits completely!)
 class ParentAlertService : Service() {
 
     @Volatile
@@ -439,7 +653,7 @@ class ParentAlertService : Service() {
         )
         val fgNotif = Notification.Builder(this, "ig_guard_monitor")
             .setContentTitle("IG Guard Parent Monitor Active")
-            .setContentText("Paired code: ${GuardEngine.getPairCode(this)} • Listening for child alerts")
+            .setContentText("Pair Code: ${GuardEngine.getPairCode(this)} • Live stream connected")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
             .setContentIntent(openIntent)
             .setOngoing(true)
@@ -454,12 +668,47 @@ class ParentAlertService : Service() {
         if (!running) {
             running = true
             thread {
+                // Single persistent streaming connection with 2h catch-up (1 request total -> avoids HTTP 429 rate limit!)
                 while (running && GuardEngine.isParentMode(applicationContext)) {
-                    GuardEngine.pollChannelOnce(applicationContext) { alert ->
-                        fireNativeParentNotification(alert)
+                    val topic = GuardEngine.getChannelTopic(applicationContext)
+                    var conn: HttpURLConnection? = null
+                    try {
+                        GuardEngine.cpParentStreamState = "Connecting stream..."
+                        val url = URL("https://ntfy.sh/$topic/json?since=2h")
+                        conn = (url.openConnection() as HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            connectTimeout = 10_000
+                            readTimeout = 90_000 // ntfy sends keepalive newlines every ~45s
+                        }
+                        val code = conn.responseCode
+                        if (code in 200..299) {
+                            GuardEngine.cpParentStreamState = "Live Stream CONNECTED ✅ (HTTP 200)"
+                            GuardEngine.addCheckpointLog(applicationContext, "CP4-STREAM", "Connected to live stream ($topic)")
+                            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
+                                var line: String?
+                                while (running && GuardEngine.isParentMode(applicationContext) &&
+                                    reader.readLine().also { line = it } != null
+                                ) {
+                                    GuardEngine.processIncomingRelayLine(
+                                        applicationContext,
+                                        line!!,
+                                        "parent"
+                                    ) { alert ->
+                                        fireNativeParentNotification(alert)
+                                    }
+                                }
+                            }
+                        } else {
+                            GuardEngine.cpParentStreamState = "Stream HTTP $code (Retrying in 15s)"
+                            GuardEngine.addCheckpointLog(applicationContext, "CP4-ERR", "Stream returned HTTP $code")
+                        }
+                    } catch (e: Exception) {
+                        GuardEngine.cpParentStreamState = "Reconnecting (${e.javaClass.simpleName})..."
+                    } finally {
+                        try { conn?.disconnect() } catch (_: Exception) {}
                     }
                     try {
-                        Thread.sleep(4500L)
+                        Thread.sleep(15_000L)
                     } catch (_: Exception) {
                     }
                 }
@@ -524,7 +773,7 @@ class ParentAlertService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
-// 4. All-in-One Parent & Child UI Dashboard
+// 4. All-in-One Parent & Child UI Dashboard + Live Checkpoint Debugger
 class MainActivity : Activity() {
 
     private lateinit var rootContainer: LinearLayout
@@ -559,6 +808,13 @@ class MainActivity : Activity() {
         } else {
             registerReceiver(refreshReceiver, filter)
         }
+        // If Notification Listener is enabled in OS settings, ensure Android binds it immediately
+        if (GuardEngine.isChildMode(this) && isNotificationListenerEnabled(this) && Build.VERSION.SDK_INT >= 24) {
+            try {
+                NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java))
+            } catch (_: Exception) {
+            }
+        }
         syncRoleServices()
         renderUi()
     }
@@ -580,11 +836,10 @@ class MainActivity : Activity() {
             }
             val svc = Intent(this, ParentAlertService::class.java)
             startForegroundService(svc)
-            thread { GuardEngine.pollChannelOnce(applicationContext) }
         } else {
             stopService(Intent(this, ParentAlertService::class.java))
             if (GuardEngine.isChildMode(this)) {
-                thread { GuardEngine.pollChannelOnce(applicationContext) }
+                thread { GuardEngine.pollChannelOnce(applicationContext, since = "2h") }
             }
         }
     }
@@ -593,11 +848,10 @@ class MainActivity : Activity() {
         rootContainer.removeAllViews()
         val role = GuardEngine.getRole(this)
 
-        // Header
-        rootContainer.addView(label("IG Teen Guard • 家長子女守護系統", 22f, "#F8FAFC", bold = true))
+        rootContainer.addView(label("IG Teen Guard v3.1 • 診斷及守護系統", 21f, "#F8FAFC", bold = true))
         val badgeText = when (role) {
-            "parent" -> "Current Mode: PARENT PHONE (家長手機 — 接收警報及遠端管理)"
-            "child" -> "Current Mode: CHILD PHONE 🔒 (子女手機 — 監測 IG DM 及防篡改)"
+            "parent" -> "Current Mode: PARENT PHONE (家長手機) • Topic: ${GuardEngine.getChannelTopic(this).takeLast(6)}"
+            "child" -> "Current Mode: CHILD PHONE 🔒 (子女手機) • Topic: ${GuardEngine.getChannelTopic(this).takeLast(6)}"
             else -> "Current Mode: NOT SET (請先選擇此手機屬於家長定子女)"
         }
         val badgeColor = when (role) {
@@ -605,16 +859,18 @@ class MainActivity : Activity() {
             "child" -> "#4ADE80"
             else -> "#FBBF24"
         }
-        rootContainer.addView(label(badgeText, 14f, badgeColor, bold = true, bottomPad = 28))
+        rootContainer.addView(label(badgeText, 13f, badgeColor, bold = true, bottomPad = 24))
 
         when (role) {
             "unconfigured" -> renderRoleSelectorCard()
             "parent" -> {
                 renderParentDashboard()
+                renderDiagnosticsCard()
                 renderRoleSwitchFooter(requirePin = false)
             }
             "child" -> {
                 renderChildDashboard()
+                renderDiagnosticsCard()
                 renderRoleSwitchFooter(requirePin = true)
             }
         }
@@ -625,7 +881,7 @@ class MainActivity : Activity() {
         card.addView(label("Step 1: Set Family Pairing Code & PIN", 18f, "#FFFFFF", bold = true, bottomPad = 12))
         card.addView(
             label(
-                "Enter the exact same Pairing Code on both Parent and Child phones so they link automatically without any third-party app.",
+                "Both Parent and Child phones MUST enter the exact same Pairing Code (check the 6-char Topic ID in the header after saving to confirm they match).",
                 13f,
                 "#94A3B8",
                 bottomPad = 20
@@ -644,6 +900,7 @@ class MainActivity : Activity() {
             actionButton("👨‍👩‍👧 Set as PARENT Phone (家長手機)", "#0284C7") {
                 savePairAndPin(pairInput.text.toString(), pinInput.text.toString())
                 GuardEngine.setRole(this, "parent")
+                GuardEngine.addCheckpointLog(this, "SETUP", "Configured as PARENT phone (Code: ${GuardEngine.getPairCode(this)})")
                 syncRoleServices()
                 renderUi()
             }
@@ -653,6 +910,7 @@ class MainActivity : Activity() {
             actionButton("🧒 Set as CHILD Phone (子女手機)", "#16A34A") {
                 savePairAndPin(pairInput.text.toString(), pinInput.text.toString())
                 GuardEngine.setRole(this, "child")
+                GuardEngine.addCheckpointLog(this, "SETUP", "Configured as CHILD phone (Code: ${GuardEngine.getPairCode(this)})")
                 syncRoleServices()
                 renderUi()
             }
@@ -670,38 +928,30 @@ class MainActivity : Activity() {
 
     // ================= PARENT MODE UI =================
     private fun renderParentDashboard() {
-        // 1. Pairing & Connection Status Card
         val statusCard = makeCard()
         statusCard.addView(label("📡 Live Connection to Child Phone", 17f, "#FFFFFF", bold = true, bottomPad = 8))
         statusCard.addView(
             label(
-                "Family Pairing Code: ${GuardEngine.getPairCode(this)}\n" +
-                    "Background Receiver: ACTIVE ✅ (Built-in push notifications enabled — no ntfy app needed)",
+                "• Pairing Code: ${GuardEngine.getPairCode(this)} (Channel ID: ${GuardEngine.getChannelTopic(this).takeLast(6)})\n" +
+                    "• Stream Status: ${GuardEngine.cpParentStreamState}\n" +
+                    "• Last HTTP Check: ${GuardEngine.cpLastHttpStatus}",
                 13f,
                 "#CBD5E1",
                 bottomPad = 16
             )
         )
         statusCard.addView(
-            actionButton("🔄 Refresh Alerts Now (立即同步)", "#334155") {
-                Toast.makeText(this, "Checking for new alerts...", Toast.LENGTH_SHORT).show()
-                thread { GuardEngine.pollChannelOnce(applicationContext) }
+            actionButton("🔄 Manual Catch-Up Sync (立即拉取最新警報)", "#334155") {
+                Toast.makeText(this, "Pulling latest alerts...", Toast.LENGTH_SHORT).show()
+                thread {
+                    GuardEngine.pollChannelOnce(applicationContext, since = "6h")
+                }
             }
         )
         rootContainer.addView(statusCard)
 
-        // 2. Remote Trusted Handles Manager Card
         val trustCard = makeCard()
         trustCard.addView(label("✅ Approved IG Friends (信任名單)", 17f, "#FFFFFF", bold = true, bottomPad = 8))
-        trustCard.addView(
-            label(
-                "Messages from IG accounts below will NOT trigger stranger alerts (unless sexual/grooming words appear). Changes sync to your child's phone automatically.",
-                13f,
-                "#94A3B8",
-                bottomPad = 12
-            )
-        )
-
         val currentHandles = GuardEngine.getTrustedHandles(this)
         trustCard.addView(
             label(
@@ -709,7 +959,7 @@ class MainActivity : Activity() {
                 14f,
                 "#38BDF8",
                 bold = true,
-                bottomPad = 14
+                bottomPad = 12
             )
         )
 
@@ -730,7 +980,6 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(trustCard)
 
-        // 3. Live Alert Inbox Card
         val inboxCard = makeCard()
         inboxCard.addView(label("🚨 Child Alert Inbox (即時警報記錄)", 17f, "#FFFFFF", bold = true, bottomPad = 12))
 
@@ -738,7 +987,7 @@ class MainActivity : Activity() {
         if (alerts.isEmpty()) {
             inboxCard.addView(
                 label(
-                    "No alerts yet. Tap 'Send Test Alert' on your child's phone to verify pairing.",
+                    "No alerts received yet. Verify both phones show the same 6-character Topic ID at the top of the screen, then tap 'Send Test Alert' on the Child Phone.",
                     14f,
                     "#94A3B8",
                     bottomPad = 8
@@ -770,7 +1019,7 @@ class MainActivity : Activity() {
                             next.add(cleanHandle)
                             GuardEngine.setTrustedHandles(this, next)
                             GuardEngine.syncTrustedFromParent(this)
-                            Toast.makeText(this, "Added @$cleanHandle & synced to Child Phone", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this, "Added @$cleanHandle & synced", Toast.LENGTH_SHORT).show()
                             renderUi()
                         }
                     )
@@ -792,74 +1041,118 @@ class MainActivity : Activity() {
     private fun renderChildDashboard() {
         val notifOn = isNotificationListenerEnabled(this)
         val accOn = isAccessibilityEnabled(this)
+        val graceRemainingSec = maxOf(0L, (GuardEngine.pauseTamperUntilMs - System.currentTimeMillis()) / 1000L)
 
         val statusCard = makeCard()
-        statusCard.addView(label("🛡️ Child Protection Status (子女保護狀態)", 17f, "#FFFFFF", bold = true, bottomPad = 10))
+        statusCard.addView(label("🛡️ Child Protection & Checkpoints (子女保護狀態)", 17f, "#FFFFFF", bold = true, bottomPad = 10))
         statusCard.addView(
             label(
-                "• Family Pairing Code: ${GuardEngine.getPairCode(this)}\n" +
-                    "• 1. DM Notification Reader: ${if (notifOn) "ACTIVE ✅" else "OFF ❌ (Tap below to enable)"}\n" +
-                    "• 2. Anti-Tamper & Force Notification Lock: ${if (accOn) "ACTIVE ✅" else "OFF ❌ (Tap below to enable)"}\n" +
-                    "• Trusted IG Friends: ${GuardEngine.getTrustedHandles(this).joinToString(", ") { "@$it" }}",
-                14f,
+                "• Pairing Code: ${GuardEngine.getPairCode(this)} (Topic ID: ${GuardEngine.getChannelTopic(this).takeLast(6)})\n" +
+                    "• CP1 Notification Permission: ${if (notifOn) "ENABLED ✅" else "OFF ❌"} (Service Bound: ${if (GuardEngine.cpNotifConnected) "YES ✅" else "Waiting..."} | Last IG Notif: ${GuardEngine.cpLastNotifTime})\n" +
+                    "• CP1 Anti-Tamper Accessibility: ${if (accOn) "ENABLED ✅" else "OFF ❌"} (Last Screen Scan: ${GuardEngine.cpLastAccTime})\n" +
+                    "• CP3 Last Network Send: ${GuardEngine.cpLastHttpStatus}\n" +
+                    "• Settings Lock State: ${if (graceRemainingSec > 0) "PAUSED (${graceRemainingSec}s left)" else "ARMED 🔒"}\n" +
+                    "• Trusted Friends: ${GuardEngine.getTrustedHandles(this).joinToString(", ") { "@$it" }}",
+                13f,
                 "#E2E8F0",
                 bottomPad = 16
             )
         )
 
         statusCard.addView(
+            actionButton("0. Open IG Guard App Info (解除「限制設定」用)", "#475569") {
+                GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", packageName, null)
+                }
+                startActivity(intent)
+            }
+        )
+
+        statusCard.addView(
             actionButton("1. Enable DM Notification Reader (讀取 IG DM 通知)", if (notifOn) "#334155" else "#0284C7") {
-                GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 120_000L
+                GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
                 startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }
         )
 
         statusCard.addView(
             actionButton("2. Enable Anti-Tamper Lock (強制開啟通知及防篡改)", if (accOn) "#334155" else "#16A34A") {
-                GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 120_000L
+                GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
         )
 
         statusCard.addView(
             actionButton("3. Send Test Alert to Parent Phone (發送測試警報)", "#4F46E5") {
+                Toast.makeText(this, "Sending test alert...", Toast.LENGTH_SHORT).show()
                 GuardEngine.sendAlertFromChild(
                     this,
                     "test_alert",
-                    "@teen_phone",
-                    "Child phone is paired and sending alerts to Parent Phone!"
-                )
-                Toast.makeText(this, "Test alert sent to Parent Phone!", Toast.LENGTH_SHORT).show()
+                    "@child_phone_test",
+                    "Test Alert at ${GuardEngine.nowTimeStr()} — Connection verified!",
+                    bypassDedupe = true
+                ) { ok, status ->
+                    uiHandler.post {
+                        Toast.makeText(
+                            this,
+                            if (ok) "✅ Sent! ($status)" else "❌ Failed: $status",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        renderUi()
+                    }
+                }
             }
         )
         rootContainer.addView(statusCard)
 
-        // Parent PIN Unlock Card on Child Phone
         val pinCard = makeCard()
         pinCard.addView(label("🔐 Parent Controls on Child Phone (家長專用解鎖)", 16f, "#FFFFFF", bold = true, bottomPad = 8))
-        pinCard.addView(
-            label(
-                "Enter your Parent PIN to pause the Settings lock for 2 minutes if you need to adjust Android Settings.",
-                13f,
-                "#94A3B8",
-                bottomPad = 12
-            )
-        )
-        val pinInput = inputBox("Enter Parent PIN", "", isPassword = true)
+        val pinInput = inputBox("Enter Parent PIN to unlock Settings for 3 mins", "", isPassword = true)
         pinCard.addView(pinInput)
 
         pinCard.addView(
-            actionButton("🔓 Unlock Android Settings for 2 Minutes", "#D97706") {
+            actionButton("🔓 Pause Settings Lock for 3 Minutes", "#D97706") {
                 if (pinInput.text.toString() == GuardEngine.getPin(this)) {
-                    GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 120_000L
+                    GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
                     pinInput.setText("")
-                    Toast.makeText(this, "Settings unlocked for 2 minutes", Toast.LENGTH_LONG).show()
+                    GuardEngine.addCheckpointLog(this, "PIN", "Parent unlocked Settings for 3 mins")
+                    Toast.makeText(this, "Settings unlocked for 3 minutes", Toast.LENGTH_LONG).show()
+                    renderUi()
                 } else {
                     Toast.makeText(this, "Incorrect Parent PIN", Toast.LENGTH_SHORT).show()
                 }
             }
         )
         rootContainer.addView(pinCard)
+    }
+
+    // ================= CHECKPOINT DIAGNOSTIC LOG CARD =================
+    private fun renderDiagnosticsCard() {
+        val diagCard = makeCard()
+        diagCard.addView(label("🔍 Live Checkpoint Log (故障排查紀錄)", 16f, "#38BDF8", bold = true, bottomPad = 6))
+        diagCard.addView(
+            label(
+                "Shows every step: [CP1] Service Hook -> [CP2] DM Parse/Filter -> [CP3] HTTP Send -> [CP4] Parent Receive",
+                12f,
+                "#94A3B8",
+                bottomPad = 10
+            )
+        )
+        diagCard.addView(
+            label(
+                GuardEngine.getCheckpointLogs(this),
+                12f,
+                "#E2E8F0",
+                bottomPad = 14
+            )
+        )
+        diagCard.addView(
+            actionButton("🧹 Clear Checkpoint Log", "#334155") {
+                GuardEngine.clearCheckpointLogs(this)
+            }
+        )
+        rootContainer.addView(diagCard)
     }
 
     private fun renderRoleSwitchFooter(requirePin: Boolean) {
@@ -891,7 +1184,6 @@ class MainActivity : Activity() {
         rootContainer.addView(card)
     }
 
-    // ================= UI HELPERS =================
     private fun makeCard(): LinearLayout {
         val bg = GradientDrawable().apply {
             setColor(Color.parseColor("#1E293B"))
