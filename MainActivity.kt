@@ -258,7 +258,7 @@ object GuardEngine {
         return buildString {
             append("Hk")
             repeat(6) { append(chars[rnd.nextInt(chars.length)]) }
-            append(rnd.nextInt(10, 99))
+            append(10 + rnd.nextInt(90))
         }
     }
 
