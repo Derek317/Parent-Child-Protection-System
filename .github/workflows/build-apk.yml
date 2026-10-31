@@ -1,166 +1,402 @@
 name: Build IG Guard APK
 
+
+
 on:
+
   push:
+
   workflow_dispatch:
 
+
+
 jobs:
+
   build:
+
     runs-on: ubuntu-latest
+
     steps:
+
       - name: Checkout repository
+
         uses: actions/checkout@v4
 
+
+
       - name: Set up JDK 17
+
         uses: actions/setup-java@v4
+
         with:
+
           distribution: 'temurin'
+
           java-version: '17'
 
+
+
       - name: Set up Gradle
+
         uses: gradle/actions/setup-gradle@v3
+
         with:
+
           gradle-version: '8.7'
 
-      - name: Assemble Android project structure from flat files
+
+
+      - name: Assemble Android project structure and persistent signing key
+
         run: |
+
           mkdir -p app/src/main/java/com/example/igguard
+
           mkdir -p app/src/main/res/xml
+
           mkdir -p app/src/main/res/values
+
           cp MainActivity.kt app/src/main/java/com/example/igguard/MainActivity.kt
 
+
+
+          # Restore fixed persistent signing keystore so every APK update installs in-place without uninstalling!
+
+          echo "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" | base64 -d > app/ig_guard.keystore
+
+
+
+          VER_CODE=$((100 + ${{ github.run_number }}))
+
+
+
           cat << 'EOF' > settings.gradle
+
           pluginManagement {
+
               repositories {
+
                   google()
+
                   mavenCentral()
+
                   gradlePluginPortal()
+
               }
+
           }
+
           dependencyResolutionManagement {
+
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+
               repositories {
+
                   google()
+
                   mavenCentral()
+
               }
+
           }
+
           rootProject.name = "IGGuard"
+
           include(":app")
+
           EOF
+
+
 
           cat << 'EOF' > build.gradle
+
           plugins {
+
               id 'com.android.application' version '8.3.2' apply false
+
               id 'org.jetbrains.kotlin.android' version '1.9.23' apply false
+
           }
+
           EOF
 
-          cat << 'EOF' > app/build.gradle
+
+
+          cat << EOF > app/build.gradle
+
           plugins {
+
               id 'com.android.application'
+
               id 'org.jetbrains.kotlin.android'
+
           }
+
+
 
           android {
+
               namespace 'com.example.igguard'
+
               compileSdk 34
 
+
+
               defaultConfig {
+
                   applicationId "com.example.igguard"
+
                   minSdk 26
+
                   targetSdk 34
-                  versionCode 3
-                  versionName "3.0"
+
+                  versionCode $VER_CODE
+
+                  versionName "4.${{ github.run_number }}"
+
               }
+
+
+
+              signingConfigs {
+
+                  persistentKey {
+
+                      storeFile file("ig_guard.keystore")
+
+                      storePassword "igguard2026"
+
+                      keyAlias "igguard_key"
+
+                      keyPassword "igguard2026"
+
+                      enableV1Signing true
+
+                      enableV2Signing true
+
+                  }
+
+              }
+
+
+
+              buildTypes {
+
+                  debug {
+
+                      signingConfig signingConfigs.persistentKey
+
+                  }
+
+                  release {
+
+                      isMinifyEnabled false
+
+                      signingConfig signingConfigs.persistentKey
+
+                  }
+
+              }
+
+
 
               compileOptions {
+
                   sourceCompatibility JavaVersion.VERSION_17
+
                   targetCompatibility JavaVersion.VERSION_17
+
               }
+
               kotlinOptions {
+
                   jvmTarget = '17'
+
               }
+
           }
+
           EOF
+
+
 
           cat << 'EOF' > app/src/main/res/values/strings.xml
+
           <?xml version="1.0" encoding="utf-8"?>
+
           <resources>
+
               <string name="app_name">IG Guard</string>
+
               <string name="acc_desc">Keeps Instagram notifications enabled and protects teens from explicit messages.</string>
+
           </resources>
+
           EOF
+
+
+
+          # Strictly scope AccessibilityService to Instagram & Settings packages so Play Protect sees it cannot read banking/other apps
 
           cat << 'EOF' > app/src/main/res/xml/accessibility_config.xml
+
           <?xml version="1.0" encoding="utf-8"?>
+
           <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+
               android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+
               android:accessibilityFeedbackType="feedbackGeneric"
-              android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+
+              android:accessibilityFlags="flagDefault"
+
               android:canRetrieveWindowContent="true"
+
               android:description="@string/acc_desc"
-              android:notificationTimeout="150" />
+
+              android:notificationTimeout="200"
+
+              android:packageNames="com.instagram.android,com.android.settings,com.samsung.android.lool,com.miui.securitycenter,com.coloros.safecenter" />
+
           EOF
+
+
 
           cat << 'EOF' > app/src/main/AndroidManifest.xml
+
           <?xml version="1.0" encoding="utf-8"?>
+
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
               <uses-permission android:name="android.permission.INTERNET" />
+
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+
+
               <application
+
                   android:label="@string/app_name"
+
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
+
+
                   <activity
+
                       android:name=".MainActivity"
+
                       android:exported="true"
+
+                      android:launchMode="singleTop"
+
                       android:configChanges="orientation|screenSize|keyboardHidden">
+
                       <intent-filter>
+
                           <action android:name="android.intent.action.MAIN" />
+
                           <category android:name="android.intent.category.LAUNCHER" />
+
                       </intent-filter>
+
+                      <intent-filter>
+
+                          <action android:name="android.intent.action.VIEW" />
+
+                          <category android:name="android.intent.category.DEFAULT" />
+
+                          <category android:name="android.intent.category.BROWSABLE" />
+
+                          <data android:scheme="igguard" android:host="pair" />
+
+                      </intent-filter>
+
                   </activity>
 
+
+
                   <service
+
                       android:name=".ParentAlertService"
+
                       android:exported="false"
+
                       android:foregroundServiceType="dataSync" />
 
-                  <service
-                      android:name=".IgNotificationListener"
-                      android:label="IG Guard DM Reader"
-                      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.service.notification.NotificationListenerService" />
-                      </intent-filter>
-                  </service>
+
 
                   <service
-                      android:name=".IgAccessibilityService"
-                      android:label="IG Guard Anti-Tamper"
-                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+
+                      android:name=".IgNotificationListener"
+
+                      android:label="IG Guard DM Reader"
+
+                      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+
                       android:exported="true">
+
                       <intent-filter>
-                          <action android:name="android.accessibilityservice.AccessibilityService" />
+
+                          <action android:name="android.service.notification.NotificationListenerService" />
+
                       </intent-filter>
-                      <meta-data
-                          android:name="android.accessibilityservice"
-                          android:resource="@xml/accessibility_config" />
+
                   </service>
+
+
+
+                  <service
+
+                      android:name=".IgAccessibilityService"
+
+                      android:label="IG Guard Anti-Tamper"
+
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+
+                      android:exported="true">
+
+                      <intent-filter>
+
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+
+                      </intent-filter>
+
+                      <meta-data
+
+                          android:name="android.accessibilityservice"
+
+                          android:resource="@xml/accessibility_config" />
+
+                  </service>
+
+
 
               </application>
+
           </manifest>
+
           EOF
 
-      - name: Compile Debug APK
+
+
+      - name: Compile Signed APK
+
         run: gradle assembleDebug --no-daemon
 
+
+
       - name: Upload APK Artifact
+
         uses: actions/upload-artifact@v4
+
         with:
+
           name: ig-guard-apk
+
           path: app/build/outputs/apk/debug/app-debug.apk
+
