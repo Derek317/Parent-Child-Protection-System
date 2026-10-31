@@ -17,6 +17,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -30,8 +31,6 @@ import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.text.InputType
-import android.view.Gravity
-import android.view.View
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
@@ -52,12 +51,13 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlin.concurrent.thread
+import kotlin.math.abs
 
 object GuardEngine {
     const val ACTION_UI_REFRESH = "com.example.igguard.ACTION_UI_REFRESH"
     private const val PREFS_NAME = "ig_guard_prefs"
 
-    // 10-minute cross-source deduplication window
+    // 10-minute cross-source deduplication window for identical (reason|sender|message)
     private const val DEDUPE_WINDOW_MS = 600_000L
     private val recentAlerts = LinkedHashMap<String, Long>()
     private val seenNotifMsgTimestamps = LinkedHashSet<String>()
@@ -88,12 +88,76 @@ object GuardEngine {
         RegexOption.IGNORE_CASE
     )
 
+    // Timestamp until which DM sexual-block & Settings anti-tamper are unlocked (via 15-min code or setup grace)
     @Volatile
     var pauseTamperUntilMs: Long = 0L
 
     private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun nowTimeStr(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+
+    fun isTemporarilyUnlocked(ctx: Context): Boolean {
+        val persistedUntil = prefs(ctx).getLong("unlock_until_ms", 0L)
+        val effectiveUntil = maxOf(pauseTamperUntilMs, persistedUntil)
+        pauseTamperUntilMs = effectiveUntil
+        return System.currentTimeMillis() < effectiveUntil
+    }
+
+    fun getUnlockRemainingSeconds(ctx: Context): Long {
+        val persistedUntil = prefs(ctx).getLong("unlock_until_ms", 0L)
+        val effectiveUntil = maxOf(pauseTamperUntilMs, persistedUntil)
+        return maxOf(0L, (effectiveUntil - System.currentTimeMillis()) / 1000L)
+    }
+
+    fun grantTemporaryUnlock(ctx: Context, durationMs: Long) {
+        val until = System.currentTimeMillis() + durationMs
+        pauseTamperUntilMs = until
+        prefs(ctx).edit().putLong("unlock_until_ms", until).apply()
+    }
+
+    // Generates a deterministic 4-digit 15-minute unlock code from the Family Token + 15-min time bucket
+    // Works both offline (time-bucket math) AND online (pushed over the relay channel)
+    fun generate15MinUnlockCode(ctx: Context, bucketOffset: Long = 0L): String {
+        val token = getOrCreateFamilyToken(ctx)
+        val bucket = (System.currentTimeMillis() / 900_000L) + bucketOffset
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest("unlock15:$token:$bucket".toByteArray(Charsets.UTF_8))
+        val num = ((digest[0].toInt() and 0xFF) shl 24) or
+            ((digest[1].toInt() and 0xFF) shl 16) or
+            ((digest[2].toInt() and 0xFF) shl 8) or
+            (digest[3].toInt() and 0xFF)
+        val fourDigit = abs(num) % 10000
+        return "%04d".format(Locale.US, fourDigit)
+    }
+
+    // Verifies a 4-digit 15-minute code entered on the Child Phone (checks current/adjacent 15-min buckets + synced code)
+    fun verify15MinUnlockCode(ctx: Context, inputCode: String): Boolean {
+        val clean = inputCode.trim()
+        if (clean.length != 4) return false
+        for (offset in -1L..1L) {
+            if (clean == generate15MinUnlockCode(ctx, offset)) return true
+        }
+        val syncedCode = prefs(ctx).getString("synced_15m_code", "") ?: ""
+        val syncedExp = prefs(ctx).getLong("synced_15m_exp", 0L)
+        if (clean == syncedCode && System.currentTimeMillis() < syncedExp) return true
+        return false
+    }
+
+    fun push15MinUnlockCodeFromParent(ctx: Context, code: String) {
+        val exp = System.currentTimeMillis() + 15 * 60 * 1000L
+        prefs(ctx).edit()
+            .putString("synced_15m_code", code)
+            .putLong("synced_15m_exp", exp)
+            .apply()
+        val topic = getChannelTopic(ctx)
+        val payload = JSONObject().apply {
+            put("type", "unlock_code")
+            put("code", code)
+            put("exp", exp)
+            put("time", SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date()))
+        }.toString()
+        postToChannel(ctx, topic, payload, null)
+    }
 
     @Synchronized
     fun addCheckpointLog(ctx: Context, step: String, detail: String) {
@@ -119,7 +183,6 @@ object GuardEngine {
     fun isChildMode(ctx: Context): Boolean = getRole(ctx) == "child"
     fun isParentMode(ctx: Context): Boolean = getRole(ctx) == "parent"
 
-    // Uses a 128-bit cryptographic UUID token so two families can NEVER accidentally collide
     fun getOrCreateFamilyToken(ctx: Context): String {
         val existing = prefs(ctx).getString("family_uuid_token", null)
         if (!existing.isNullOrBlank()) return existing
@@ -147,7 +210,6 @@ object GuardEngine {
     fun hasSentInitialSetupConfirmation(ctx: Context): Boolean = prefs(ctx).getBoolean("sent_setup_ok", false)
     fun markInitialSetupConfirmationSent(ctx: Context, sent: Boolean) = prefs(ctx).edit().putBoolean("sent_setup_ok", sent).apply()
 
-    // Derives an unguessable 32-hex relay channel from the 128-bit UUID token
     // shortcut: uses public ntfy.sh JSON pub/sub topic derived via SHA-256 of 128-bit UUID token, upgrade to self-hosted relay for enterprise scale
     fun getChannelTopic(ctx: Context): String {
         val token = getOrCreateFamilyToken(ctx)
@@ -156,7 +218,6 @@ object GuardEngine {
         return "ig_hk_$hex"
     }
 
-    // Visual 4-emoji security fingerprint so parents & kids can verify pairing at a glance
     fun getSafetyEmojis(ctx: Context): String {
         val token = getOrCreateFamilyToken(ctx)
         val digest = MessageDigest.getInstance("SHA-256").digest(token.toByteArray(Charsets.UTF_8))
@@ -166,7 +227,6 @@ object GuardEngine {
         }
     }
 
-    // Builds a one-tap shareable invite payload containing both a clickable deep link and clipboard tag
     fun buildPairingInviteText(ctx: Context): String {
         val token = getOrCreateFamilyToken(ctx)
         val pin = getPin(ctx)
@@ -181,21 +241,17 @@ object GuardEngine {
         }
     }
 
-    // Parses a pairing token + PIN from either a deep link URI or clipboard text
     fun parsePairingString(raw: String): Pair<String, String>? {
         val text = raw.trim()
-        // 1. Check bracketed tag [IGGUARD-PAIR:uuid:pin]
         val tagMatch = Regex("IGGUARD-PAIR:([a-zA-Z0-9\\-]{8,64}):(\\d{4,8})").find(text)
         if (tagMatch != null) {
             return tagMatch.groupValues[1] to tagMatch.groupValues[2]
         }
-        // 2. Check URI query parameters (?token=...&pin=...)
         if (text.contains("token=")) {
             val token = Regex("token=([a-zA-Z0-9\\-]{8,64})").find(text)?.groupValues?.get(1)
             val pin = Regex("pin=(\\d{4,8})").find(text)?.groupValues?.get(1) ?: "1234"
             if (!token.isNullOrEmpty()) return token to pin
         }
-        // 3. Check bare UUID
         val uuidMatch = Regex("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$").find(text)
         if (uuidMatch != null) {
             return uuidMatch.value to "1234"
@@ -428,6 +484,16 @@ object GuardEngine {
                 setTrustedHandles(ctx, list)
                 addCheckpointLog(ctx, "CP4-SYNC", "Updated trusted list (${list.size} handles)")
             }
+        } else if (msgType == "unlock_code") {
+            val code = inner.optString("code")
+            val exp = inner.optLong("exp", 0L)
+            if (code.isNotEmpty() && exp > 0L) {
+                prefs(ctx).edit()
+                    .putString("synced_15m_code", code)
+                    .putLong("synced_15m_exp", exp)
+                    .apply()
+                addCheckpointLog(ctx, "CP4-SYNC", "Received 15-min unlock code from Parent")
+            }
         } else if (msgType == "alert" && role == "parent") {
             saveAlertToParentHistory(ctx, inner)
             addCheckpointLog(ctx, "CP4-RECV", "Received ${inner.optString("reason")} from ${inner.optString("sender")}")
@@ -462,7 +528,7 @@ object GuardEngine {
     }
 }
 
-// 1. CHILD ONLY: Reads all incoming Instagram DM notifications without duplicating recipient account as sender
+// 1. CHILD ONLY: Reads all incoming Instagram DM notifications in background
 class IgNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
@@ -566,7 +632,7 @@ class IgNotificationListener : NotificationListenerService() {
                 continue
             }
             GuardEngine.sendAlertFromChild(this, reason, sender, body)
-            if (reason == "sexual_or_grooming_content") {
+            if (reason == "sexual_or_grooming_content" && !GuardEngine.isTemporarilyUnlocked(this)) {
                 wipeNotification = true
             }
         }
@@ -589,23 +655,32 @@ class IgNotificationListener : NotificationListenerService() {
     }
 }
 
-// 2. CHILD ONLY: Forces Instagram notifications ON + scans live open Instagram DM threads
+// 2. CHILD ONLY: Reads active Instagram DMs in real time WITHOUT kicking child out of the DM Inbox!
 class IgAccessibilityService : AccessibilityService() {
 
     private var lastScanMs = 0L
-    private var lastOpenChatSignature = ""
+
+    private data class ScreenTextItem(
+        val text: String,
+        val top: Int,
+        val bottom: Int,
+        val left: Int,
+        val right: Int,
+        val isEditable: Boolean
+    )
 
     private val igUiChrome = setOf(
-        "message...", "訊息⋯⋯", "發送訊息...", "傳送訊息...", "send", "傳送", "search", "搜尋",
+        "message...", "訊息⋯⋯", "訊息...", "發送訊息...", "傳送訊息...", "send", "傳送", "search", "搜尋",
         "instagram", "chats", "聊天室", "requests", "陌生訊息", "general", "一般", "primary", "主要",
         "active now", "目前在線上", "online", "在線", "typing...", "輸入中...", "seen", "已讀",
-        "today", "今天", "yesterday", "昨天", "reply", "回覆"
+        "today", "今天", "yesterday", "昨天", "reply", "回覆", "messages", "訊息", "back", "返回",
+        "audio call", "語音通話", "video call", "視訊通話", "new message", "新訊息"
     )
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         GuardEngine.cpAccConnected = true
-        GuardEngine.pauseTamperUntilMs = maxOf(GuardEngine.pauseTamperUntilMs, System.currentTimeMillis() + 60_000L)
+        GuardEngine.grantTemporaryUnlock(this, 60_000L)
         GuardEngine.addCheckpointLog(this, "CP1-ACC", "Accessibility Connected ✅ (60s setup grace active)")
     }
 
@@ -614,7 +689,7 @@ class IgAccessibilityService : AccessibilityService() {
 
         val pkg = event?.packageName?.toString() ?: return
         val now = System.currentTimeMillis()
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastScanMs < 400L) {
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastScanMs < 450L) {
             return
         }
         lastScanMs = now
@@ -622,14 +697,17 @@ class IgAccessibilityService : AccessibilityService() {
         GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
 
         val root = rootInActiveWindow ?: return
-        val texts = ArrayList<String>(80)
-        collectTexts(root, texts)
-        if (texts.isEmpty()) return
-        val joined = texts.joinToString(" ")
+        val dmUnlocked = GuardEngine.isTemporarilyUnlocked(this)
 
-        val tamperPaused = now < GuardEngine.pauseTamperUntilMs
+        val screenHeight = resources.displayMetrics.heightPixels.coerceAtLeast(1200)
+        val items = ArrayList<ScreenTextItem>(90)
+        collectScreenItems(root, items)
+        if (items.isEmpty()) return
 
-        if (!tamperPaused && isSettingsPackage(pkg)) {
+        val joined = items.joinToString(" ") { it.text }
+
+        // A. Prevent teen from turning off Instagram notifications or disabling IG Guard in Android OS Settings
+        if (!dmUnlocked && isSettingsPackage(pkg)) {
             val isIgNotificationPage = joined.contains("Instagram", ignoreCase = true) &&
                 (joined.contains("Allow notifications", ignoreCase = true) ||
                     joined.contains("Show notifications", ignoreCase = true) ||
@@ -653,77 +731,96 @@ class IgAccessibilityService : AccessibilityService() {
                     this,
                     "tamper_attempt",
                     "Android Settings",
-                    "Child tried to open Settings for Instagram / IG Guard: ${joined.take(100)}"
+                    "Child tried to open Android Settings for Instagram / IG Guard: ${joined.take(100)}"
                 )
                 return
             }
         }
 
+        // B. Inside native Instagram app: allow child to enter DM Inbox & chat freely while intercepting active DMs!
         if (pkg == "com.instagram.android") {
-            val isMutingInApp = joined.contains("Pause all", ignoreCase = true) ||
+            // 1. Only block explicit in-app mute screens (Fixed: removed the broad "通知+訊息+關閉" rule that falsely kicked child out of DM Inbox!)
+            val isExplicitMuteScreen = joined.contains("Pause all", ignoreCase = true) ||
                 joined.contains("暫停所有") ||
                 joined.contains("Mute messages", ignoreCase = true) ||
                 joined.contains("Mute chat", ignoreCase = true) ||
                 joined.contains("將訊息設為靜音") ||
-                joined.contains("靜音訊息") ||
-                ((joined.contains("Notifications", ignoreCase = true) || joined.contains("通知")) &&
-                    (joined.contains("Messages", ignoreCase = true) || joined.contains("訊息")) &&
-                    (joined.contains("Off", ignoreCase = true) || joined.contains("關閉")))
+                joined.contains("靜音訊息")
 
-            if (!tamperPaused && isMutingInApp) {
-                performGlobalAction(GLOBAL_ACTION_HOME)
+            if (!dmUnlocked && isExplicitMuteScreen) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
                 GuardEngine.sendAlertFromChild(
                     this,
                     "tamper_attempt",
-                    "Instagram In-App Settings",
-                    "Child tried to mute notifications or a DM chat inside Instagram."
+                    "Instagram Mute Settings",
+                    "Child tried to mute Instagram notifications or a DM chat."
                 )
                 return
             }
 
+            // 2. Detect if child is inside an ACTIVE 1-on-1 DM Conversation (vs. the DM Inbox list or Reels/Feed)
+            // An active DM chat has a message input bar in the bottom 35% of the screen
+            val hasBottomComposer = items.any { item ->
+                item.top > (screenHeight * 0.60).toInt() && (
+                    item.isEditable ||
+                        item.text.contains("Message...", ignoreCase = true) ||
+                        item.text.contains("發送訊息") ||
+                        item.text.contains("傳送訊息") ||
+                        item.text.contains("訊息...") ||
+                        item.text.contains("訊息⋯")
+                    )
+            }
+
+            if (!hasBottomComposer) {
+                // Child is on the DM Inbox list or Feed -> DO NOT kick them out or scan inbox preview snippets!
+                return
+            }
+
+            // 3. Extract the conversation partner's name/handle from the top header bar (top 22% of screen)
             val ownHandles = GuardEngine.getChildOwnHandles(this)
-            val isInboxList = (joined.contains("Chats", ignoreCase = true) && joined.contains("Requests", ignoreCase = true)) ||
-                (joined.contains("聊天室") && joined.contains("陌生訊息"))
-            val isInsideDmThread = !isInboxList && texts.any {
-                val low = it.lowercase()
-                low.contains("message...") || low.contains("發送訊息") || low.contains("傳送訊息") || low.contains("訊息...") || low.contains("訊息⋯")
+            val headerCandidates = items.filter { item ->
+                val clean = item.text.trim()
+                val low = clean.lowercase().removePrefix("@")
+                item.bottom <= (screenHeight * 0.24).toInt() &&
+                    !item.isEditable &&
+                    clean.length in 2..35 &&
+                    low !in igUiChrome &&
+                    low !in ownHandles &&
+                    !low.matches(Regex("^\\d{1,2}:\\d{2}.*"))
             }
 
-            val peerHeader = if (isInsideDmThread) {
-                texts.firstOrNull { line ->
-                    val low = line.trim().lowercase().removePrefix("@")
-                    line.length in 2..35 &&
-                        low !in igUiChrome &&
-                        low !in ownHandles &&
-                        !low.matches(Regex("^\\d{1,2}:\\d{2}.*"))
-                } ?: "Instagram_Open_Chat"
-            } else {
-                "Instagram_Screen"
+            // Prefer the handle (@username) or display name in the header
+            val peerHeader = headerCandidates.lastOrNull()?.text?.trim() ?: "Instagram_Open_Chat"
+            val isPeerTrusted = GuardEngine.isTrustedSender(this, peerHeader, "")
+
+            // 4. Extract visible message bubbles in the middle chat area (between 18% and 82% of screen height)
+            val chatBubbles = items.filter { item ->
+                val clean = item.text.trim()
+                val low = clean.lowercase().removePrefix("@")
+                item.top >= (screenHeight * 0.18).toInt() &&
+                    item.bottom <= (screenHeight * 0.84).toInt() &&
+                    !item.isEditable &&
+                    clean != peerHeader &&
+                    clean.length >= 2 &&
+                    low !in igUiChrome &&
+                    low !in ownHandles &&
+                    !low.matches(Regex("^\\d{1,2}:\\d{2}.*"))
             }
 
-            for (line in texts) {
-                if (GuardEngine.SEXUAL_PATTERN.containsMatchIn(line)) {
-                    performGlobalAction(GLOBAL_ACTION_HOME)
-                    GuardEngine.sendAlertFromChild(this, "sexual_or_grooming_content", peerHeader, line)
-                    return
-                }
-            }
-
-            if (isInsideDmThread && !GuardEngine.isTrustedSender(this, peerHeader, "")) {
-                val sampleMsg = texts.lastOrNull { line ->
-                    val low = line.trim().lowercase().removePrefix("@")
-                    line != peerHeader &&
-                        low !in igUiChrome &&
-                        low !in ownHandles &&
-                        !low.contains("message...") &&
-                        !low.contains("訊息") &&
-                        line.length >= 2
-                } ?: return
-
-                val sig = "${peerHeader.lowercase()}|${sampleMsg.lowercase()}"
-                if (sig != lastOpenChatSignature) {
-                    lastOpenChatSignature = sig
-                    GuardEngine.sendAlertFromChild(this, "stranger_message", peerHeader, sampleMsg)
+            // 5. Inspect active chat bubbles in real time while child is chatting
+            for (bubble in chatBubbles) {
+                val msgText = bubble.text.trim()
+                if (GuardEngine.SEXUAL_PATTERN.containsMatchIn(msgText)) {
+                    // Always alert parent when sexual/grooming text appears in an active chat
+                    GuardEngine.sendAlertFromChild(this, "sexual_or_grooming_content", peerHeader, msgText)
+                    // Only back out of the thread if NOT unlocked by Parent's 15-minute code
+                    if (!dmUnlocked) {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        return
+                    }
+                } else if (!isPeerTrusted) {
+                    // Actively intercept stranger DM messages while child is chatting (without kicking child out!)
+                    GuardEngine.sendAlertFromChild(this, "stranger_message", peerHeader, msgText)
                 }
             }
         }
@@ -735,11 +832,25 @@ class IgAccessibilityService : AccessibilityService() {
             pkg == "com.coloros.safecenter"
     }
 
-    private fun collectTexts(node: AccessibilityNodeInfo?, out: MutableList<String>) {
-        if (node == null || out.size >= 100) return
-        node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { out.add(it) }
+    private fun collectScreenItems(node: AccessibilityNodeInfo?, out: MutableList<ScreenTextItem>) {
+        if (node == null || out.size >= 95) return
+        val rawText = node.text?.toString()?.trim() ?: ""
+        if (rawText.isNotEmpty() || node.isEditable) {
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            out.add(
+                ScreenTextItem(
+                    text = rawText,
+                    top = rect.top,
+                    bottom = rect.bottom,
+                    left = rect.left,
+                    right = rect.right,
+                    isEditable = node.isEditable
+                )
+            )
+        }
         for (i in 0 until node.childCount) {
-            collectTexts(node.getChild(i), out)
+            collectScreenItems(node.getChild(i), out)
         }
     }
 
@@ -896,13 +1007,14 @@ class ParentAlertService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
-// 4. All-in-One Parent & Child UI with Auto Permission Popups + Collision-Free Pairing
+// 4. All-in-One Parent & Child UI with 15-Min Unlock Code Generator & Active DM Interception
 class MainActivity : Activity() {
 
     private lateinit var rootContainer: LinearLayout
     private val uiHandler = Handler(Looper.getMainLooper())
     private var activePermissionDialog: AlertDialog? = null
     private var showAdvancedLogs: Boolean = false
+    private var displayed15MinCode: String = ""
 
     private val refreshReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -932,7 +1044,6 @@ class MainActivity : Activity() {
         handleDeepLinkIntent(intent)
     }
 
-    // Automatically pairs the Child Phone if opened via `igguard://pair?token=...&pin=...` deep link
     private fun handleDeepLinkIntent(intent: Intent?) {
         val dataStr = intent?.dataString ?: return
         val parsed = GuardEngine.parsePairingString(dataStr) ?: return
@@ -972,7 +1083,6 @@ class MainActivity : Activity() {
         }
     }
 
-    // Guided Step-by-Step Permission Popup Wizard so users of any age don't have to hunt through Settings
     private fun checkAndShowGuidedPermissionPopup() {
         activePermissionDialog?.dismiss()
         val role = GuardEngine.getRole(this)
@@ -1002,7 +1112,7 @@ class MainActivity : Activity() {
 
         if (!accOn) {
             activePermissionDialog = AlertDialog.Builder(this)
-                .setTitle("🛡️ 第 2 步（最後一步）：開啟防篡改保護鎖")
+                .setTitle("🛡️ 第 2 步（最後一步）：開啟防篡改及實時保護鎖")
                 .setMessage(
                     "最後一步！請點選下方「完成設定」，進入「已安裝的應用程式 (Installed apps)」→「IG Guard Anti-Tamper」並打開開關。\n\n" +
                         "💡 如出現「限制設定」灰色無法點選，請先按左下方「解除限制設定」→ 右上角「⋮」→「允許受限設定」。"
@@ -1018,7 +1128,6 @@ class MainActivity : Activity() {
             return
         }
 
-        // Both permissions are now ON -> automatically notify the Parent Phone once!
         if (!GuardEngine.hasSentInitialSetupConfirmation(this)) {
             GuardEngine.markInitialSetupConfirmationSent(this, true)
             GuardEngine.sendAlertFromChild(
@@ -1033,7 +1142,7 @@ class MainActivity : Activity() {
     }
 
     private fun openAppDetailsSettings() {
-        GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
+        GuardEngine.grantTemporaryUnlock(this, 180_000L)
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.fromParts("package", packageName, null)
         }
@@ -1041,7 +1150,7 @@ class MainActivity : Activity() {
     }
 
     private fun openNotificationListenerSettingsHighlighted() {
-        GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
+        GuardEngine.grantTemporaryUnlock(this, 180_000L)
         val cn = ComponentName(this, IgNotificationListener::class.java).flattenToString()
         val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
             putExtra(":settings:fragment_args_key", cn)
@@ -1053,7 +1162,7 @@ class MainActivity : Activity() {
     }
 
     private fun openAccessibilitySettingsHighlighted() {
-        GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
+        GuardEngine.grantTemporaryUnlock(this, 180_000L)
         val cn = ComponentName(this, IgAccessibilityService::class.java).flattenToString()
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
             putExtra(":settings:fragment_args_key", cn)
@@ -1085,7 +1194,7 @@ class MainActivity : Activity() {
         rootContainer.removeAllViews()
         val role = GuardEngine.getRole(this)
 
-        rootContainer.addView(label("IG Teen Guard v4.0 • 家庭守護系統", 22f, "#F8FAFC", bold = true))
+        rootContainer.addView(label("IG Teen Guard v4.1 • 家庭守護系統", 22f, "#F8FAFC", bold = true))
         val badgeText = when (role) {
             "parent" -> "👨‍👩‍👧 家長手機模式 (Parent Phone) • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
             "child" -> "🧒 子女保護模式 🔒 (Child Phone) • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
@@ -1113,20 +1222,18 @@ class MainActivity : Activity() {
         }
     }
 
-    // ================= COLLISION-FREE EASY ONBOARDING =================
     private fun renderEasyOnboardingScreen() {
-        // Card A: For Parents (1-tap setup -> generates unique 128-bit family token automatically)
         val parentCard = makeCard()
         parentCard.addView(label("👨‍👩‍👧 我是家長 (I am the Parent)", 19f, "#38BDF8", bold = true, bottomPad = 8))
         parentCard.addView(
             label(
-                "系統會自動產生全球唯一嘅 128-bit 加密家庭金鑰（絕不會同其他家庭撞碼）。請設定 4 位數家長密碼，然後按下方按鈕。",
+                "系統會自動產生全球唯一嘅 128-bit 加密家庭金鑰（絕不會同其他家庭撞碼）。請設定 4 位數家長主密碼，然後按下方按鈕。",
                 13f,
                 "#CBD5E1",
                 bottomPad = 14
             )
         )
-        val pinInput = inputBox("設定 4 位數家長密碼 (Parent PIN, 預設 1234)", GuardEngine.getPin(this), isPassword = false)
+        val pinInput = inputBox("設定 4 位數家長主密碼 (Master PIN, 預設 1234)", GuardEngine.getPin(this), isPassword = false)
         parentCard.addView(pinInput)
 
         parentCard.addView(
@@ -1140,7 +1247,6 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(parentCard)
 
-        // Card B: For Child's Phone (1-tap paste from WhatsApp/SMS or manual token paste — zero accidental collision)
         val childCard = makeCard()
         childCard.addView(label("🧒 這是子女手機 (This is the Child's Phone)", 19f, "#4ADE80", bold = true, bottomPad = 8))
         childCard.addView(
@@ -1198,13 +1304,45 @@ class MainActivity : Activity() {
 
     // ================= PARENT MODE UI =================
     private fun renderParentDashboard() {
-        // 1. Exclusive Family Pairing & Invite Card
+        // 1. 15-Minute Temporary Unlock Code Generator Card (New!)
+        val unlockGenCard = makeCard()
+        unlockGenCard.addView(label("🔑 產生 15 分鐘子女臨時解鎖碼 (15-Min Unlock Code)", 17f, "#4ADE80", bold = true, bottomPad = 8))
+        unlockGenCard.addView(
+            label(
+                "無需透露您嘅家長主密碼！按下方按鈕即可產生一個 4 位數「15 分鐘臨時解鎖碼」，讓子女在手機輸入後暫時解鎖 15 分鐘（離線及連線均有效）。",
+                13f,
+                "#CBD5E1",
+                bottomPad = 12
+            )
+        )
+        if (displayed15MinCode.isNotEmpty()) {
+            unlockGenCard.addView(
+                label(
+                    "👉 當前 15 分鐘臨時解鎖碼：$displayed15MinCode",
+                    20f,
+                    "#FBBF24",
+                    bold = true,
+                    bottomPad = 14
+                )
+            )
+        }
+        unlockGenCard.addView(
+            actionButton("🔑 立即產生 4 位數 15 分鐘解鎖碼 (Generate 4-Digit Code)", "#16A34A") {
+                val code = GuardEngine.generate15MinUnlockCode(this)
+                displayed15MinCode = code
+                GuardEngine.push15MinUnlockCodeFromParent(this, code)
+                Toast.makeText(this, "✅ 已產生 15 分鐘解鎖碼：$code", Toast.LENGTH_LONG).show()
+                renderUi()
+            }
+        )
+        rootContainer.addView(unlockGenCard)
+
+        // 2. Exclusive Family Pairing & Invite Card
         val pairCard = makeCard()
-        pairCard.addView(label("🔗 第一步：配對子女手機 (防撞碼專屬金鑰)", 17f, "#FFFFFF", bold = true, bottomPad = 8))
+        pairCard.addView(label("🔗 配對子女手機 (防撞碼專屬金鑰)", 17f, "#FFFFFF", bold = true, bottomPad = 8))
         pairCard.addView(
             label(
                 "• 家庭安全核對圖案：${GuardEngine.getSafetyEmojis(this)}\n" +
-                    "  （配對後，家長與子女手機頂部會顯示相同嘅 4 個圖案，確保 100% 唔會連錯其他家庭）\n" +
                     "• 實時連線狀態：${GuardEngine.cpParentStreamState}",
                 13f,
                 "#CBD5E1",
@@ -1232,13 +1370,13 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(pairCard)
 
-        // 2. Trusted Friends Card
+        // 3. Trusted Friends Card
         val trustCard = makeCard()
         trustCard.addView(label("✅ 子女信任名單 (Approved IG Friends)", 17f, "#FFFFFF", bold = true, bottomPad = 8))
         val currentHandles = GuardEngine.getTrustedHandles(this)
         trustCard.addView(
             label(
-                "名單內嘅朋友傳送正常訊息唔會觸發警報（但出現色情字眼仍會攔截）：\n" +
+                "名單內嘅朋友與子女正常傾偈唔會發送陌生人警報（但出現色情/誘拐字眼仍會攔截並通知家長）：\n" +
                     if (currentHandles.isEmpty()) "(未設定)" else currentHandles.joinToString(", ") { "@$it" },
                 13f,
                 "#38BDF8",
@@ -1254,7 +1392,7 @@ class MainActivity : Activity() {
         trustCard.addView(handlesInput)
 
         trustCard.addView(
-            actionButton("💾 儲存並同步信任名單去子女手機", "#16A34A") {
+            actionButton("💾 儲存並同步信任名單去子女手機", "#0284C7") {
                 val updated = handlesInput.text.toString().split(",")
                 GuardEngine.setTrustedHandles(this, updated)
                 GuardEngine.syncTrustedFromParent(this)
@@ -1264,7 +1402,7 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(trustCard)
 
-        // 3. Live Alert Inbox Card
+        // 4. Live Alert Inbox Card
         val inboxCard = makeCard()
         inboxCard.addView(label("🚨 子女 IG 即時警報記錄 (Child Alert Inbox)", 17f, "#FFFFFF", bold = true, bottomPad = 12))
 
@@ -1279,7 +1417,7 @@ class MainActivity : Activity() {
         if (alerts.isEmpty()) {
             inboxCard.addView(
                 label(
-                    "暫時未有警報。當子女手機完成 2 個權限彈窗設定後，呢度會收到「✅ 子女手機已完成配對」通知。",
+                    "暫時未有警報。子女可以正常進入 IG DM 傾偈，背景通知與畫面實時掃描均已生效。",
                     14f,
                     "#94A3B8",
                     bottomPad = 8
@@ -1298,7 +1436,7 @@ class MainActivity : Activity() {
                     "tamper_attempt" -> "🟠 嘗試更改設定警告"
                     "stranger_message" -> "🟡 陌生人私訊 (Stranger DM)"
                     "pairing_verified" -> "🟢 子女手機配對成功"
-                    else -> "🔔 系統測試通知"
+                    else -> "🔔 系統通知"
                 }
                 itemBox.addView(label("$badge  •  $time", 12f, "#F8FAFC", bold = true, bottomPad = 4))
                 itemBox.addView(label("發送者 (Sender): $sender", 14f, "#38BDF8", bold = true, bottomPad = 4))
@@ -1335,13 +1473,13 @@ class MainActivity : Activity() {
         val notifOn = isNotificationListenerEnabled(this)
         val accOn = isAccessibilityEnabled(this)
         val allReady = notifOn && accOn
-        val graceRemainingSec = maxOf(0L, (GuardEngine.pauseTamperUntilMs - System.currentTimeMillis()) / 1000L)
+        val unlockRemainingSec = GuardEngine.getUnlockRemainingSeconds(this)
         val ownHandles = GuardEngine.getChildOwnHandles(this)
 
         val statusCard = makeCard()
         statusCard.addView(
             label(
-                if (allReady) "✅ 所有保護已全面啟動 (Protection Active)" else "⚠️ 尚有保護權限未開啟 (Setup Incomplete)",
+                if (allReady) "✅ 所有保護已全面啟動 (可正常使用 IG DM)" else "⚠️ 尚有保護權限未開啟 (Setup Incomplete)",
                 18f,
                 if (allReady) "#4ADE80" else "#FBBF24",
                 bold = true,
@@ -1350,10 +1488,10 @@ class MainActivity : Activity() {
         )
         statusCard.addView(
             label(
-                "• 家庭安全核對圖案：${GuardEngine.getSafetyEmojis(this)}（請確認與家長手機一致）\n" +
+                "• 家庭安全核對圖案：${GuardEngine.getSafetyEmojis(this)}\n" +
                     "• 步驟 1 訊息通知讀取：${if (notifOn) "已開啟 ✅" else "未開啟 ❌"}\n" +
-                    "• 步驟 2 防篡改保護鎖：${if (accOn) "已開啟 ✅" else "未開啟 ❌"}\n" +
-                    "• 設定防篡改狀態：${if (graceRemainingSec > 0) "家長解鎖中（剩餘 ${graceRemainingSec} 秒）" else "已鎖定 🔒"}\n" +
+                    "• 步驟 2 實時對話掃描及防篡改鎖：${if (accOn) "已開啟 ✅" else "未開啟 ❌"}\n" +
+                    "• 保護鎖狀態：${if (unlockRemainingSec > 0) "⏳ 已臨時解鎖（剩餘 ${unlockRemainingSec / 60} 分 ${unlockRemainingSec % 60} 秒）" else "已鎖定 🔒（子女可正常使用 IG DM，陌生人/色情訊息會即時通知家長）"}\n" +
                     "• 自動識別子女 IG 帳號：${if (ownHandles.isEmpty()) "(收到首個訊息時自動識別)" else ownHandles.joinToString(", ") { "@$it" }}",
                 14f,
                 "#E2E8F0",
@@ -1397,24 +1535,56 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(statusCard)
 
-        val pinCard = makeCard()
-        pinCard.addView(label("🔐 家長專用解鎖 (Parent Unlock on Child Phone)", 16f, "#FFFFFF", bold = true, bottomPad = 8))
-        val pinInput = inputBox("輸入 4 位數家長密碼以暫停防篡改鎖 3 分鐘", "", isPassword = true)
-        pinCard.addView(pinInput)
+        // 15-Minute Temporary Unlock Card on Child Phone
+        val unlockCard = makeCard()
+        unlockCard.addView(label("🔑 輸入家長 15 分鐘臨時解鎖碼 (15-Min Unlock)", 16f, "#4ADE80", bold = true, bottomPad = 8))
+        unlockCard.addView(
+            label(
+                "請在家長手機點選「產生 4 位數 15 分鐘解鎖碼」，並在下方輸入該 4 位數號碼以暫時解鎖 15 分鐘（或輸入家長主密碼解鎖 3 分鐘）：",
+                13f,
+                "#CBD5E1",
+                bottomPad = 12
+            )
+        )
+        val codeInput = inputBox("輸入 4 位數 15 分鐘解鎖碼 (4-Digit Code)", "", isPassword = false)
+        unlockCard.addView(codeInput)
 
-        pinCard.addView(
-            actionButton("🔓 暫停設定鎖 3 分鐘 (家長調整設定用)", "#D97706") {
-                if (pinInput.text.toString() == GuardEngine.getPin(this)) {
-                    GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
-                    pinInput.setText("")
-                    Toast.makeText(this, "已解鎖 3 分鐘", Toast.LENGTH_LONG).show()
+        unlockCard.addView(
+            actionButton("🔓 驗證解鎖碼並解鎖 15 分鐘 (Unlock for 15 Mins)", "#16A34A") {
+                val entered = codeInput.text.toString().trim()
+                if (GuardEngine.verify15MinUnlockCode(this, entered)) {
+                    GuardEngine.grantTemporaryUnlock(this, 15 * 60 * 1000L)
+                    codeInput.setText("")
+                    GuardEngine.sendAlertFromChild(
+                        this,
+                        "unlock_used",
+                        "@child_phone",
+                        "子女手機已使用 4 位數臨時解鎖碼解鎖 15 分鐘",
+                        bypassDedupe = true
+                    )
+                    Toast.makeText(this, "✅ 已成功解鎖 15 分鐘！", Toast.LENGTH_LONG).show()
+                    renderUi()
+                } else if (entered == GuardEngine.getPin(this)) {
+                    GuardEngine.grantTemporaryUnlock(this, 3 * 60 * 1000L)
+                    codeInput.setText("")
+                    Toast.makeText(this, "✅ 家長主密碼正確：已解鎖 3 分鐘", Toast.LENGTH_LONG).show()
                     renderUi()
                 } else {
-                    Toast.makeText(this, "家長密碼不正確", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "❌ 解鎖碼不正確或已過期", Toast.LENGTH_SHORT).show()
                 }
             }
         )
-        rootContainer.addView(pinCard)
+
+        if (unlockRemainingSec > 0) {
+            unlockCard.addView(
+                actionButton("🔒 立即重新上鎖 (Re-Lock Now)", "#D97706") {
+                    GuardEngine.grantTemporaryUnlock(this, 0L)
+                    Toast.makeText(this, "🔒 已重新啟動保護鎖", Toast.LENGTH_SHORT).show()
+                    renderUi()
+                }
+            )
+        }
+        rootContainer.addView(unlockCard)
     }
 
     private fun renderCollapsibleDiagnostics() {
@@ -1451,16 +1621,16 @@ class MainActivity : Activity() {
         val card = makeCard()
         card.addView(label("⚙️ 重設手機身份或更換配對 (Reset Role / Pairing)", 15f, "#94A3B8", bold = true, bottomPad = 8))
         if (requirePin) {
-            val pinInput = inputBox("輸入家長密碼以切換手機角色", "", isPassword = true)
+            val pinInput = inputBox("輸入家長主密碼以切換手機角色", "", isPassword = true)
             card.addView(pinInput)
             card.addView(
-                actionButton("切換手機角色 / 重新配對 (需要家長密碼)", "#475569") {
+                actionButton("切換手機角色 / 重新配對 (需要家長主密碼)", "#475569") {
                     if (pinInput.text.toString() == GuardEngine.getPin(this)) {
                         GuardEngine.setRole(this, "unconfigured")
                         syncRoleServices()
                         renderUi()
                     } else {
-                        Toast.makeText(this, "家長密碼錯誤！", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "家長主密碼錯誤！", Toast.LENGTH_SHORT).show()
                     }
                 }
             )
