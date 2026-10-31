@@ -685,7 +685,7 @@ class ParentAlertService : Service() {
                             GuardEngine.cpParentStreamState = "Live Stream CONNECTED ✅ (HTTP 200)"
                             GuardEngine.addCheckpointLog(applicationContext, "CP4-STREAM", "Connected to live stream ($topic)")
                             BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
-                                var line: String?
+                                var line: String? = null
                                 while (running && GuardEngine.isParentMode(applicationContext) &&
                                     reader.readLine().also { line = it } != null
                                 ) {
