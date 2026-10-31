@@ -170,10 +170,6 @@ jobs:
 
                       keyPassword "igguard2026"
 
-                      enableV1Signing true
-
-                      enableV2Signing true
-
                   }
 
               }
@@ -190,7 +186,7 @@ jobs:
 
                   release {
 
-                      isMinifyEnabled false
+                      minifyEnabled false
 
                       signingConfig signingConfigs.persistentKey
 
