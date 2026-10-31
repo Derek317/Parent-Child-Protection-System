@@ -60,8 +60,6 @@ jobs:
 
 
 
-          # Restore fixed persistent signing keystore so every APK update installs in-place without uninstalling!
-
           echo "${{ secrets.RETIRED_EXPOSED_KEYSTORE }}" | base64 -d > app/ig_guard.keystore
 
 
@@ -70,7 +68,7 @@ jobs:
 
 
 
-          cat << 'EOF' > settings.gradle
+          cat << 'EOF' | sed 's/^          //' > settings.gradle
 
           pluginManagement {
 
@@ -108,7 +106,7 @@ jobs:
 
 
 
-          cat << 'EOF' > build.gradle
+          cat << 'EOF' | sed 's/^          //' > build.gradle
 
           plugins {
 
@@ -122,7 +120,7 @@ jobs:
 
 
 
-          cat << EOF > app/build.gradle
+          cat << EOF | sed 's/^          //' > app/build.gradle
 
           plugins {
 
@@ -216,9 +214,7 @@ jobs:
 
 
 
-          cat << 'EOF' > app/src/main/res/values/strings.xml
-
-          <?xml version="1.0" encoding="utf-8"?>
+          cat << 'EOF' | sed 's/^          //' > app/src/main/res/values/strings.xml
 
           <resources>
 
@@ -232,11 +228,7 @@ jobs:
 
 
 
-          # Strictly scope AccessibilityService to Instagram & Settings packages so Play Protect sees it cannot read banking/other apps
-
-          cat << 'EOF' > app/src/main/res/xml/accessibility_config.xml
-
-          <?xml version="1.0" encoding="utf-8"?>
+          cat << 'EOF' | sed 's/^          //' > app/src/main/res/xml/accessibility_config.xml
 
           <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
 
@@ -258,9 +250,7 @@ jobs:
 
 
 
-          cat << 'EOF' > app/src/main/AndroidManifest.xml
-
-          <?xml version="1.0" encoding="utf-8"?>
+          cat << 'EOF' | sed 's/^          //' > app/src/main/AndroidManifest.xml
 
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -395,4 +385,3 @@ jobs:
           name: ig-guard-apk
 
           path: app/build/outputs/apk/debug/app-debug.apk
-
