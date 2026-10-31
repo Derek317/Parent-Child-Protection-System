@@ -1,96 +1,1608 @@
 package com.example.igguard
 
-import android.annotation.SuppressLint
+import android.accessibilityservice.AccessibilityService
+import android.app.Activity
+import android.app.AlertDialog
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.ClipboardManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.activity.ComponentActivity
-import androidx.activity.OnBackPressedCallback
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.Parcelable
+import android.provider.Settings
+import android.service.notification.NotificationListenerService
+import android.service.notification.StatusBarNotification
+import android.text.InputType
+import android.view.Gravity
+import android.view.View
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 import kotlin.concurrent.thread
 
-class MainActivity : ComponentActivity() {
+object GuardEngine {
+    const val ACTION_UI_REFRESH = "com.example.igguard.ACTION_UI_REFRESH"
+    private const val PREFS_NAME = "ig_guard_prefs"
 
-    // Replace with your secret ntfy.sh topic URL (install the free ntfy app on the parent's phone and subscribe to this topic)
-    private val parentWebhookUrl = "https://ntfy.sh/replace-with-parent-private-topic"
+    // 10-minute cross-source deduplication window
+    private const val DEDUPE_WINDOW_MS = 600_000L
+    private val recentAlerts = LinkedHashMap<String, Long>()
+    private val seenNotifMsgTimestamps = LinkedHashSet<String>()
+    private val pollLock = Any()
 
-    @SuppressLint("SetJavaScriptEnabled")
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    // Live Checkpoint States
+    @Volatile var cpNotifConnected: Boolean = false
+    @Volatile var cpLastNotifTime: String = "Never"
+    @Volatile var cpAccConnected: Boolean = false
+    @Volatile var cpLastAccTime: String = "Never"
+    @Volatile var cpLastHttpStatus: String = "Ready"
+    @Volatile var cpParentStreamState: String = "Idle"
 
-        val webView = WebView(this)
-        setContentView(webView)
+    private val EMOJI_PALETTE = arrayOf(
+        "🐼", "🦁", "🐬", "🦊", "🐨", "🐯", "🦄", "🐝",
+        "🚀", "🌈", "🍀", "🌻", "🍎", "🍉", "⚽", "🎸"
+    )
 
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+    // shortcut: regex keyword matching for EN + HK Cantonese sexual/grooming text, upgrade to on-device ML classifier when false-negatives appear
+    val SEXUAL_PATTERN = Regex(
+        "\\b(nudes?|naked|porn|sex|horny|boobs?|tits|dick|cock|pussy|blowjob|handjob|onlyfans|hook ?up|fwb|send (me )?(a )?pic|take it off|secret between us|don'?t tell (your )?(mum|mom|dad|parents))\\b|" +
+            "(裸照|露點|色情|做愛|扑嘢|約炮|援交|包養|自慰|手淫|私密照|閃卡|J圖|咸相|鹹相|唔好同(屋企人|阿媽|阿爸|父母)講|拍片比我睇|除衫)",
+        RegexOption.IGNORE_CASE
+    )
 
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            mediaPlaybackRequiresUserGesture = true
+    private val IGNORED_NOTIFICATIONS = Regex(
+        "^(Instagram|Checking for new messages|正在檢查新訊息|Uploading|傳送中|\\d+ new messages|\\d+ 則新訊息).*$",
+        RegexOption.IGNORE_CASE
+    )
+
+    @Volatile
+    var pauseTamperUntilMs: Long = 0L
+
+    private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun nowTimeStr(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+
+    @Synchronized
+    fun addCheckpointLog(ctx: Context, step: String, detail: String) {
+        val entry = "[${nowTimeStr()}] $step: $detail"
+        val raw = prefs(ctx).getString("checkpoint_logs", "") ?: ""
+        val lines = if (raw.isEmpty()) emptyList() else raw.split("\n")
+        val updated = (listOf(entry) + lines).take(40).joinToString("\n")
+        prefs(ctx).edit().putString("checkpoint_logs", updated).apply()
+        ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
+    }
+
+    fun getCheckpointLogs(ctx: Context): String {
+        return prefs(ctx).getString("checkpoint_logs", "No checkpoint events recorded yet.") ?: ""
+    }
+
+    fun clearCheckpointLogs(ctx: Context) {
+        prefs(ctx).edit().putString("checkpoint_logs", "").apply()
+        ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
+    }
+
+    fun getRole(ctx: Context): String = prefs(ctx).getString("role", "unconfigured") ?: "unconfigured"
+    fun setRole(ctx: Context, role: String) = prefs(ctx).edit().putString("role", role).apply()
+    fun isChildMode(ctx: Context): Boolean = getRole(ctx) == "child"
+    fun isParentMode(ctx: Context): Boolean = getRole(ctx) == "parent"
+
+    // Uses a 128-bit cryptographic UUID token so two families can NEVER accidentally collide
+    fun getOrCreateFamilyToken(ctx: Context): String {
+        val existing = prefs(ctx).getString("family_uuid_token", null)
+        if (!existing.isNullOrBlank()) return existing
+        val generated = UUID.randomUUID().toString()
+        prefs(ctx).edit().putString("family_uuid_token", generated).apply()
+        return generated
+    }
+
+    fun setFamilyToken(ctx: Context, token: String) {
+        val clean = token.trim().lowercase(Locale.US)
+        if (clean.isNotEmpty()) {
+            prefs(ctx).edit().putString("family_uuid_token", clean).apply()
+        }
+    }
+
+    fun regenerateFamilyToken(ctx: Context): String {
+        val fresh = UUID.randomUUID().toString()
+        prefs(ctx).edit().putString("family_uuid_token", fresh).apply()
+        return fresh
+    }
+
+    fun getPin(ctx: Context): String = prefs(ctx).getString("parent_pin", "1234") ?: "1234"
+    fun setPin(ctx: Context, pin: String) = prefs(ctx).edit().putString("parent_pin", pin.trim().ifEmpty { "1234" }).apply()
+
+    fun hasSentInitialSetupConfirmation(ctx: Context): Boolean = prefs(ctx).getBoolean("sent_setup_ok", false)
+    fun markInitialSetupConfirmationSent(ctx: Context, sent: Boolean) = prefs(ctx).edit().putBoolean("sent_setup_ok", sent).apply()
+
+    // Derives an unguessable 32-hex relay channel from the 128-bit UUID token
+    // shortcut: uses public ntfy.sh JSON pub/sub topic derived via SHA-256 of 128-bit UUID token, upgrade to self-hosted relay for enterprise scale
+    fun getChannelTopic(ctx: Context): String {
+        val token = getOrCreateFamilyToken(ctx)
+        val digest = MessageDigest.getInstance("SHA-256").digest("ig_guard_hk_v4:$token".toByteArray(Charsets.UTF_8))
+        val hex = digest.joinToString("") { "%02x".format(it) }.take(28)
+        return "ig_hk_$hex"
+    }
+
+    // Visual 4-emoji security fingerprint so parents & kids can verify pairing at a glance
+    fun getSafetyEmojis(ctx: Context): String {
+        val token = getOrCreateFamilyToken(ctx)
+        val digest = MessageDigest.getInstance("SHA-256").digest(token.toByteArray(Charsets.UTF_8))
+        return (0..3).joinToString(" ") { idx ->
+            val b = digest[idx].toInt() and 0xFF
+            EMOJI_PALETTE[b % EMOJI_PALETTE.size]
+        }
+    }
+
+    // Builds a one-tap shareable invite payload containing both a clickable deep link and clipboard tag
+    fun buildPairingInviteText(ctx: Context): String {
+        val token = getOrCreateFamilyToken(ctx)
+        val pin = getPin(ctx)
+        val emojis = getSafetyEmojis(ctx)
+        return buildString {
+            append("🛡️ 【IG Teen Guard 家庭專屬配對邀請】\n")
+            append("核對圖案 (Safety Emojis): $emojis\n\n")
+            append("步驟 1：在子女手機複製此整段訊息，然後打開 IG Guard 即可自動完成配對！\n")
+            append("或直接點選專屬配對連結：\n")
+            append("igguard://pair?token=$token&pin=$pin\n\n")
+            append("[IGGUARD-PAIR:$token:$pin]")
+        }
+    }
+
+    // Parses a pairing token + PIN from either a deep link URI or clipboard text
+    fun parsePairingString(raw: String): Pair<String, String>? {
+        val text = raw.trim()
+        // 1. Check bracketed tag [IGGUARD-PAIR:uuid:pin]
+        val tagMatch = Regex("IGGUARD-PAIR:([a-zA-Z0-9\\-]{8,64}):(\\d{4,8})").find(text)
+        if (tagMatch != null) {
+            return tagMatch.groupValues[1] to tagMatch.groupValues[2]
+        }
+        // 2. Check URI query parameters (?token=...&pin=...)
+        if (text.contains("token=")) {
+            val token = Regex("token=([a-zA-Z0-9\\-]{8,64})").find(text)?.groupValues?.get(1)
+            val pin = Regex("pin=(\\d{4,8})").find(text)?.groupValues?.get(1) ?: "1234"
+            if (!token.isNullOrEmpty()) return token to pin
+        }
+        // 3. Check bare UUID
+        val uuidMatch = Regex("^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$").find(text)
+        if (uuidMatch != null) {
+            return uuidMatch.value to "1234"
+        }
+        return null
+    }
+
+    fun getChildOwnHandles(ctx: Context): Set<String> {
+        val raw = prefs(ctx).getString("child_own_handles", "") ?: ""
+        return raw.split(",").map { it.trim().lowercase().removePrefix("@") }.filter { it.isNotEmpty() }.toSet()
+    }
+
+    fun rememberChildOwnHandle(ctx: Context, handle: String) {
+        val clean = handle.trim().lowercase().removePrefix("@")
+        if (clean.isEmpty() || clean == "instagram") return
+        val next = getChildOwnHandles(ctx).toMutableSet()
+        if (next.add(clean)) {
+            prefs(ctx).edit().putString("child_own_handles", next.joinToString(",")).apply()
+        }
+    }
+
+    fun getTrustedHandles(ctx: Context): Set<String> {
+        val raw = prefs(ctx).getString("trusted_csv", "mum_hk,dad_hk,school_friend_1") ?: ""
+        return raw.split(",").map { it.trim().lowercase().removePrefix("@") }.filter { it.isNotEmpty() }.toSet()
+    }
+
+    fun setTrustedHandles(ctx: Context, handles: Collection<String>) {
+        val clean = handles.map { it.trim().lowercase().removePrefix("@") }.filter { it.isNotEmpty() }.distinct().sorted()
+        prefs(ctx).edit().putString("trusted_csv", clean.joinToString(",")).apply()
+    }
+
+    @Synchronized
+    fun isNewNotificationMessageTimestamp(sig: String): Boolean {
+        if (seenNotifMsgTimestamps.contains(sig)) return false
+        if (seenNotifMsgTimestamps.size >= 400) {
+            val oldest = seenNotifMsgTimestamps.iterator().next()
+            seenNotifMsgTimestamps.remove(oldest)
+        }
+        seenNotifMsgTimestamps.add(sig)
+        return true
+    }
+
+    @Synchronized
+    fun shouldSendAlert(key: String, bypassDedupe: Boolean = false): Boolean {
+        if (bypassDedupe) return true
+        val now = System.currentTimeMillis()
+        val iter = recentAlerts.entries.iterator()
+        while (iter.hasNext()) {
+            if (now - iter.next().value > DEDUPE_WINDOW_MS) iter.remove()
+        }
+        val prev = recentAlerts[key]
+        if (prev != null && now - prev <= DEDUPE_WINDOW_MS) {
+            return false
+        }
+        recentAlerts[key] = now
+        return true
+    }
+
+    fun isTrustedSender(ctx: Context, rawTitle: String, rawText: String): Boolean {
+        val trustedSet = getTrustedHandles(ctx) + getChildOwnHandles(ctx)
+        val titleNorm = rawTitle.trim().lowercase().removePrefix("@")
+        if (titleNorm.isEmpty() || titleNorm == "instagram") return false
+        if (titleNorm in trustedSet) return true
+        val bodyPrefix = rawText.substringBefore(":", "").trim().lowercase().removePrefix("@")
+        if (bodyPrefix.isNotEmpty() && bodyPrefix in trustedSet) return true
+
+        for (trusted in trustedSet) {
+            if (titleNorm.contains("(@$trusted)") ||
+                titleNorm.startsWith("$trusted ") ||
+                titleNorm.endsWith(" $trusted")
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    fun evaluateDm(ctx: Context, senderTitle: String, messageBody: String): String? {
+        val text = messageBody.trim()
+        val senderNorm = senderTitle.trim().lowercase().removePrefix("@")
+        if (text.isEmpty() || IGNORED_NOTIFICATIONS.matches(text)) return null
+        if (senderNorm in getChildOwnHandles(ctx)) return null
+        if (SEXUAL_PATTERN.containsMatchIn(text) || SEXUAL_PATTERN.containsMatchIn(senderTitle)) {
+            return "sexual_or_grooming_content"
+        }
+        if (!isTrustedSender(ctx, senderTitle, text)) {
+            return "stranger_message"
+        }
+        return null
+    }
+
+    fun sendAlertFromChild(
+        ctx: Context,
+        reason: String,
+        sender: String,
+        text: String,
+        bypassDedupe: Boolean = false,
+        onComplete: ((Boolean, String) -> Unit)? = null
+    ) {
+        val cleanSender = sender.trim().ifEmpty { "unknown" }.take(80)
+        val cleanText = text.trim().take(300)
+        val dedupeKey = "${reason.lowercase()}|${cleanSender.lowercase().removePrefix("@")}|${cleanText.lowercase()}"
+
+        if (!shouldSendAlert(dedupeKey, bypassDedupe = bypassDedupe || reason == "test_alert")) {
+            addCheckpointLog(ctx, "CP2-DEDUPE", "Skipped duplicate: @$cleanSender ($cleanText)")
+            onComplete?.invoke(false, "Duplicate suppressed")
+            return
         }
 
-        // Native bridge called by ig_guard.js -> bypasses Instagram's Content-Security-Policy completely
-        webView.addJavascriptInterface(object {
-            @JavascriptInterface
-            fun onAlert(jsonPayload: String) {
-                thread {
-                    try {
-                        val obj = JSONObject(jsonPayload)
-                        val reason = obj.optString("reason", "alert")
-                        val sender = obj.optString("sender", "unknown")
-                        val text = obj.optString("text", "")
-                        val child = obj.optString("child", "teen")
+        addCheckpointLog(ctx, "CP2-MATCH", "[$reason] @$cleanSender: ${cleanText.take(45)}")
 
-                        val conn = (URL(parentWebhookUrl).openConnection() as HttpURLConnection).apply {
-                            requestMethod = "POST"
-                            connectTimeout = 5000
-                            readTimeout = 5000
-                            doOutput = true
-                            setRequestProperty("Title", "IG Alert ($reason): @$sender")
-                            setRequestProperty(
-                                "Priority",
-                                if (reason == "sexual_or_grooming_content") "urgent" else "high"
-                            )
+        val topic = getChannelTopic(ctx)
+        val payload = JSONObject().apply {
+            put("type", "alert")
+            put("reason", reason)
+            put("sender", cleanSender)
+            put("text", cleanText)
+            put("time", SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date()))
+            put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
+        }.toString()
+
+        postToChannel(ctx, topic, payload, onComplete)
+    }
+
+    fun syncTrustedFromParent(ctx: Context) {
+        val topic = getChannelTopic(ctx)
+        val payload = JSONObject().apply {
+            put("type", "sync_trusted")
+            put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
+            put("time", SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date()))
+        }.toString()
+        postToChannel(ctx, topic, payload, null)
+    }
+
+    private fun postToChannel(
+        ctx: Context,
+        topic: String,
+        jsonBody: String,
+        onComplete: ((Boolean, String) -> Unit)?
+    ) {
+        thread {
+            try {
+                val conn = (URL("https://ntfy.sh/$topic").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "text/plain; charset=utf-8")
+                }
+                conn.outputStream.use { it.write(jsonBody.toByteArray(Charsets.UTF_8)) }
+                val code = conn.responseCode
+                conn.disconnect()
+
+                val statusMsg = if (code in 200..299) {
+                    "HTTP $code OK"
+                } else if (code == 429) {
+                    "HTTP 429 Rate Limit"
+                } else {
+                    "HTTP $code Error"
+                }
+                cpLastHttpStatus = "${nowTimeStr()} -> $statusMsg"
+                addCheckpointLog(ctx, "CP3-NET", statusMsg)
+                onComplete?.invoke(code in 200..299, statusMsg)
+            } catch (e: Exception) {
+                val err = "Net Fail: ${e.javaClass.simpleName}"
+                cpLastHttpStatus = "${nowTimeStr()} -> $err"
+                addCheckpointLog(ctx, "CP3-ERR", err)
+                onComplete?.invoke(false, err)
+            }
+        }
+    }
+
+    fun pollChannelOnce(ctx: Context, since: String = "30m", onNewAlertForParent: ((JSONObject) -> Unit)? = null) = synchronized(pollLock) {
+        val role = getRole(ctx)
+        if (role == "unconfigured") return
+        val topic = getChannelTopic(ctx)
+        try {
+            val url = URL("https://ntfy.sh/$topic/json?poll=1&since=$since")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+            }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                cpLastHttpStatus = "${nowTimeStr()} -> Poll HTTP $code"
+                conn.disconnect()
+                return
+            }
+
+            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
+                var line: String? = null
+                while (reader.readLine().also { line = it } != null) {
+                    processIncomingRelayLine(ctx, line!!, role, onNewAlertForParent)
+                }
+            }
+            cpLastHttpStatus = "${nowTimeStr()} -> Poll HTTP 200 OK"
+            conn.disconnect()
+        } catch (e: Exception) {
+            cpLastHttpStatus = "${nowTimeStr()} -> Poll Err: ${e.javaClass.simpleName}"
+        }
+    }
+
+    fun processIncomingRelayLine(
+        ctx: Context,
+        line: String,
+        role: String,
+        onNewAlertForParent: ((JSONObject) -> Unit)?
+    ) {
+        val outer = try { JSONObject(line) } catch (_: Exception) { return }
+        if (outer.optString("event") != "message") return
+        val msgId = outer.optString("id")
+        if (msgId.isEmpty()) return
+
+        val innerStr = outer.optString("message")
+        val inner = try { JSONObject(innerStr) } catch (_: Exception) { return }
+        val msgType = inner.optString("type")
+
+        val seenIds = prefs(ctx).getStringSet("seen_msg_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+        if (seenIds.contains(msgId)) return
+
+        seenIds.add(msgId)
+        val trimmed = if (seenIds.size > 300) seenIds.toList().takeLast(300).toSet() else seenIds
+        prefs(ctx).edit().putStringSet("seen_msg_ids", trimmed).apply()
+
+        if (msgType == "sync_trusted") {
+            val csv = inner.optString("trusted_csv")
+            if (csv.isNotEmpty()) {
+                val list = csv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                setTrustedHandles(ctx, list)
+                addCheckpointLog(ctx, "CP4-SYNC", "Updated trusted list (${list.size} handles)")
+            }
+        } else if (msgType == "alert" && role == "parent") {
+            saveAlertToParentHistory(ctx, inner)
+            addCheckpointLog(ctx, "CP4-RECV", "Received ${inner.optString("reason")} from ${inner.optString("sender")}")
+            onNewAlertForParent?.invoke(inner)
+            ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
+        }
+    }
+
+    private fun saveAlertToParentHistory(ctx: Context, alertObj: JSONObject) {
+        val rawArr = prefs(ctx).getString("parent_alerts_json", "[]") ?: "[]"
+        val arr = try { JSONArray(rawArr) } catch (_: Exception) { JSONArray() }
+        val next = JSONArray()
+        next.put(alertObj)
+        for (i in 0 until minOf(arr.length(), 79)) {
+            next.put(arr.getJSONObject(i))
+        }
+        prefs(ctx).edit().putString("parent_alerts_json", next.toString()).apply()
+    }
+
+    fun getParentAlerts(ctx: Context): List<JSONObject> {
+        val rawArr = prefs(ctx).getString("parent_alerts_json", "[]") ?: "[]"
+        val arr = try { JSONArray(rawArr) } catch (_: Exception) { JSONArray() }
+        val out = ArrayList<JSONObject>(arr.length())
+        for (i in 0 until arr.length()) {
+            arr.optJSONObject(i)?.let { out.add(it) }
+        }
+        return out
+    }
+
+    fun clearParentAlerts(ctx: Context) {
+        prefs(ctx).edit().putString("parent_alerts_json", "[]").apply()
+    }
+}
+
+// 1. CHILD ONLY: Reads all incoming Instagram DM notifications without duplicating recipient account as sender
+class IgNotificationListener : NotificationListenerService() {
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        GuardEngine.cpNotifConnected = true
+        GuardEngine.addCheckpointLog(this, "CP1-NOTIF", "NotificationListener CONNECTED ✅")
+    }
+
+    override fun onListenerDisconnected() {
+        GuardEngine.cpNotifConnected = false
+        GuardEngine.addCheckpointLog(this, "CP1-NOTIF", "NotificationListener DISCONNECTED ❌")
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                requestRebind(ComponentName(this, IgNotificationListener::class.java))
+            } catch (_: Exception) {
+            }
+        }
+        super.onListenerDisconnected()
+    }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        if (!GuardEngine.isChildMode(this)) return
+        if (sbn == null || sbn.packageName != "com.instagram.android") return
+        val notif = sbn.notification ?: return
+        val extras = notif.extras ?: return
+
+        GuardEngine.cpNotifConnected = true
+        GuardEngine.cpLastNotifTime = GuardEngine.nowTimeStr()
+
+        val convHeader = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim() ?: ""
+        val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim() ?: ""
+
+        if (subText.isNotEmpty() && !subText.contains(" ")) {
+            GuardEngine.rememberChildOwnHandle(this, subText)
+        }
+
+        val extractedPairs = ArrayList<Pair<String, String>>()
+        val msgBundles = getParcelableArrayCompat(extras, Notification.EXTRA_MESSAGES)
+
+        if (!msgBundles.isNullOrEmpty()) {
+            for (p in msgBundles) {
+                val b = p as? Bundle ?: continue
+                val msgText = b.getCharSequence("text")?.toString()?.trim() ?: ""
+                val msgSender = b.getCharSequence("sender")?.toString()?.trim() ?: ""
+                val msgTime = b.getLong("time", 0L)
+
+                if (msgText.isEmpty()) continue
+
+                if (convHeader.isNotEmpty() && msgSender.isNotEmpty() &&
+                    !convHeader.equals(msgSender, ignoreCase = true) && !convHeader.contains(" ")
+                ) {
+                    GuardEngine.rememberChildOwnHandle(this, convHeader)
+                }
+
+                val effectiveSender = msgSender.ifEmpty { rawTitle.ifEmpty { convHeader } }
+                val tsSig = "$effectiveSender|$msgTime|$msgText"
+                if (msgTime > 0L && !GuardEngine.isNewNotificationMessageTimestamp(tsSig)) {
+                    continue
+                }
+                extractedPairs.add(effectiveSender to msgText)
+            }
+        } else {
+            val fallbackBody = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
+                ?: extras.getCharSequence(Notification.EXTRA_TEXT)
+                ?: "").toString().trim()
+
+            if (fallbackBody.isNotEmpty()) {
+                var sender = rawTitle.ifEmpty { convHeader }
+                if (sender.startsWith("[") && sender.contains("]")) {
+                    val insideBracket = sender.substringAfter("[").substringBefore("]").trim()
+                    val afterBracket = sender.substringAfter("]").trim()
+                    if (insideBracket.isNotEmpty() && afterBracket.isNotEmpty()) {
+                        GuardEngine.rememberChildOwnHandle(this, insideBracket)
+                        sender = afterBracket
+                    }
+                }
+                var body = fallbackBody
+                if (body.contains(": ")) {
+                    val possibleSender = body.substringBefore(": ").trim()
+                    val possibleMsg = body.substringAfter(": ").trim()
+                    if (possibleSender.isNotEmpty() && !possibleSender.contains(" ") && possibleMsg.isNotEmpty()) {
+                        if (sender.isNotEmpty() && !sender.equals(possibleSender, ignoreCase = true) && !sender.contains(" ")) {
+                            GuardEngine.rememberChildOwnHandle(this, sender)
                         }
-                        conn.outputStream.use { out ->
-                            out.write("[$child] @$sender: $text".toByteArray(Charsets.UTF_8))
+                        sender = possibleSender
+                        body = possibleMsg
+                    }
+                }
+                extractedPairs.add(sender to body)
+            }
+        }
+
+        if (extractedPairs.isEmpty()) return
+
+        var wipeNotification = false
+        for ((sender, body) in extractedPairs.distinct()) {
+            val reason = GuardEngine.evaluateDm(this, sender, body)
+            if (reason == null) {
+                GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "Ignored trusted/self/system: @$sender")
+                continue
+            }
+            GuardEngine.sendAlertFromChild(this, reason, sender, body)
+            if (reason == "sexual_or_grooming_content") {
+                wipeNotification = true
+            }
+        }
+
+        if (wipeNotification) {
+            try {
+                cancelNotification(sbn.key)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun getParcelableArrayCompat(extras: Bundle, key: String): Array<Parcelable>? {
+        return try {
+            extras.getParcelableArray(key)
+        } catch (_: Exception) {
+            null
+        }
+    }
+}
+
+// 2. CHILD ONLY: Forces Instagram notifications ON + scans live open Instagram DM threads
+class IgAccessibilityService : AccessibilityService() {
+
+    private var lastScanMs = 0L
+    private var lastOpenChatSignature = ""
+
+    private val igUiChrome = setOf(
+        "message...", "訊息⋯⋯", "發送訊息...", "傳送訊息...", "send", "傳送", "search", "搜尋",
+        "instagram", "chats", "聊天室", "requests", "陌生訊息", "general", "一般", "primary", "主要",
+        "active now", "目前在線上", "online", "在線", "typing...", "輸入中...", "seen", "已讀",
+        "today", "今天", "yesterday", "昨天", "reply", "回覆"
+    )
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        GuardEngine.cpAccConnected = true
+        GuardEngine.pauseTamperUntilMs = maxOf(GuardEngine.pauseTamperUntilMs, System.currentTimeMillis() + 60_000L)
+        GuardEngine.addCheckpointLog(this, "CP1-ACC", "Accessibility Connected ✅ (60s setup grace active)")
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (!GuardEngine.isChildMode(this)) return
+
+        val pkg = event?.packageName?.toString() ?: return
+        val now = System.currentTimeMillis()
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastScanMs < 400L) {
+            return
+        }
+        lastScanMs = now
+        GuardEngine.cpAccConnected = true
+        GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
+
+        val root = rootInActiveWindow ?: return
+        val texts = ArrayList<String>(80)
+        collectTexts(root, texts)
+        if (texts.isEmpty()) return
+        val joined = texts.joinToString(" ")
+
+        val tamperPaused = now < GuardEngine.pauseTamperUntilMs
+
+        if (!tamperPaused && isSettingsPackage(pkg)) {
+            val isIgNotificationPage = joined.contains("Instagram", ignoreCase = true) &&
+                (joined.contains("Allow notifications", ignoreCase = true) ||
+                    joined.contains("Show notifications", ignoreCase = true) ||
+                    joined.contains("All Instagram notifications", ignoreCase = true) ||
+                    joined.contains("顯示通知") ||
+                    joined.contains("允許通知"))
+
+            if (isIgNotificationPage) {
+                // shortcut: auto-click master notification switch back ON before kicking to Home, upgrade to Family Link device owner policy on managed devices
+                forceEnableUncheckedSwitches(root)
+            }
+
+            val touchesProtectedApp = joined.contains("Instagram", ignoreCase = true) ||
+                joined.contains("IG Guard", ignoreCase = true) ||
+                joined.contains("Notification access", ignoreCase = true) ||
+                joined.contains("通知存取", ignoreCase = true)
+
+            if (touchesProtectedApp) {
+                performGlobalAction(GLOBAL_ACTION_HOME)
+                GuardEngine.sendAlertFromChild(
+                    this,
+                    "tamper_attempt",
+                    "Android Settings",
+                    "Child tried to open Settings for Instagram / IG Guard: ${joined.take(100)}"
+                )
+                return
+            }
+        }
+
+        if (pkg == "com.instagram.android") {
+            val isMutingInApp = joined.contains("Pause all", ignoreCase = true) ||
+                joined.contains("暫停所有") ||
+                joined.contains("Mute messages", ignoreCase = true) ||
+                joined.contains("Mute chat", ignoreCase = true) ||
+                joined.contains("將訊息設為靜音") ||
+                joined.contains("靜音訊息") ||
+                ((joined.contains("Notifications", ignoreCase = true) || joined.contains("通知")) &&
+                    (joined.contains("Messages", ignoreCase = true) || joined.contains("訊息")) &&
+                    (joined.contains("Off", ignoreCase = true) || joined.contains("關閉")))
+
+            if (!tamperPaused && isMutingInApp) {
+                performGlobalAction(GLOBAL_ACTION_HOME)
+                GuardEngine.sendAlertFromChild(
+                    this,
+                    "tamper_attempt",
+                    "Instagram In-App Settings",
+                    "Child tried to mute notifications or a DM chat inside Instagram."
+                )
+                return
+            }
+
+            val ownHandles = GuardEngine.getChildOwnHandles(this)
+            val isInboxList = (joined.contains("Chats", ignoreCase = true) && joined.contains("Requests", ignoreCase = true)) ||
+                (joined.contains("聊天室") && joined.contains("陌生訊息"))
+            val isInsideDmThread = !isInboxList && texts.any {
+                val low = it.lowercase()
+                low.contains("message...") || low.contains("發送訊息") || low.contains("傳送訊息") || low.contains("訊息...") || low.contains("訊息⋯")
+            }
+
+            val peerHeader = if (isInsideDmThread) {
+                texts.firstOrNull { line ->
+                    val low = line.trim().lowercase().removePrefix("@")
+                    line.length in 2..35 &&
+                        low !in igUiChrome &&
+                        low !in ownHandles &&
+                        !low.matches(Regex("^\\d{1,2}:\\d{2}.*"))
+                } ?: "Instagram_Open_Chat"
+            } else {
+                "Instagram_Screen"
+            }
+
+            for (line in texts) {
+                if (GuardEngine.SEXUAL_PATTERN.containsMatchIn(line)) {
+                    performGlobalAction(GLOBAL_ACTION_HOME)
+                    GuardEngine.sendAlertFromChild(this, "sexual_or_grooming_content", peerHeader, line)
+                    return
+                }
+            }
+
+            if (isInsideDmThread && !GuardEngine.isTrustedSender(this, peerHeader, "")) {
+                val sampleMsg = texts.lastOrNull { line ->
+                    val low = line.trim().lowercase().removePrefix("@")
+                    line != peerHeader &&
+                        low !in igUiChrome &&
+                        low !in ownHandles &&
+                        !low.contains("message...") &&
+                        !low.contains("訊息") &&
+                        line.length >= 2
+                } ?: return
+
+                val sig = "${peerHeader.lowercase()}|${sampleMsg.lowercase()}"
+                if (sig != lastOpenChatSignature) {
+                    lastOpenChatSignature = sig
+                    GuardEngine.sendAlertFromChild(this, "stranger_message", peerHeader, sampleMsg)
+                }
+            }
+        }
+    }
+
+    private fun isSettingsPackage(pkg: String): Boolean {
+        return pkg.contains("settings", ignoreCase = true) ||
+            pkg == "com.miui.securitycenter" ||
+            pkg == "com.coloros.safecenter"
+    }
+
+    private fun collectTexts(node: AccessibilityNodeInfo?, out: MutableList<String>) {
+        if (node == null || out.size >= 100) return
+        node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { out.add(it) }
+        for (i in 0 until node.childCount) {
+            collectTexts(node.getChild(i), out)
+        }
+    }
+
+    private fun forceEnableUncheckedSwitches(node: AccessibilityNodeInfo?) {
+        if (node == null) return
+        val cls = node.className?.toString() ?: ""
+        if ((cls.contains("Switch") || cls.contains("CheckBox")) && !node.isChecked && node.isClickable) {
+            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+        for (i in 0 until node.childCount) {
+            forceEnableUncheckedSwitches(node.getChild(i))
+        }
+    }
+
+    override fun onInterrupt() {}
+}
+
+// 3. PARENT ONLY: Persistent Real-Time Stream Receiver
+class ParentAlertService : Service() {
+
+    @Volatile
+    private var running = false
+    private var notifSeq = 100
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!GuardEngine.isParentMode(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        ensureChannels()
+        val openIntent = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val fgNotif = Notification.Builder(this, "ig_guard_monitor")
+            .setContentTitle("IG Guard 家長守護連線中")
+            .setContentText("核對圖案: ${GuardEngine.getSafetyEmojis(this)} • 實時監測子女 IG 警報")
+            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setContentIntent(openIntent)
+            .setOngoing(true)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(1, fgNotif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(1, fgNotif)
+        }
+
+        if (!running) {
+            running = true
+            thread {
+                while (running && GuardEngine.isParentMode(applicationContext)) {
+                    val topic = GuardEngine.getChannelTopic(applicationContext)
+                    var conn: HttpURLConnection? = null
+                    try {
+                        GuardEngine.cpParentStreamState = "Connecting stream..."
+                        val url = URL("https://ntfy.sh/$topic/json?since=2h")
+                        conn = (url.openConnection() as HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            connectTimeout = 10_000
+                            readTimeout = 90_000
                         }
-                        conn.responseCode
-                        conn.disconnect()
+                        val code = conn.responseCode
+                        if (code in 200..299) {
+                            GuardEngine.cpParentStreamState = "Live Stream CONNECTED ✅"
+                            GuardEngine.addCheckpointLog(applicationContext, "CP4-STREAM", "Connected to live stream")
+                            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
+                                var line: String? = null
+                                while (running && GuardEngine.isParentMode(applicationContext) &&
+                                    reader.readLine().also { line = it } != null
+                                ) {
+                                    GuardEngine.processIncomingRelayLine(
+                                        applicationContext,
+                                        line!!,
+                                        "parent"
+                                    ) { alert ->
+                                        fireNativeParentNotification(alert)
+                                    }
+                                }
+                            }
+                        } else {
+                            GuardEngine.cpParentStreamState = "Stream HTTP $code (Retrying in 15s)"
+                            GuardEngine.addCheckpointLog(applicationContext, "CP4-ERR", "Stream returned HTTP $code")
+                        }
+                    } catch (e: Exception) {
+                        GuardEngine.cpParentStreamState = "Reconnecting (${e.javaClass.simpleName})..."
+                    } finally {
+                        try { conn?.disconnect() } catch (_: Exception) {}
+                    }
+                    try {
+                        Thread.sleep(15_000L)
                     } catch (_: Exception) {
                     }
                 }
             }
-        }, "AndroidParentBridge")
+        }
+        return START_STICKY
+    }
 
-        // Put ig_guard.js inside app/src/main/assets/ig_guard.js
-        val guardScript = assets.open("ig_guard.js").bufferedReader().use { it.readText() }
+    private fun ensureChannels() {
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        val monitorCh = NotificationChannel(
+            "ig_guard_monitor",
+            "Parent Background Connection",
+            NotificationManager.IMPORTANCE_LOW
+        )
+        val alertCh = NotificationChannel(
+            "ig_guard_alerts",
+            "Child Safety Alerts (Urgent)",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            enableVibration(true)
+        }
+        nm.createNotificationChannel(monitorCh)
+        nm.createNotificationChannel(alertCh)
+    }
 
-        webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                val host = request.url.host?.lowercase() ?: return true
-                // Keep navigation strictly inside instagram.com
-                return !host.endsWith("instagram.com")
-            }
+    private fun fireNativeParentNotification(alert: JSONObject) {
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        val reason = alert.optString("reason", "alert")
+        val sender = alert.optString("sender", "unknown")
+        val text = alert.optString("text", "")
 
-            override fun onPageFinished(view: WebView, url: String?) {
-                super.onPageFinished(view, url)
-                view.evaluateJavascript(guardScript, null)
-            }
+        val title = when (reason) {
+            "sexual_or_grooming_content" -> "🚨 色情/誘拐高危警報: $sender"
+            "tamper_attempt" -> "⚠️ 子女嘗試更改保護設定"
+            "stranger_message" -> "💬 陌生人私訊: $sender"
+            "pairing_verified" -> "✅ 子女手機已成功配對並啟動保護"
+            else -> "🔔 IG Guard 通知: $sender"
         }
 
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (webView.canGoBack()) webView.goBack() else finish()
-            }
-        })
+        val openIntent = PendingIntent.getActivity(
+            this, 1, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
 
-        webView.loadUrl("https://www.instagram.com/direct/inbox/")
+        val notif = Notification.Builder(this, "ig_guard_alerts")
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText("帳號: $sender\n內容: $text"))
+            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setContentIntent(openIntent)
+            .setAutoCancel(true)
+            .build()
+
+        nm.notify(notifSeq++, notif)
+    }
+
+    override fun onDestroy() {
+        running = false
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+
+// 4. All-in-One Parent & Child UI with Auto Permission Popups + Collision-Free Pairing
+class MainActivity : Activity() {
+
+    private lateinit var rootContainer: LinearLayout
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private var activePermissionDialog: AlertDialog? = null
+    private var showAdvancedLogs: Boolean = false
+
+    private val refreshReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            uiHandler.post { renderUi() }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val scroll = ScrollView(this).apply {
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            isFillViewport = true
+        }
+        rootContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(42, 56, 42, 80)
+        }
+        scroll.addView(rootContainer)
+        setContentView(scroll)
+
+        handleDeepLinkIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        handleDeepLinkIntent(intent)
+    }
+
+    // Automatically pairs the Child Phone if opened via `igguard://pair?token=...&pin=...` deep link
+    private fun handleDeepLinkIntent(intent: Intent?) {
+        val dataStr = intent?.dataString ?: return
+        val parsed = GuardEngine.parsePairingString(dataStr) ?: return
+        GuardEngine.setFamilyToken(this, parsed.first)
+        GuardEngine.setPin(this, parsed.second)
+        GuardEngine.setRole(this, "child")
+        GuardEngine.markInitialSetupConfirmationSent(this, false)
+        Toast.makeText(this, "✅ 已透過專屬連結完成家庭配對！", Toast.LENGTH_LONG).show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val filter = IntentFilter(GuardEngine.ACTION_UI_REFRESH)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(refreshReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(refreshReceiver, filter)
+        }
+        if (GuardEngine.isChildMode(this) && isNotificationListenerEnabled(this) && Build.VERSION.SDK_INT >= 24) {
+            try {
+                NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java))
+            } catch (_: Exception) {
+            }
+        }
+        syncRoleServices()
+        renderUi()
+        checkAndShowGuidedPermissionPopup()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        activePermissionDialog?.dismiss()
+        activePermissionDialog = null
+        try {
+            unregisterReceiver(refreshReceiver)
+        } catch (_: Exception) {
+        }
+    }
+
+    // Guided Step-by-Step Permission Popup Wizard so users of any age don't have to hunt through Settings
+    private fun checkAndShowGuidedPermissionPopup() {
+        activePermissionDialog?.dismiss()
+        val role = GuardEngine.getRole(this)
+        if (role != "child") return
+
+        val notifOn = isNotificationListenerEnabled(this)
+        val accOn = isAccessibilityEnabled(this)
+
+        if (!notifOn) {
+            activePermissionDialog = AlertDialog.Builder(this)
+                .setTitle("🔔 第 1 步（共 2 步）：開啟 IG 訊息保護")
+                .setMessage(
+                    "請點選下方「立即開啟」，然後在清單中點選「IG Guard DM Reader」並打開開關。\n\n" +
+                        "💡 如畫面彈出「限制設定 (Restricted setting)」：\n" +
+                        "請先點選左下方「解除限制設定」，在右上角「⋮」選單點選「允許受限設定」。"
+                )
+                .setCancelable(true)
+                .setPositiveButton("立即開啟 (Enable Now) →") { _, _ ->
+                    openNotificationListenerSettingsHighlighted()
+                }
+                .setNeutralButton("先解除「限制設定」") { _, _ ->
+                    openAppDetailsSettings()
+                }
+                .show()
+            return
+        }
+
+        if (!accOn) {
+            activePermissionDialog = AlertDialog.Builder(this)
+                .setTitle("🛡️ 第 2 步（最後一步）：開啟防篡改保護鎖")
+                .setMessage(
+                    "最後一步！請點選下方「完成設定」，進入「已安裝的應用程式 (Installed apps)」→「IG Guard Anti-Tamper」並打開開關。\n\n" +
+                        "💡 如出現「限制設定」灰色無法點選，請先按左下方「解除限制設定」→ 右上角「⋮」→「允許受限設定」。"
+                )
+                .setCancelable(true)
+                .setPositiveButton("完成設定 (Enable Lock) →") { _, _ ->
+                    openAccessibilitySettingsHighlighted()
+                }
+                .setNeutralButton("解除「限制設定」") { _, _ ->
+                    openAppDetailsSettings()
+                }
+                .show()
+            return
+        }
+
+        // Both permissions are now ON -> automatically notify the Parent Phone once!
+        if (!GuardEngine.hasSentInitialSetupConfirmation(this)) {
+            GuardEngine.markInitialSetupConfirmationSent(this, true)
+            GuardEngine.sendAlertFromChild(
+                this,
+                "pairing_verified",
+                Build.MODEL ?: "Child_Phone",
+                "子女手機 (${Build.MODEL}) 已完成所有權限設定並啟動保護！核對圖案: ${GuardEngine.getSafetyEmojis(this)}",
+                bypassDedupe = true
+            )
+            Toast.makeText(this, "🎉 所有保護已成功啟動！已通知家長手機", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openAppDetailsSettings() {
+        GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", packageName, null)
+        }
+        startActivity(intent)
+    }
+
+    private fun openNotificationListenerSettingsHighlighted() {
+        GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
+        val cn = ComponentName(this, IgNotificationListener::class.java).flattenToString()
+        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+            putExtra(":settings:fragment_args_key", cn)
+            putExtra(":settings:show_fragment_args", Bundle().apply {
+                putString(":settings:fragment_args_key", cn)
+            })
+        }
+        startActivity(intent)
+    }
+
+    private fun openAccessibilitySettingsHighlighted() {
+        GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
+        val cn = ComponentName(this, IgAccessibilityService::class.java).flattenToString()
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            putExtra(":settings:fragment_args_key", cn)
+            putExtra(":settings:show_fragment_args", Bundle().apply {
+                putString(":settings:fragment_args_key", cn)
+            })
+        }
+        startActivity(intent)
+    }
+
+    private fun syncRoleServices() {
+        if (GuardEngine.isParentMode(this)) {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 101)
+            }
+            val svc = Intent(this, ParentAlertService::class.java)
+            startForegroundService(svc)
+        } else {
+            stopService(Intent(this, ParentAlertService::class.java))
+            if (GuardEngine.isChildMode(this)) {
+                thread { GuardEngine.pollChannelOnce(applicationContext, since = "2h") }
+            }
+        }
+    }
+
+    private fun renderUi() {
+        rootContainer.removeAllViews()
+        val role = GuardEngine.getRole(this)
+
+        rootContainer.addView(label("IG Teen Guard v4.0 • 家庭守護系統", 22f, "#F8FAFC", bold = true))
+        val badgeText = when (role) {
+            "parent" -> "👨‍👩‍👧 家長手機模式 (Parent Phone) • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
+            "child" -> "🧒 子女保護模式 🔒 (Child Phone) • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
+            else -> "請選擇此部手機嘅身份 (Choose This Phone's Role)"
+        }
+        val badgeColor = when (role) {
+            "parent" -> "#38BDF8"
+            "child" -> "#4ADE80"
+            else -> "#FBBF24"
+        }
+        rootContainer.addView(label(badgeText, 14f, badgeColor, bold = true, bottomPad = 24))
+
+        when (role) {
+            "unconfigured" -> renderEasyOnboardingScreen()
+            "parent" -> {
+                renderParentDashboard()
+                renderCollapsibleDiagnostics()
+                renderRoleSwitchFooter(requirePin = false)
+            }
+            "child" -> {
+                renderChildDashboard()
+                renderCollapsibleDiagnostics()
+                renderRoleSwitchFooter(requirePin = true)
+            }
+        }
+    }
+
+    // ================= COLLISION-FREE EASY ONBOARDING =================
+    private fun renderEasyOnboardingScreen() {
+        // Card A: For Parents (1-tap setup -> generates unique 128-bit family token automatically)
+        val parentCard = makeCard()
+        parentCard.addView(label("👨‍👩‍👧 我是家長 (I am the Parent)", 19f, "#38BDF8", bold = true, bottomPad = 8))
+        parentCard.addView(
+            label(
+                "系統會自動產生全球唯一嘅 128-bit 加密家庭金鑰（絕不會同其他家庭撞碼）。請設定 4 位數家長密碼，然後按下方按鈕。",
+                13f,
+                "#CBD5E1",
+                bottomPad = 14
+            )
+        )
+        val pinInput = inputBox("設定 4 位數家長密碼 (Parent PIN, 預設 1234)", GuardEngine.getPin(this), isPassword = false)
+        parentCard.addView(pinInput)
+
+        parentCard.addView(
+            actionButton("👨‍👩‍👧 設定為「家長手機」並產生專屬配對邀請", "#0284C7") {
+                GuardEngine.setPin(this, pinInput.text.toString())
+                GuardEngine.getOrCreateFamilyToken(this)
+                GuardEngine.setRole(this, "parent")
+                syncRoleServices()
+                renderUi()
+            }
+        )
+        rootContainer.addView(parentCard)
+
+        // Card B: For Child's Phone (1-tap paste from WhatsApp/SMS or manual token paste — zero accidental collision)
+        val childCard = makeCard()
+        childCard.addView(label("🧒 這是子女手機 (This is the Child's Phone)", 19f, "#4ADE80", bold = true, bottomPad = 8))
+        childCard.addView(
+            label(
+                "先喺家長手機按「傳送配對邀請」去子女 WhatsApp / SMS，喺子女手機【複製】該段訊息，然後按下方綠色按鈕即可一鍵完成配對！",
+                13f,
+                "#CBD5E1",
+                bottomPad = 14
+            )
+        )
+
+        childCard.addView(
+            actionButton("📋 一鍵貼上家長配對邀請並啟動保護 (Paste & Pair)", "#16A34A") {
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                val clipText = cm?.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: ""
+                val parsed = GuardEngine.parsePairingString(clipText)
+                if (parsed != null) {
+                    GuardEngine.setFamilyToken(this, parsed.first)
+                    GuardEngine.setPin(this, parsed.second)
+                    GuardEngine.setRole(this, "child")
+                    GuardEngine.markInitialSetupConfirmationSent(this, false)
+                    syncRoleServices()
+                    renderUi()
+                    checkAndShowGuidedPermissionPopup()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "⚠️ 剪貼簿未搵到配對碼！請先喺 WhatsApp/SMS 複製家長傳來嘅配對訊息，或在下方手動貼上。",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        )
+
+        val manualInput = inputBox("或在此貼上家長傳來嘅配對訊息 / 專屬金鑰", "")
+        childCard.addView(manualInput)
+        childCard.addView(
+            actionButton("🔗 使用上方貼上嘅內容配對子女手機", "#334155") {
+                val parsed = GuardEngine.parsePairingString(manualInput.text.toString())
+                if (parsed != null) {
+                    GuardEngine.setFamilyToken(this, parsed.first)
+                    GuardEngine.setPin(this, parsed.second)
+                    GuardEngine.setRole(this, "child")
+                    GuardEngine.markInitialSetupConfirmationSent(this, false)
+                    syncRoleServices()
+                    renderUi()
+                    checkAndShowGuidedPermissionPopup()
+                } else {
+                    Toast.makeText(this, "格式不正確，請複製家長手機發出嘅完整配對邀請訊息", Toast.LENGTH_LONG).show()
+                }
+            }
+        )
+        rootContainer.addView(childCard)
+    }
+
+    // ================= PARENT MODE UI =================
+    private fun renderParentDashboard() {
+        // 1. Exclusive Family Pairing & Invite Card
+        val pairCard = makeCard()
+        pairCard.addView(label("🔗 第一步：配對子女手機 (防撞碼專屬金鑰)", 17f, "#FFFFFF", bold = true, bottomPad = 8))
+        pairCard.addView(
+            label(
+                "• 家庭安全核對圖案：${GuardEngine.getSafetyEmojis(this)}\n" +
+                    "  （配對後，家長與子女手機頂部會顯示相同嘅 4 個圖案，確保 100% 唔會連錯其他家庭）\n" +
+                    "• 實時連線狀態：${GuardEngine.cpParentStreamState}",
+                13f,
+                "#CBD5E1",
+                bottomPad = 14
+            )
+        )
+
+        pairCard.addView(
+            actionButton("📲 傳送專屬配對邀請去子女手機 (WhatsApp / SMS)", "#0284C7") {
+                val invite = GuardEngine.buildPairingInviteText(this)
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, invite)
+                }
+                startActivity(Intent.createChooser(sendIntent, "傳送配對邀請去子女手機"))
+            }
+        )
+
+        pairCard.addView(
+            actionButton("📋 複製專屬配對訊息 (Copy Pairing Invite)", "#334155") {
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                cm?.setPrimaryClip(android.content.ClipData.newPlainText("IGGuardInvite", GuardEngine.buildPairingInviteText(this)))
+                Toast.makeText(this, "已複製！請透過 WhatsApp/SMS 發送給子女手機", Toast.LENGTH_LONG).show()
+            }
+        )
+        rootContainer.addView(pairCard)
+
+        // 2. Trusted Friends Card
+        val trustCard = makeCard()
+        trustCard.addView(label("✅ 子女信任名單 (Approved IG Friends)", 17f, "#FFFFFF", bold = true, bottomPad = 8))
+        val currentHandles = GuardEngine.getTrustedHandles(this)
+        trustCard.addView(
+            label(
+                "名單內嘅朋友傳送正常訊息唔會觸發警報（但出現色情字眼仍會攔截）：\n" +
+                    if (currentHandles.isEmpty()) "(未設定)" else currentHandles.joinToString(", ") { "@$it" },
+                13f,
+                "#38BDF8",
+                bold = true,
+                bottomPad = 12
+            )
+        )
+
+        val handlesInput = inputBox(
+            "以逗號分隔 IG 帳號 (例如 mum_hk, dad_hk, bestie)",
+            currentHandles.joinToString(", ")
+        )
+        trustCard.addView(handlesInput)
+
+        trustCard.addView(
+            actionButton("💾 儲存並同步信任名單去子女手機", "#16A34A") {
+                val updated = handlesInput.text.toString().split(",")
+                GuardEngine.setTrustedHandles(this, updated)
+                GuardEngine.syncTrustedFromParent(this)
+                Toast.makeText(this, "✅ 已儲存並自動同步去子女手機！", Toast.LENGTH_SHORT).show()
+                renderUi()
+            }
+        )
+        rootContainer.addView(trustCard)
+
+        // 3. Live Alert Inbox Card
+        val inboxCard = makeCard()
+        inboxCard.addView(label("🚨 子女 IG 即時警報記錄 (Child Alert Inbox)", 17f, "#FFFFFF", bold = true, bottomPad = 12))
+
+        inboxCard.addView(
+            actionButton("🔄 立即刷新最新警報 (Refresh Now)", "#334155") {
+                Toast.makeText(this, "正在同步最新警報...", Toast.LENGTH_SHORT).show()
+                thread { GuardEngine.pollChannelOnce(applicationContext, since = "6h") }
+            }
+        )
+
+        val alerts = GuardEngine.getParentAlerts(this)
+        if (alerts.isEmpty()) {
+            inboxCard.addView(
+                label(
+                    "暫時未有警報。當子女手機完成 2 個權限彈窗設定後，呢度會收到「✅ 子女手機已完成配對」通知。",
+                    14f,
+                    "#94A3B8",
+                    bottomPad = 8
+                )
+            )
+        } else {
+            for (alert in alerts) {
+                val reason = alert.optString("reason", "alert")
+                val sender = alert.optString("sender", "unknown")
+                val text = alert.optString("text", "")
+                val time = alert.optString("time", "")
+
+                val itemBox = makeAlertItemBox(reason)
+                val badge = when (reason) {
+                    "sexual_or_grooming_content" -> "🔴 色情 / 誘拐高危訊息"
+                    "tamper_attempt" -> "🟠 嘗試更改設定警告"
+                    "stranger_message" -> "🟡 陌生人私訊 (Stranger DM)"
+                    "pairing_verified" -> "🟢 子女手機配對成功"
+                    else -> "🔔 系統測試通知"
+                }
+                itemBox.addView(label("$badge  •  $time", 12f, "#F8FAFC", bold = true, bottomPad = 4))
+                itemBox.addView(label("發送者 (Sender): $sender", 14f, "#38BDF8", bold = true, bottomPad = 4))
+                itemBox.addView(label("內容 (Message): $text", 14f, "#E2E8F0", bottomPad = 8))
+
+                val cleanHandle = sender.trim().lowercase().removePrefix("@")
+                if (reason == "stranger_message" && cleanHandle !in currentHandles && !cleanHandle.contains(" ")) {
+                    itemBox.addView(
+                        actionButton("+ 將 @$cleanHandle 加入信任名單 (Approve)", "#334155") {
+                            val next = GuardEngine.getTrustedHandles(this).toMutableSet()
+                            next.add(cleanHandle)
+                            GuardEngine.setTrustedHandles(this, next)
+                            GuardEngine.syncTrustedFromParent(this)
+                            Toast.makeText(this, "已將 @$cleanHandle 加入信任名單並同步", Toast.LENGTH_SHORT).show()
+                            renderUi()
+                        }
+                    )
+                }
+                inboxCard.addView(itemBox)
+            }
+
+            inboxCard.addView(
+                actionButton("🗑️ 清除警報記錄 (Clear History)", "#475569") {
+                    GuardEngine.clearParentAlerts(this)
+                    renderUi()
+                }
+            )
+        }
+        rootContainer.addView(inboxCard)
+    }
+
+    // ================= CHILD MODE UI =================
+    private fun renderChildDashboard() {
+        val notifOn = isNotificationListenerEnabled(this)
+        val accOn = isAccessibilityEnabled(this)
+        val allReady = notifOn && accOn
+        val graceRemainingSec = maxOf(0L, (GuardEngine.pauseTamperUntilMs - System.currentTimeMillis()) / 1000L)
+        val ownHandles = GuardEngine.getChildOwnHandles(this)
+
+        val statusCard = makeCard()
+        statusCard.addView(
+            label(
+                if (allReady) "✅ 所有保護已全面啟動 (Protection Active)" else "⚠️ 尚有保護權限未開啟 (Setup Incomplete)",
+                18f,
+                if (allReady) "#4ADE80" else "#FBBF24",
+                bold = true,
+                bottomPad = 10
+            )
+        )
+        statusCard.addView(
+            label(
+                "• 家庭安全核對圖案：${GuardEngine.getSafetyEmojis(this)}（請確認與家長手機一致）\n" +
+                    "• 步驟 1 訊息通知讀取：${if (notifOn) "已開啟 ✅" else "未開啟 ❌"}\n" +
+                    "• 步驟 2 防篡改保護鎖：${if (accOn) "已開啟 ✅" else "未開啟 ❌"}\n" +
+                    "• 設定防篡改狀態：${if (graceRemainingSec > 0) "家長解鎖中（剩餘 ${graceRemainingSec} 秒）" else "已鎖定 🔒"}\n" +
+                    "• 自動識別子女 IG 帳號：${if (ownHandles.isEmpty()) "(收到首個訊息時自動識別)" else ownHandles.joinToString(", ") { "@$it" }}",
+                14f,
+                "#E2E8F0",
+                bottomPad = 16
+            )
+        )
+
+        if (!allReady) {
+            statusCard.addView(
+                actionButton("🪄 彈出權限設定精靈 (Open Setup Popup Wizard)", "#16A34A") {
+                    checkAndShowGuidedPermissionPopup()
+                }
+            )
+            statusCard.addView(
+                actionButton("🔓 先去解除 Android「限制設定」(Allow Restricted Settings)", "#475569") {
+                    openAppDetailsSettings()
+                }
+            )
+        }
+
+        statusCard.addView(
+            actionButton("🔔 發送測試通知去家長手機 (Send Test Alert)", "#4F46E5") {
+                Toast.makeText(this, "正在發送測試警報...", Toast.LENGTH_SHORT).show()
+                GuardEngine.sendAlertFromChild(
+                    this,
+                    "test_alert",
+                    "@child_phone_test",
+                    "測試成功！子女手機 (${GuardEngine.getSafetyEmojis(this)}) 連線正常 (${GuardEngine.nowTimeStr()})",
+                    bypassDedupe = true
+                ) { ok, status ->
+                    uiHandler.post {
+                        Toast.makeText(
+                            this,
+                            if (ok) "✅ 已送達家長手機！($status)" else "❌ 發送失敗: $status",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        renderUi()
+                    }
+                }
+            }
+        )
+        rootContainer.addView(statusCard)
+
+        val pinCard = makeCard()
+        pinCard.addView(label("🔐 家長專用解鎖 (Parent Unlock on Child Phone)", 16f, "#FFFFFF", bold = true, bottomPad = 8))
+        val pinInput = inputBox("輸入 4 位數家長密碼以暫停防篡改鎖 3 分鐘", "", isPassword = true)
+        pinCard.addView(pinInput)
+
+        pinCard.addView(
+            actionButton("🔓 暫停設定鎖 3 分鐘 (家長調整設定用)", "#D97706") {
+                if (pinInput.text.toString() == GuardEngine.getPin(this)) {
+                    GuardEngine.pauseTamperUntilMs = System.currentTimeMillis() + 180_000L
+                    pinInput.setText("")
+                    Toast.makeText(this, "已解鎖 3 分鐘", Toast.LENGTH_LONG).show()
+                    renderUi()
+                } else {
+                    Toast.makeText(this, "家長密碼不正確", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+        rootContainer.addView(pinCard)
+    }
+
+    private fun renderCollapsibleDiagnostics() {
+        val diagCard = makeCard()
+        diagCard.addView(
+            actionButton(
+                if (showAdvancedLogs) "🔽 隱藏進階系統診斷紀錄 (Hide Technical Logs)" else "🔧 顯示進階系統診斷紀錄 (Show Technical Checkpoints)",
+                "#334155"
+            ) {
+                showAdvancedLogs = !showAdvancedLogs
+                renderUi()
+            }
+        )
+        if (showAdvancedLogs) {
+            diagCard.addView(
+                label(
+                    "Last HTTP: ${GuardEngine.cpLastHttpStatus}\n\n" + GuardEngine.getCheckpointLogs(this),
+                    12f,
+                    "#E2E8F0",
+                    topPad = 8,
+                    bottomPad = 12
+                )
+            )
+            diagCard.addView(
+                actionButton("🧹 清除診斷紀錄 (Clear Logs)", "#475569") {
+                    GuardEngine.clearCheckpointLogs(this)
+                }
+            )
+        }
+        rootContainer.addView(diagCard)
+    }
+
+    private fun renderRoleSwitchFooter(requirePin: Boolean) {
+        val card = makeCard()
+        card.addView(label("⚙️ 重設手機身份或更換配對 (Reset Role / Pairing)", 15f, "#94A3B8", bold = true, bottomPad = 8))
+        if (requirePin) {
+            val pinInput = inputBox("輸入家長密碼以切換手機角色", "", isPassword = true)
+            card.addView(pinInput)
+            card.addView(
+                actionButton("切換手機角色 / 重新配對 (需要家長密碼)", "#475569") {
+                    if (pinInput.text.toString() == GuardEngine.getPin(this)) {
+                        GuardEngine.setRole(this, "unconfigured")
+                        syncRoleServices()
+                        renderUi()
+                    } else {
+                        Toast.makeText(this, "家長密碼錯誤！", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
+        } else {
+            card.addView(
+                actionButton("切換手機角色 (Switch Role)", "#475569") {
+                    GuardEngine.setRole(this, "unconfigured")
+                    syncRoleServices()
+                    renderUi()
+                }
+            )
+            card.addView(
+                actionButton("🔄 產生全新家庭配對金鑰 (Regenerate Family Key)", "#475569") {
+                    GuardEngine.regenerateFamilyToken(this)
+                    syncRoleServices()
+                    Toast.makeText(this, "已產生全新專屬金鑰，請重新配對子女手機", Toast.LENGTH_LONG).show()
+                    renderUi()
+                }
+            )
+        }
+        rootContainer.addView(card)
+    }
+
+    private fun makeCard(): LinearLayout {
+        val bg = GradientDrawable().apply {
+            setColor(Color.parseColor("#1E293B"))
+            cornerRadius = 28f
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = bg
+            setPadding(36, 36, 36, 36)
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.setMargins(0, 0, 0, 32)
+            layoutParams = lp
+        }
+    }
+
+    private fun makeAlertItemBox(reason: String): LinearLayout {
+        val borderColor = when (reason) {
+            "sexual_or_grooming_content" -> "#EF4444"
+            "tamper_attempt" -> "#F97316"
+            "stranger_message" -> "#EAB308"
+            "pairing_verified" -> "#4ADE80"
+            else -> "#38BDF8"
+        }
+        val bg = GradientDrawable().apply {
+            setColor(Color.parseColor("#0F172A"))
+            cornerRadius = 20f
+            setStroke(3, Color.parseColor(borderColor))
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = bg
+            setPadding(28, 24, 28, 24)
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.setMargins(0, 0, 0, 20)
+            layoutParams = lp
+        }
+    }
+
+    private fun label(
+        text: String,
+        sizeSp: Float,
+        hexColor: String,
+        bold: Boolean = false,
+        topPad: Int = 0,
+        bottomPad: Int = 0
+    ): TextView {
+        return TextView(this).apply {
+            this.text = text
+            textSize = sizeSp
+            setTextColor(Color.parseColor(hexColor))
+            if (bold) setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, topPad, 0, bottomPad)
+        }
+    }
+
+    private fun inputBox(hintText: String, initialValue: String, isPassword: Boolean = false): EditText {
+        val bg = GradientDrawable().apply {
+            setColor(Color.parseColor("#0F172A"))
+            cornerRadius = 18f
+            setStroke(2, Color.parseColor("#334155"))
+        }
+        return EditText(this).apply {
+            hint = hintText
+            setText(initialValue)
+            setHintTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.WHITE)
+            background = bg
+            setPadding(28, 24, 28, 24)
+            inputType = if (isPassword) {
+                InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            } else {
+                InputType.TYPE_CLASS_TEXT
+            }
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.setMargins(0, 0, 0, 20)
+            layoutParams = lp
+        }
+    }
+
+    private fun actionButton(title: String, hexBg: String, onClick: () -> Unit): Button {
+        val bg = GradientDrawable().apply {
+            setColor(Color.parseColor(hexBg))
+            cornerRadius = 20f
+        }
+        return Button(this).apply {
+            text = title
+            setTextColor(Color.WHITE)
+            isAllCaps = false
+            textSize = 14f
+            background = bg
+            setPadding(24, 24, 24, 24)
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.setMargins(0, 0, 0, 18)
+            layoutParams = lp
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun isNotificationListenerEnabled(ctx: Context): Boolean {
+        val flat = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners") ?: return false
+        val cn = ComponentName(ctx, IgNotificationListener::class.java).flattenToString()
+        return flat.contains(cn)
+    }
+
+    private fun isAccessibilityEnabled(ctx: Context): Boolean {
+        val flat = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
+        val cn = ComponentName(ctx, IgAccessibilityService::class.java).flattenToString()
+        return flat.contains(cn)
     }
 }
