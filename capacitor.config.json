@@ -1,9 +1,0 @@
-{
-  "appId": "com.safeguardfamily.app",
-  "appName": "SafeGuard Family",
-  "webDir": "www",
-  "bundledWebRuntime": false,
-  "server": {
-    "androidScheme": "https"
-  }
-}
