@@ -1883,7 +1883,7 @@ class MainActivity : Activity() {
                 bottomPad = 6
             )
         )
-        val childSelfInput = inputBox("輸入子女自己嘅 IG 帳號 (例如 citreae_313)", currentChildSelf)
+        val childSelfInput = inputBox("輸入子女自己嘅 IG 帳號 (例如 zuck)", currentChildSelf)
         trustCard.addView(childSelfInput)
 
         val currentHandles = GuardEngine.getTrustedHandles(this)
