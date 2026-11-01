@@ -63,9 +63,7 @@ object GuardEngine {
     const val ACTION_UI_REFRESH = "com.example.igguard.ACTION_UI_REFRESH"
     private const val PREFS_NAME = "ig_guard_prefs"
 
-    // Short 3-second burst dedupe for notifications (so every new message from a stranger is sent to Parent, even repeated phrases!)
     private const val NOTIF_BURST_DEDUPE_MS = 3_000L
-    // 45-second dedupe for live screen scanner (prevents static screen redraws from spamming while child views a chat)
     private const val SCREEN_DEDUPE_MS = 45_000L
     private val recentAlerts = LinkedHashMap<String, Long>()
     private val seenNotifMsgTimestamps = LinkedHashSet<String>()
@@ -96,7 +94,7 @@ object GuardEngine {
         RegexOption.IGNORE_CASE
     )
 
-    // Filters out Instagram non-message status labels ("Recently seen", "Seen 5m ago", "Active now", timestamps, profile buttons)
+    // Filters out Instagram non-message status labels ("Recently seen", "Seen 5m ago", "Active now", timestamps, profile buttons, comment/story placeholders)
     val NON_MESSAGE_UI_PATTERN = Regex(
         "^(" +
             "recently seen(\\s+.*)?|seen(\\s+(just now|\\d+.*|yesterday|today|mon.*|tue.*|wed.*|thu.*|fri.*|sat.*|sun.*))?|" +
@@ -104,7 +102,8 @@ object GuardEngine {
             "active(\\s+(now|today|yesterday|\\d+.*))?|online|last seen.*|typing\\.{0,3}|" +
             "已讀|剛剛已讀|\\d+\\s*(秒|分鐘|小時|天|日|週|周)前已讀|已傳送|已送達|傳送中\\.{0,3}|" +
             "最近上線|目前在線上|在線|\\d+\\s*(秒|分鐘|小時|天|日|週|周)前上線|(今日|今天|昨天|昨日)上線|輸入中\\.{0,3}|" +
-            "message\\.{0,3}|訊息(\\.{2,3}|⋯+)?|發送訊息(\\.{0,3}|⋯+)?|傳送訊息(\\.{0,3}|⋯+)?|send|傳送|search|搜尋|" +
+            "message\\.{0,3}|send message\\.{0,3}|訊息(\\.{2,3}|⋯+)?|發送訊息(\\.{0,3}|⋯+)?|傳送訊息(\\.{0,3}|⋯+)?|send|傳送|search|搜尋|" +
+            "add a comment\\.{0,3}|新增留言(\\.{0,3}|⋯+)?|為.*新增留言.*|reply to .*|回覆.*|comments|留言|" +
             "chats|聊天室|requests|陌生訊息|general|一般|primary|主要|" +
             "view profile|查看個人檔案|follow|追蹤|following|追蹤中|mute|靜音|" +
             "double tap to like|點按兩下即可讚好|tap and hold to react|reply|回覆|" +
@@ -484,17 +483,38 @@ object GuardEngine {
         return null
     }
 
-    // ================= 5. TRUSTED FRIENDS vs. FLAGGED OFFENDERS WATCHLIST =================
-    // Flagged offenders: strangers who have sent sexual/grooming content.
-    // Child Phone blocks opening their chat & wipes their notifications, while STILL forwarding ALL their messages to Parent Phone!
+    // ================= 5. EXPLICIT CHILD HANDLE + TRUSTED FRIENDS + FLAGGED OFFENDERS =================
+    // Stores the child's own IG handle explicitly (e.g. "MyName") so:
+    // 1) It is never confused with a stranger's handle when parsing notification titles, and
+    // 2) Approving a stranger never adds the child's own account ID into the trusted friends list!
+    fun getChildSelfHandle(ctx: Context): String {
+        return (prefs(ctx).getString("child_self_handle", "") ?: "").trim().lowercase().removePrefix("@")
+    }
+
+    fun setChildSelfHandle(ctx: Context, handle: String) {
+        val clean = handle.trim().lowercase().removePrefix("@")
+        prefs(ctx).edit().putString("child_self_handle", clean).apply()
+    }
+
+    fun isChildSelfHandle(ctx: Context, candidate: String): Boolean {
+        val selfHandle = getChildSelfHandle(ctx)
+        if (selfHandle.isEmpty()) return false
+        val norm = candidate.trim().lowercase().removePrefix("@")
+        return norm == selfHandle || norm.contains("(@$selfHandle)")
+    }
+
     fun getFlaggedOffenders(ctx: Context): Set<String> {
+        val selfHandle = getChildSelfHandle(ctx)
         val raw = prefs(ctx).getString("flagged_offenders_csv", "") ?: ""
-        return raw.split(",").map { it.trim().lowercase().removePrefix("@") }.filter { it.isNotEmpty() }.toSet()
+        return raw.split(",")
+            .map { it.trim().lowercase().removePrefix("@") }
+            .filter { it.isNotEmpty() && it != selfHandle }
+            .toSet()
     }
 
     fun markSenderAsFlaggedOffender(ctx: Context, sender: String) {
         val clean = sender.trim().lowercase().removePrefix("@")
-        if (clean.isEmpty() || clean == "instagram" || clean == "instagram_open_chat") return
+        if (clean.isEmpty() || clean == "instagram" || clean == "instagram_open_chat" || isChildSelfHandle(ctx, clean)) return
         val next = getFlaggedOffenders(ctx).toMutableSet()
         if (next.add(clean)) {
             prefs(ctx).edit().putString("flagged_offenders_csv", next.joinToString(",")).apply()
@@ -513,14 +533,21 @@ object GuardEngine {
     }
 
     fun getTrustedHandles(ctx: Context): Set<String> {
+        val selfHandle = getChildSelfHandle(ctx)
         val raw = prefs(ctx).getString("trusted_csv", "mum_hk,dad_hk,school_friend_1") ?: ""
-        return raw.split(",").map { it.trim().lowercase().removePrefix("@") }.filter { it.isNotEmpty() }.toSet()
+        return raw.split(",")
+            .map { it.trim().lowercase().removePrefix("@") }
+            .filter { it.isNotEmpty() && it != selfHandle }
+            .toSet()
     }
 
     fun setTrustedHandles(ctx: Context, handles: Collection<String>) {
-        val clean = handles.map { it.trim().lowercase().removePrefix("@") }.filter { it.isNotEmpty() }.distinct().sorted()
+        val selfHandle = getChildSelfHandle(ctx)
+        val clean = handles.map { it.trim().lowercase().removePrefix("@") }
+            .filter { it.isNotEmpty() && it != selfHandle }
+            .distinct()
+            .sorted()
         prefs(ctx).edit().putString("trusted_csv", clean.joinToString(",")).apply()
-        // If parent explicitly approves a handle, remove it from flagged offenders
         val remainingOffenders = getFlaggedOffenders(ctx) - clean.toSet()
         prefs(ctx).edit().putString("flagged_offenders_csv", remainingOffenders.joinToString(",")).apply()
     }
@@ -577,24 +604,21 @@ object GuardEngine {
         return NON_MESSAGE_UI_PATTERN.matches(clean)
     }
 
-    // Evaluates a DM and NEVER ignores follow-up messages from a stranger or flagged offender!
     fun evaluateDm(ctx: Context, senderTitle: String, messageBody: String): String? {
         val text = messageBody.trim()
         if (text.isEmpty() || IGNORED_NOTIFICATIONS.matches(text) || isNonMessageUiString(text)) return null
+        // Never report the child's own account ID as a stranger sender
+        if (isChildSelfHandle(ctx, senderTitle)) return null
 
-        // 1. Check if message contains explicit sexual/grooming keywords -> mark sender as Flagged Offender!
         if (SEXUAL_PATTERN.containsMatchIn(text) || SEXUAL_PATTERN.containsMatchIn(senderTitle)) {
             markSenderAsFlaggedOffender(ctx, senderTitle)
             return "sexual_or_grooming_content"
         }
 
-        // 2. Even if follow-up message from a Flagged Offender has normal words ("Hehe", "Are you there?"),
-        // ALWAYS forward it to Parent Phone as a high-priority sexual/grooming follow-up so Parent keeps 100% supervision!
         if (isFlaggedOffender(ctx, senderTitle)) {
             return "sexual_or_grooming_content"
         }
 
-        // 3. Otherwise, any sender not in Trusted Friends triggers a Stranger DM alert to Parent Phone
         if (!isTrustedSender(ctx, senderTitle, text)) {
             return "stranger_message"
         }
@@ -637,6 +661,7 @@ object GuardEngine {
             put("text", cleanText)
             put("time", nowDateTimeStr())
             put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
+            put("child_self_handle", getChildSelfHandle(ctx))
         }.toString()
 
         postEncryptedToChannel(ctx, topic, token, plain, onComplete)
@@ -648,6 +673,7 @@ object GuardEngine {
         val plain = JSONObject().apply {
             put("type", "sync_trusted")
             put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
+            put("child_self_handle", getChildSelfHandle(ctx))
             put("time", nowDateTimeStr())
         }.toString()
         postEncryptedToChannel(ctx, topic, token, plain, null)
@@ -749,12 +775,14 @@ object GuardEngine {
 
         when (msgType) {
             "sync_trusted" -> {
-                val csv = inner.optString("trusted_csv")
-                if (csv.isNotEmpty()) {
-                    val list = csv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                    setTrustedHandles(ctx, list)
-                    addCheckpointLog(ctx, "CP4-SYNC", "Updated trusted list (${list.size} handles)")
+                val childSelf = inner.optString("child_self_handle")
+                if (childSelf.isNotEmpty()) {
+                    setChildSelfHandle(ctx, childSelf)
                 }
+                val csv = inner.optString("trusted_csv")
+                val list = csv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                setTrustedHandles(ctx, list)
+                addCheckpointLog(ctx, "CP4-SYNC", "Updated child handle & trusted list (${list.size} handles)")
             }
             "unlock_code" -> {
                 val code = inner.optString("code")
@@ -787,6 +815,10 @@ object GuardEngine {
             }
             "alert" -> {
                 if (role == "parent") {
+                    val childSelf = inner.optString("child_self_handle")
+                    if (childSelf.isNotEmpty() && getChildSelfHandle(ctx).isEmpty()) {
+                        setChildSelfHandle(ctx, childSelf)
+                    }
                     val reason = inner.optString("reason")
                     if (reason == "heartbeat_ok") {
                         recordChildHeartbeatOnParent(ctx, inner.optString("text"))
@@ -838,7 +870,7 @@ object GuardEngine {
     }
 }
 
-// 1. CHILD ONLY: Intercepts EVERY stranger & flagged-offender notification (never ignores follow-up messages!)
+// 1. CHILD ONLY: Intercepts EVERY stranger & flagged-offender notification (never confuses child's own handle with stranger!)
 class IgNotificationListener : NotificationListenerService() {
 
     private val heartbeatHandler = Handler(Looper.getMainLooper())
@@ -890,14 +922,26 @@ class IgNotificationListener : NotificationListenerService() {
             ?: extras.getCharSequence(Notification.EXTRA_TEXT)
             ?: "").toString().trim()
 
-        // Strip "[logged_in_account] " prefix from title if Instagram prepends it
-        val cleanTitle = if (rawTitle.startsWith("[") && rawTitle.contains("]")) {
-            rawTitle.substringAfter("]").trim().ifEmpty { rawTitle }
-        } else {
-            rawTitle
+        // If title is "[child_handle] stranger_handle", learn child_handle and strip it
+        var cleanTitle = rawTitle
+        if (rawTitle.startsWith("[") && rawTitle.contains("]")) {
+            val bracketed = rawTitle.substringAfter("[").substringBefore("]").trim()
+            val remainder = rawTitle.substringAfter("]").trim()
+            if (bracketed.isNotEmpty() && remainder.isNotEmpty() && GuardEngine.getChildSelfHandle(this).isEmpty()) {
+                GuardEngine.setChildSelfHandle(this, bracketed)
+            }
+            if (remainder.isNotEmpty()) cleanTitle = remainder
         }
 
-        // Resolve ONE accurate (sender, message, msgTime) from the notification
+        // If convHeader and cleanTitle are both present and different (e.g. convHeader="citreae_313", cleanTitle="LeoAccountIsDeleted"),
+        // and Child Self Handle is not set yet, convHeader is the recipient's logged-in account!
+        if (convHeader.isNotEmpty() && cleanTitle.isNotEmpty() &&
+            !convHeader.equals(cleanTitle, ignoreCase = true) &&
+            !convHeader.contains(" ") && GuardEngine.getChildSelfHandle(this).isEmpty()
+        ) {
+            GuardEngine.setChildSelfHandle(this, convHeader)
+        }
+
         var resolvedSender = ""
         var resolvedMessage = ""
         var resolvedTime = sbn.postTime
@@ -914,7 +958,9 @@ class IgNotificationListener : NotificationListenerService() {
                     val person = latestBundle.getParcelable<Parcelable>("sender_person") as? Person
                     bundleSender = person?.name?.toString()?.trim() ?: ""
                 }
-                resolvedSender = bundleSender
+                if (bundleSender.isNotEmpty() && !GuardEngine.isChildSelfHandle(this, bundleSender)) {
+                    resolvedSender = bundleSender
+                }
             }
         }
 
@@ -922,25 +968,33 @@ class IgNotificationListener : NotificationListenerService() {
             resolvedMessage = fallbackBody
         }
 
-        // Check if fallbackBody or resolvedMessage has "sender_handle: actual_message" format
+        // Check if message or fallbackBody has "sender_handle: actual_message" format
         if (resolvedMessage.contains(": ")) {
             val possibleSender = resolvedMessage.substringBefore(": ").trim()
             val possibleMsg = resolvedMessage.substringAfter(": ").trim()
             if (possibleSender.isNotEmpty() && !possibleSender.contains(" ") && possibleMsg.isNotEmpty()) {
-                resolvedSender = possibleSender
+                if (!GuardEngine.isChildSelfHandle(this, possibleSender)) {
+                    resolvedSender = possibleSender
+                }
                 resolvedMessage = possibleMsg
             }
         } else if (fallbackBody.contains(": ")) {
             val possibleSender = fallbackBody.substringBefore(": ").trim()
             val possibleMsg = fallbackBody.substringAfter(": ").trim()
             if (possibleSender.isNotEmpty() && !possibleSender.contains(" ") && possibleMsg == resolvedMessage) {
-                resolvedSender = possibleSender
+                if (!GuardEngine.isChildSelfHandle(this, possibleSender)) {
+                    resolvedSender = possibleSender
+                }
             }
         }
 
-        if (resolvedSender.isEmpty()) {
-            // Prefer cleanTitle (EXTRA_TITLE = sender name) over convHeader (EXTRA_CONVERSATION_TITLE = logged-in account)
-            resolvedSender = cleanTitle.ifEmpty { convHeader }
+        // Pick whichever header is NOT the child's own handle!
+        if (resolvedSender.isEmpty() || GuardEngine.isChildSelfHandle(this, resolvedSender)) {
+            resolvedSender = when {
+                cleanTitle.isNotEmpty() && !GuardEngine.isChildSelfHandle(this, cleanTitle) -> cleanTitle
+                convHeader.isNotEmpty() && !GuardEngine.isChildSelfHandle(this, convHeader) -> convHeader
+                else -> cleanTitle.ifEmpty { convHeader }
+            }
         }
 
         if (resolvedMessage.isEmpty() || resolvedSender.isEmpty()) return
@@ -952,11 +1006,10 @@ class IgNotificationListener : NotificationListenerService() {
 
         val reason = GuardEngine.evaluateDm(this, resolvedSender, resolvedMessage)
         if (reason == null) {
-            GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "Ignored trusted/status: @$resolvedSender")
+            GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "Ignored trusted/self/status: @$resolvedSender")
             return
         }
 
-        // Always forward every new message from strangers AND flagged offenders to the Parent Phone!
         GuardEngine.sendAlertFromChild(
             this,
             reason = reason,
@@ -965,8 +1018,6 @@ class IgNotificationListener : NotificationListenerService() {
             fromNotification = true
         )
 
-        // If sexual/grooming OR sender is already a Flagged Offender, wipe the notification from the Child's screen
-        // so the child isn't harassed by the perpetrator, while the Parent STILL receives every message above!
         if ((reason == "sexual_or_grooming_content" || GuardEngine.isFlaggedOffender(this, resolvedSender)) &&
             !GuardEngine.isTemporarilyUnlocked(this)
         ) {
@@ -987,21 +1038,25 @@ class IgNotificationListener : NotificationListenerService() {
     }
 }
 
-// 2. CHILD ONLY: Blocks child from opening chats with Flagged Offenders while intercepting bottom-most new messages in other chats
+// 2. CHILD ONLY:
+// - In 1-on-1 DMs: Shrinks reading area to bottom-left incoming bubbles ONLY (ignores right-aligned child messages!)
+// - In Stories / Post Comments: Ignores other people's comments/stories completely; ONLY reads replies actively typed by the child!
 class IgAccessibilityService : AccessibilityService() {
 
     private var lastScanMs = 0L
     private var lastRemoteSyncMs = 0L
-    private var currentOpenPeer: String = ""
     private var lastReportedBottomBubble: String = ""
+    private var lastReportedChildComment: String = ""
 
     private data class ScreenTextItem(
         val text: String,
+        val contentDesc: String,
         val top: Int,
         val bottom: Int,
         val left: Int,
         val right: Int,
-        val isEditable: Boolean
+        val isEditable: Boolean,
+        val isFocused: Boolean
     )
 
     override fun onServiceConnected() {
@@ -1033,8 +1088,11 @@ class IgAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow ?: return
         val dmUnlocked = GuardEngine.isTemporarilyUnlocked(this)
 
-        val screenHeight = resources.displayMetrics.heightPixels.coerceAtLeast(1200)
-        val items = ArrayList<ScreenTextItem>(90)
+        val metrics = resources.displayMetrics
+        val screenHeight = metrics.heightPixels.coerceAtLeast(1200)
+        val screenWidth = metrics.widthPixels.coerceAtLeast(720)
+
+        val items = ArrayList<ScreenTextItem>(95)
         collectScreenItems(root, items)
         if (items.isEmpty()) return
 
@@ -1091,64 +1149,122 @@ class IgAccessibilityService : AccessibilityService() {
                 return
             }
 
+            // Distinguish a TRUE 1-on-1 DM Thread from Post Comments ("Comments"/"留言") and Stories ("Send message"/"傳送訊息")
+            // 1) A 1-on-1 DM thread has Audio/Video Call buttons in the top 22% header
+            val hasTopCallButtons = items.any { item ->
+                item.bottom <= (screenHeight * 0.22).toInt() && (
+                    item.contentDesc.contains("call", ignoreCase = true) ||
+                        item.contentDesc.contains("通話") ||
+                        item.text.contains("通話")
+                    )
+            }
+
+            // 2) Detect if screen is a Post Comments sheet or Story viewer
+            val isCommentsOrStoryScreen = items.any { item ->
+                val t = item.text.trim()
+                t.equals("Comments", ignoreCase = true) ||
+                    t == "留言" ||
+                    t.contains("Add a comment", ignoreCase = true) ||
+                    t.contains("新增留言") ||
+                    t.contains("為", ignoreCase = true) && t.contains("新增留言") ||
+                    t.equals("Send message", ignoreCase = true) ||
+                    t == "傳送訊息"
+            }
+
+            // CASE 1: Child is on a Post Comments sheet or Story viewer ->
+            // DO NOT read other people's comments or story text! ONLY read the reply actively typed by the child in the EditText box!
+            if (isCommentsOrStoryScreen || !hasTopCallButtons) {
+                val activeChildEditBox = items.firstOrNull { item ->
+                    item.isEditable && item.text.isNotEmpty() && !GuardEngine.isNonMessageUiString(item.text)
+                }
+                if (activeChildEditBox != null) {
+                    val typedReply = activeChildEditBox.text.trim()
+                    if (GuardEngine.SEXUAL_PATTERN.containsMatchIn(typedReply)) {
+                        GuardEngine.sendAlertFromChild(
+                            this,
+                            "sexual_or_grooming_content",
+                            "Child Comment/Story Reply",
+                            typedReply
+                        )
+                        if (!dmUnlocked) {
+                            performGlobalAction(GLOBAL_ACTION_BACK)
+                        }
+                    } else if (typedReply.startsWith("@") && typedReply.contains(" ") && typedReply.length >= 6) {
+                        // Child is replying "@username ..." to a comment on a post
+                        val targetHandle = typedReply.substringBefore(" ").removePrefix("@").trim()
+                        if (targetHandle.isNotEmpty() &&
+                            !GuardEngine.isTrustedSender(this, targetHandle, "") &&
+                            !GuardEngine.isChildSelfHandle(this, targetHandle) &&
+                            typedReply != lastReportedChildComment
+                        ) {
+                            lastReportedChildComment = typedReply
+                            GuardEngine.sendAlertFromChild(
+                                this,
+                                "stranger_message",
+                                "Child Reply to @$targetHandle",
+                                typedReply
+                            )
+                        }
+                    }
+                }
+                return
+            }
+
+            // CASE 2: Child is inside a TRUE 1-on-1 DM Conversation (hasTopCallButtons == true)
             val composerNode = items.firstOrNull { item ->
                 item.top > (screenHeight * 0.55).toInt() && (
                     item.isEditable ||
                         item.text.contains("Message...", ignoreCase = true) ||
-                        item.text.contains("發送訊息") ||
-                        item.text.contains("傳送訊息") ||
                         item.text.contains("訊息...") ||
                         item.text.contains("訊息⋯")
                     )
-            }
-
-            if (composerNode == null) {
-                currentOpenPeer = ""
-                return
-            }
+            } ?: return
 
             val composerTop = composerNode.top
 
-            // 1. Extract peer's handle/name from the top header bar (top 21% of screen)
+            // 1. Extract peer's handle/name from the top header bar (top 20% of screen), skipping child's own handle
             val headerCandidates = items.filter { item ->
                 val clean = item.text.trim()
-                item.bottom <= (screenHeight * 0.21).toInt() &&
+                item.bottom <= (screenHeight * 0.20).toInt() &&
                     !item.isEditable &&
                     clean.length in 2..35 &&
-                    !GuardEngine.isNonMessageUiString(clean)
+                    !GuardEngine.isNonMessageUiString(clean) &&
+                    !GuardEngine.isChildSelfHandle(this, clean)
             }.sortedBy { it.top }
 
             val peerHeader = headerCandidates.firstOrNull()?.text?.trim() ?: "Instagram_Open_Chat"
             val isPeerTrusted = GuardEngine.isTrustedSender(this, peerHeader, "")
 
-            // 2. If this peer is already a Flagged Offender (sent sexual/grooming content previously),
-            // immediately block the child from opening this DM thread while still forwarding any visible bottom message to Parent!
-            val recentBottomBubbles = items.filter { item ->
-                val clean = item.text.trim()
-                item.top >= (screenHeight * 0.42).toInt() &&
-                    item.bottom <= composerTop + 10 &&
-                    !item.isEditable &&
-                    clean != peerHeader &&
-                    !GuardEngine.isNonMessageUiString(clean)
-            }.sortedBy { it.bottom }
-
-            val latestBubble = recentBottomBubbles.lastOrNull()
-            val latestText = latestBubble?.text?.trim() ?: ""
-
-            if (GuardEngine.isFlaggedOffender(this, peerHeader)) {
-                if (latestText.isNotEmpty()) {
-                    GuardEngine.sendAlertFromChild(this, "sexual_or_grooming_content", peerHeader, latestText)
-                }
-                if (!dmUnlocked) {
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                }
+            // 2. If this peer is already a Flagged Offender, block child from opening this DM thread immediately!
+            if (GuardEngine.isFlaggedOffender(this, peerHeader) && !dmUnlocked) {
+                performGlobalAction(GLOBAL_ACTION_BACK)
                 return
             }
 
-            if (latestText.isEmpty()) return
+            // 3. SHRUNK READING AREA for 1-on-1 DMs:
+            // - Vertically: ONLY the bottom 22% strip directly above composerTop (composerTop - 0.22 * screenHeight .. composerTop)
+            // - Horizontally: ONLY LEFT-ALIGNED incoming bubbles from the other person (left < 27% of screenWidth, right < 86% of screenWidth)!
+            //   Right-aligned bubbles (sent by the child) are ignored so the child's own messages never cause false alarms!
+            val minVerticalTop = composerTop - (screenHeight * 0.22).toInt()
+            val maxIncomingLeft = (screenWidth * 0.27).toInt()
+            val maxIncomingRight = (screenWidth * 0.86).toInt()
+
+            val incomingBottomBubbles = items.filter { item ->
+                val clean = item.text.trim()
+                item.top >= minVerticalTop &&
+                    item.bottom <= composerTop + 8 &&
+                    item.left <= maxIncomingLeft &&
+                    item.right <= maxIncomingRight &&
+                    !item.isEditable &&
+                    clean != peerHeader &&
+                    !GuardEngine.isNonMessageUiString(clean) &&
+                    !GuardEngine.isChildSelfHandle(this, clean)
+            }.sortedBy { it.bottom }
+
+            val latestIncomingBubble = incomingBottomBubbles.lastOrNull() ?: return
+            val latestText = latestIncomingBubble.text.trim()
             val bubbleSig = "${peerHeader.lowercase()}|${latestText.lowercase()}"
 
-            // 3. If the latest bottom bubble in an active chat contains sexual/grooming text -> mark peer as Flagged Offender, alert Parent, and back out!
             if (GuardEngine.SEXUAL_PATTERN.containsMatchIn(latestText)) {
                 lastReportedBottomBubble = bubbleSig
                 GuardEngine.markSenderAsFlaggedOffender(this, peerHeader)
@@ -1157,11 +1273,6 @@ class IgAccessibilityService : AccessibilityService() {
                     performGlobalAction(GLOBAL_ACTION_BACK)
                 }
                 return
-            }
-
-            // 4. Active chat with a non-trusted stranger -> forward every new bottom message to Parent Phone
-            if (peerHeader != currentOpenPeer) {
-                currentOpenPeer = peerHeader
             }
 
             if (!isPeerTrusted && bubbleSig != lastReportedBottomBubble) {
@@ -1180,17 +1291,20 @@ class IgAccessibilityService : AccessibilityService() {
     private fun collectScreenItems(node: AccessibilityNodeInfo?, out: MutableList<ScreenTextItem>) {
         if (node == null || out.size >= 95) return
         val rawText = node.text?.toString()?.trim() ?: ""
-        if (rawText.isNotEmpty() || node.isEditable) {
+        val rawDesc = node.contentDescription?.toString()?.trim() ?: ""
+        if (rawText.isNotEmpty() || rawDesc.isNotEmpty() || node.isEditable) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
             out.add(
                 ScreenTextItem(
                     text = rawText,
+                    contentDesc = rawDesc,
                     top = rect.top,
                     bottom = rect.bottom,
                     left = rect.left,
                     right = rect.right,
-                    isEditable = node.isEditable
+                    isEditable = node.isEditable,
+                    isFocused = node.isFocused
                 )
             )
         }
@@ -1363,7 +1477,7 @@ class ParentAlertService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
-// 4. All-in-One Parent & Child UI (v4.3)
+// 4. All-in-One Parent & Child UI (v4.4)
 class MainActivity : Activity() {
 
     private lateinit var rootContainer: LinearLayout
@@ -1553,7 +1667,7 @@ class MainActivity : Activity() {
         rootContainer.removeAllViews()
         val role = GuardEngine.getRole(this)
 
-        rootContainer.addView(label("IG Teen Guard v4.3 • 端對端加密守護系統 🔒", 21f, "#F8FAFC", bold = true))
+        rootContainer.addView(label("IG Teen Guard v4.4 • 端對端加密守護系統 🔒", 21f, "#F8FAFC", bold = true))
         val badgeText = when (role) {
             "parent" -> "👨‍👩‍👧 家長手機模式 (Parent) • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
             "child" -> "🧒 子女保護模式 🔒 (Child) • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
@@ -1756,32 +1870,46 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(pairCard)
 
+        // Child's Own IG Handle + Trusted Friends Card
         val trustCard = makeCard()
-        trustCard.addView(label("✅ 子女信任名單 (Approved IG Friends)", 17f, "#FFFFFF", bold = true, bottomPad = 8))
+        trustCard.addView(label("✅ 子女本人 IG 帳號及信任朋友名單", 17f, "#FFFFFF", bold = true, bottomPad = 8))
+
+        val currentChildSelf = GuardEngine.getChildSelfHandle(this)
+        trustCard.addView(
+            label(
+                "1. 子女自己嘅 IG 帳號 (避免將子女本人訊息當成陌生人，亦唔會混入朋友信任名單)：",
+                13f,
+                "#CBD5E1",
+                bottomPad = 6
+            )
+        )
+        val childSelfInput = inputBox("輸入子女自己嘅 IG 帳號 (例如 citreae_313)", currentChildSelf)
+        trustCard.addView(childSelfInput)
+
         val currentHandles = GuardEngine.getTrustedHandles(this)
         trustCard.addView(
             label(
-                "名單內嘅朋友與子女正常傾偈唔會發送陌生人警報（但出現色情/誘拐字眼仍會攔截並通知家長）：\n" +
-                    if (currentHandles.isEmpty()) "(未設定)" else currentHandles.joinToString(", ") { "@$it" },
+                "2. 已批准嘅信任朋友名單 (Current: ${if (currentHandles.isEmpty()) "無" else currentHandles.joinToString(", ") { "@$it" }})：",
                 13f,
                 "#38BDF8",
                 bold = true,
-                bottomPad = 12
+                bottomPad = 8
             )
         )
 
         val handlesInput = inputBox(
-            "以逗號分隔 IG 帳號 (例如 mum_hk, dad_hk, bestie)",
+            "以逗號分隔信任朋友 IG 帳號 (例如 mum_hk, dad_hk, bestie)",
             currentHandles.joinToString(", ")
         )
         trustCard.addView(handlesInput)
 
         trustCard.addView(
-            actionButton("💾 儲存並加密同步信任名單去子女手機", "#0284C7") {
+            actionButton("💾 儲存並加密同步設定去子女手機", "#0284C7") {
+                GuardEngine.setChildSelfHandle(this, childSelfInput.text.toString())
                 val updated = handlesInput.text.toString().split(",")
                 GuardEngine.setTrustedHandles(this, updated)
                 GuardEngine.syncTrustedFromParent(this)
-                Toast.makeText(this, "✅ 已加密儲存並同步去子女手機！", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "✅ 已儲存並加密同步去子女手機！", Toast.LENGTH_SHORT).show()
                 renderUi()
             }
         )
@@ -1829,7 +1957,9 @@ class MainActivity : Activity() {
 
                 val cleanHandle = sender.trim().lowercase().removePrefix("@")
                 if ((reason == "stranger_message" || reason == "sexual_or_grooming_content") &&
-                    cleanHandle !in currentHandles && !cleanHandle.contains(" ")
+                    cleanHandle !in currentHandles &&
+                    !GuardEngine.isChildSelfHandle(this, cleanHandle) &&
+                    !cleanHandle.contains(" ")
                 ) {
                     itemBox.addView(
                         actionButton("+ 將 @$cleanHandle 加入信任名單並解除封鎖 (Approve)", "#334155") {
@@ -1863,6 +1993,7 @@ class MainActivity : Activity() {
         val unlockRemainingSec = GuardEngine.getUnlockRemainingSeconds(this)
         val lockoutRemainingSec = GuardEngine.checkPasswordLockoutRemainingSec(this)
         val offenders = GuardEngine.getFlaggedOffenders(this)
+        val selfHandle = GuardEngine.getChildSelfHandle(this)
 
         val statusCard = makeCard()
         statusCard.addView(
@@ -1879,9 +2010,10 @@ class MainActivity : Activity() {
                 "• 家庭安全核對圖案：${GuardEngine.getSafetyEmojis(this)}\n" +
                     "• 步驟 1 訊息通知讀取：${if (notifOn) "已開啟 ✅" else "未開啟 ❌"}\n" +
                     "• 步驟 2 實時對話掃描及防篡改鎖：${if (accOn) "已開啟 ✅" else "未開啟 ❌"}\n" +
-                    "• 定時心跳回報：每 30–95 分鐘隨機向家長手機加密回報連線狀態\n" +
-                    "• 保護鎖狀態：${if (unlockRemainingSec > 0) "⏳ 已臨時解鎖（剩餘 ${unlockRemainingSec / 60} 分 ${unlockRemainingSec % 60} 秒）" else "已鎖定 🔒（所有陌生人及高危對象新訊息均會即時轉發家長）"}\n" +
-                    "• 已封鎖高危帳號 (禁止子女進入對話，但新訊息仍會通知家長)：${if (offenders.isEmpty()) "(無)" else offenders.joinToString(", ") { "@$it" }}",
+                    "• 讀取範圍：私訊只讀取左下方「對方傳來」嘅訊息；貼文留言/限時動態只檢查子女自己輸入嘅回覆\n" +
+                    "• 保護鎖狀態：${if (unlockRemainingSec > 0) "⏳ 已臨時解鎖（剩餘 ${unlockRemainingSec / 60} 分 ${unlockRemainingSec % 60} 秒）" else "已鎖定 🔒"}\n" +
+                    "• 子女本人 IG 帳號：${if (selfHandle.isEmpty()) "(可於家長手機設定或自動識別)" else "@$selfHandle"}\n" +
+                    "• 已封鎖高危帳號：${if (offenders.isEmpty()) "(無)" else offenders.joinToString(", ") { "@$it" }}",
                 14f,
                 "#E2E8F0",
                 bottomPad = 16
