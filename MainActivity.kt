@@ -1,4 +1,4 @@
-package com.example.igguard
+package hk.family.igguard
 
 import android.accessibilityservice.AccessibilityService
 import android.animation.AnimatorSet
@@ -67,12 +67,13 @@ import kotlin.concurrent.thread
 import kotlin.random.Random
 
 /**
- * IG Guard v4.4 (Refined Edition) — Family-Friendly Instagram DM & Comment-Reply Safety Guard
+ * IG Guard v4.4 (Hardened & Play-Protect-Clean Edition)
+ * Family-Friendly Instagram DM & Comment-Reply Safety Guard
  * Co-authored & maintained with @citreae_313
  * Example protected teen account handle: @zuck
  */
 object GuardEngine {
-    const val ACTION_UI_REFRESH = "com.example.igguard.ACTION_UI_REFRESH"
+    const val ACTION_UI_REFRESH = "hk.family.igguard.ACTION_UI_REFRESH"
     const val INSTAGRAM_PKG = "com.instagram.android"
     private const val PREFS_NAME = "ig_guard_prefs"
 
@@ -82,9 +83,13 @@ object GuardEngine {
     private val seenNotifMsgTimestamps = LinkedHashSet<String>()
     private val pollLock = Any()
 
-    // Cached AES-256 key so deriveAesKey() is O(1) across high-frequency relay polling
+    // O(1) in-memory caches for AES-256 key, Trusted Handles Set, and Flagged Offenders Set
     @Volatile private var cachedKeyToken: String = ""
     @Volatile private var cachedSecretKey: SecretKeySpec? = null
+    @Volatile private var cachedTrustedRaw: String = ""
+    @Volatile private var cachedTrustedSet: Set<String> = emptySet()
+    @Volatile private var cachedOffendersRaw: String = ""
+    @Volatile private var cachedOffendersSet: Set<String> = emptySet()
 
     // Live Checkpoint & Heartbeat States
     @Volatile var cpNotifConnected: Boolean = false
@@ -149,6 +154,13 @@ object GuardEngine {
 
     fun nowTimeStr(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
     fun nowDateTimeStr(): String = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date())
+
+    // Constant-time string comparison to prevent timing side-channel leaks on PIN / unlock codes
+    fun constantTimeEquals(a: String, b: String): Boolean {
+        val bytesA = a.toByteArray(Charsets.UTF_8)
+        val bytesB = b.toByteArray(Charsets.UTF_8)
+        return MessageDigest.isEqual(bytesA, bytesB)
+    }
 
     // Theme Mode: true = Warm Bright Mode ("Morning Harbor"), false = Warm Dark Mode ("Cozy Lantern")
     fun isBrightTheme(ctx: Context): Boolean = prefs(ctx).getBoolean("bright_theme", true)
@@ -361,16 +373,19 @@ object GuardEngine {
         val clean = inputCode.trim().uppercase(Locale.US)
         if (clean.length != 6) return false
         for (offset in -1L..1L) {
-            if (clean == generate15MinUnlockCode(ctx, offset)) return true
+            if (constantTimeEquals(clean, generate15MinUnlockCode(ctx, offset))) return true
         }
         val syncedCode = (prefs(ctx).getString("synced_15m_code", "") ?: "").uppercase(Locale.US)
         val syncedExp = prefs(ctx).getLong("synced_15m_exp", 0L)
-        if (clean == syncedCode && System.currentTimeMillis() < syncedExp) return true
+        if (syncedCode.isNotEmpty() && System.currentTimeMillis() < syncedExp && constantTimeEquals(clean, syncedCode)) {
+            return true
+        }
         return false
     }
 
     fun push15MinUnlockCodeFromParent(ctx: Context, code: String) {
-        val exp = System.currentTimeMillis() + 15 * 60 * 1000L
+        val now = System.currentTimeMillis()
+        val exp = now + 15 * 60 * 1000L
         prefs(ctx).edit()
             .putString("synced_15m_code", code)
             .putLong("synced_15m_exp", exp)
@@ -381,6 +396,7 @@ object GuardEngine {
             put("type", "unlock_code")
             put("code", code)
             put("exp", exp)
+            put("ts_ms", now)
             put("time", nowDateTimeStr())
         }.toString()
         postEncryptedToChannel(ctx, topic, token, plain, null)
@@ -392,28 +408,27 @@ object GuardEngine {
         val oldTopic = getChannelTopicForToken(oldToken)
         val newToken = UUID.randomUUID().toString()
         val newPin = getPin(ctx)
+        val now = System.currentTimeMillis()
 
         val plain = JSONObject().apply {
             put("type", if (resetChildToUnconfigured) "remote_reset_child" else "key_rotated")
             put("new_token", newToken)
             put("new_pin", newPin)
+            put("ts_ms", now)
             put("time", nowDateTimeStr())
         }.toString()
 
-        postEncryptedToChannel(ctx, oldTopic, oldToken, plain) { _, _ ->
-            if (!resetChildToUnconfigured) {
-                setFamilyToken(ctx, newToken)
-            }
-            ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
-        }
-
         if (!resetChildToUnconfigured) {
             setFamilyToken(ctx, newToken)
+            ParentAlertService.reconnectActiveStream()
+        }
+
+        postEncryptedToChannel(ctx, oldTopic, oldToken, plain) { _, _ ->
+            ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
         }
         return newToken
     }
 
-    // Performance fix: Do not fire full-screen UI rebuild broadcasts on internal checkpoint logs
     @Synchronized
     fun addCheckpointLog(ctx: Context, step: String, detail: String) {
         val entry = "[${nowTimeStr()}] $step: $detail"
@@ -522,7 +537,7 @@ object GuardEngine {
         return null
     }
 
-    // ================= 5. CHILD SELF HANDLE (@zuck) + TRUSTED FRIENDS + FLAGGED OFFENDERS =================
+    // ================= 5. CHILD SELF HANDLE (@zuck) + O(1) CACHED TRUSTED & OFFENDER SETS =================
     fun getChildSelfHandle(ctx: Context): String {
         return (prefs(ctx).getString("child_self_handle", "") ?: "").trim().lowercase().removePrefix("@")
     }
@@ -530,12 +545,15 @@ object GuardEngine {
     fun setChildSelfHandle(ctx: Context, handle: String) {
         val clean = handle.trim().lowercase().removePrefix("@")
         prefs(ctx).edit().putString("child_self_handle", clean).apply()
+        cachedTrustedRaw = ""
+        cachedOffendersRaw = ""
         if (clean.isNotEmpty()) {
-            // Ensure child's own account ID is never left inside trusted_csv or flagged_offenders_csv
             val cleanedTrusted = getTrustedHandles(ctx).filter { it != clean }
             prefs(ctx).edit().putString("trusted_csv", cleanedTrusted.joinToString(",")).apply()
             val cleanedOffenders = getFlaggedOffenders(ctx).filter { it != clean }
             prefs(ctx).edit().putString("flagged_offenders_csv", cleanedOffenders.joinToString(",")).apply()
+            cachedTrustedRaw = ""
+            cachedOffendersRaw = ""
         }
     }
 
@@ -549,10 +567,15 @@ object GuardEngine {
     fun getFlaggedOffenders(ctx: Context): Set<String> {
         val selfHandle = getChildSelfHandle(ctx)
         val raw = prefs(ctx).getString("flagged_offenders_csv", "") ?: ""
-        return raw.split(",")
+        val key = "$selfHandle|$raw"
+        if (key == cachedOffendersRaw) return cachedOffendersSet
+        val parsed = raw.split(",")
             .map { it.trim().lowercase().removePrefix("@") }
             .filter { it.isNotEmpty() && it != selfHandle }
             .toSet()
+        cachedOffendersRaw = key
+        cachedOffendersSet = parsed
+        return parsed
     }
 
     fun markSenderAsFlaggedOffender(ctx: Context, sender: String) {
@@ -561,6 +584,7 @@ object GuardEngine {
         val next = getFlaggedOffenders(ctx).toMutableSet()
         if (next.add(clean)) {
             prefs(ctx).edit().putString("flagged_offenders_csv", next.joinToString(",")).apply()
+            cachedOffendersRaw = ""
         }
     }
 
@@ -578,10 +602,15 @@ object GuardEngine {
     fun getTrustedHandles(ctx: Context): Set<String> {
         val selfHandle = getChildSelfHandle(ctx)
         val raw = prefs(ctx).getString("trusted_csv", "mum_hk,dad_hk,school_friend_1") ?: ""
-        return raw.split(",")
+        val key = "$selfHandle|$raw"
+        if (key == cachedTrustedRaw) return cachedTrustedSet
+        val parsed = raw.split(",")
             .map { it.trim().lowercase().removePrefix("@") }
             .filter { it.isNotEmpty() && it != selfHandle }
             .toSet()
+        cachedTrustedRaw = key
+        cachedTrustedSet = parsed
+        return parsed
     }
 
     fun setTrustedHandles(ctx: Context, handles: Collection<String>) {
@@ -591,9 +620,10 @@ object GuardEngine {
             .distinct()
             .sorted()
         prefs(ctx).edit().putString("trusted_csv", clean.joinToString(",")).apply()
-        // If parent explicitly approves a sender, remove them from flagged offenders so child can chat
+        cachedTrustedRaw = ""
         val remainingOffenders = getFlaggedOffenders(ctx) - clean.toSet()
         prefs(ctx).edit().putString("flagged_offenders_csv", remainingOffenders.joinToString(",")).apply()
+        cachedOffendersRaw = ""
     }
 
     @Synchronized
@@ -648,11 +678,6 @@ object GuardEngine {
         return NON_MESSAGE_UI_PATTERN.matches(clean)
     }
 
-    /**
-     * Evaluates an incoming Instagram DM or notification:
-     * - Ignores the child's own account (@zuck) and UI chrome strings.
-     * - Marks sexual/grooming senders in `flagged_offenders_csv` AND continues forwarding every subsequent message from them to the parent!
-     */
     fun evaluateMessage(ctx: Context, senderTitle: String, msgBody: String): String? {
         val text = msgBody.trim()
         if (text.isEmpty()) return null
@@ -665,7 +690,7 @@ object GuardEngine {
             return "sexual_or_grooming_content"
         }
 
-        // Keep forwarding all follow-up messages from previously flagged offenders to the parent phone!
+        // Keep forwarding all follow-up messages from previously flagged offenders to the parent phone
         if (isFlaggedOffender(ctx, senderTitle)) {
             return "sexual_or_grooming_content"
         }
@@ -710,6 +735,7 @@ object GuardEngine {
             put("reason", reason)
             put("sender", cleanSender)
             put("text", cleanText)
+            put("ts_ms", System.currentTimeMillis())
             put("time", nowDateTimeStr())
             put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
             put("child_self_handle", getChildSelfHandle(ctx))
@@ -725,6 +751,7 @@ object GuardEngine {
             put("type", "sync_trusted")
             put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
             put("child_self_handle", getChildSelfHandle(ctx))
+            put("ts_ms", System.currentTimeMillis())
             put("time", nowDateTimeStr())
         }.toString()
         postEncryptedToChannel(ctx, topic, token, plain, null)
@@ -801,7 +828,6 @@ object GuardEngine {
         }
     }
 
-    // Bug Fix #1: Synchronized on pollLock + defensive HashSet copy for SharedPreferences StringSet
     fun processIncomingRelayLine(
         ctx: Context,
         line: String,
@@ -820,6 +846,7 @@ object GuardEngine {
         val token = getOrCreateFamilyToken(ctx)
         val inner = decryptPayload(token, innerStr) ?: return
         val msgType = inner.optString("type")
+        val msgTs = inner.optLong("ts_ms", 0L)
 
         val updatedIds = HashSet<String>(existingSet)
         updatedIds.add(msgId)
@@ -829,6 +856,13 @@ object GuardEngine {
             updatedIds
         }
         prefs(ctx).edit().putStringSet("seen_msg_ids", persistedSet).apply()
+
+        // Anti-replay / out-of-order check for state-mutating control messages
+        if (msgType in setOf("sync_trusted", "key_rotated", "remote_reset_child") && msgTs > 0L) {
+            val lastControlTs = prefs(ctx).getLong("last_control_ts_ms", 0L)
+            if (msgTs < lastControlTs) return
+            prefs(ctx).edit().putLong("last_control_ts_ms", msgTs).apply()
+        }
 
         when (msgType) {
             "sync_trusted" -> {
@@ -845,7 +879,7 @@ object GuardEngine {
             "unlock_code" -> {
                 val code = inner.optString("code")
                 val exp = inner.optLong("exp", 0L)
-                if (code.isNotEmpty() && exp > 0L) {
+                if (code.isNotEmpty() && exp > System.currentTimeMillis()) {
                     prefs(ctx).edit()
                         .putString("synced_15m_code", code)
                         .putLong("synced_15m_exp", exp)
@@ -864,7 +898,9 @@ object GuardEngine {
                 }
             }
             "remote_reset_child" -> {
-                if (role == "child") {
+                // Only honor remote reset commands issued within the last 20 minutes
+                val freshEnough = msgTs == 0L || (System.currentTimeMillis() - msgTs) <= 20 * 60_000L
+                if (role == "child" && freshEnough) {
                     grantTemporaryUnlock(ctx, 10 * 60_000L)
                     setRole(ctx, "unconfigured")
                     addCheckpointLog(ctx, "CP4-RESET", "Parent remotely unlocked & reset Child Phone")
@@ -981,7 +1017,6 @@ class IgNotificationListener : NotificationListenerService() {
             ?: extras.getCharSequence(Notification.EXTRA_TEXT)
             ?: "").toString().trim()
 
-        // Strip "[child_handle] " recipient prefix if Instagram includes it and auto-learn child_self_handle if empty
         var cleanTitle = rawTitle
         if (rawTitle.startsWith("[") && rawTitle.contains("]")) {
             val bracketed = rawTitle.substringAfter("[").substringBefore("]").trim()
@@ -1065,7 +1100,7 @@ class IgNotificationListener : NotificationListenerService() {
             return
         }
 
-        // Always forward the alert to the Parent Phone (including all follow-up texts from flagged offenders!)
+        // Always forward the alert to the Parent Phone (including all follow-up texts from flagged offenders)
         GuardEngine.sendAlertFromChild(
             this,
             reason = reason,
@@ -1095,14 +1130,13 @@ class IgNotificationListener : NotificationListenerService() {
     }
 }
 
-// 2. CHILD ONLY: Instagram DM Bottom-Left Bubble Scanner + Story/Comment Reply Filter + Anti-Tamper Settings Guard
+// 2. CHILD ONLY: Instagram DM Bottom-Left Bubble Scanner + Story/Comment Reply Filter + Play-Protect-Clean Settings Guard
 class IgAccessibilityService : AccessibilityService() {
 
     private var lastScanMs = 0L
     private var lastRemoteSyncMs = 0L
     private var lastCapturedBottomMsg = ""
 
-    // Bug Fix #3: Debounce child's typed comment/story replies (1.4s settle) so parent receives one complete reply instead of keystroke fragments
     private val debounceHandler = Handler(Looper.getMainLooper())
     private var pendingReplyText: String = ""
     private var pendingReplyContextAuthor: String = ""
@@ -1176,19 +1210,8 @@ class IgAccessibilityService : AccessibilityService() {
         val joined = items.joinToString(" ") { it.text }
 
         // A. Prevent teen from turning off Instagram notifications or disabling IG Guard in Android OS Settings
+        // Play Protect Fix: Uses instant GLOBAL_ACTION_HOME without programmatic switch clicking inside OS Settings
         if (!dmUnlocked && isSettingsPackage(pkg)) {
-            val isIgNotificationPage = joined.contains("Instagram", ignoreCase = true) &&
-                (joined.contains("Allow notifications", ignoreCase = true) ||
-                    joined.contains("Show notifications", ignoreCase = true) ||
-                    joined.contains("顯示通知") ||
-                    joined.contains("允許通知") ||
-                    joined.contains("All \"Instagram\" notifications", ignoreCase = true))
-
-            if (isIgNotificationPage) {
-                // shortcut: auto-click master notification switch back ON before kicking to Home, upgrade to Family Link device owner policy on managed devices
-                forceEnableUncheckedSwitches(root)
-            }
-
             val touchesProtectedApp = joined.contains("Instagram", ignoreCase = true) ||
                 joined.contains("IG Guard", ignoreCase = true) ||
                 joined.contains("Notification access", ignoreCase = true) ||
@@ -1278,7 +1301,6 @@ class IgAccessibilityService : AccessibilityService() {
                         debounceHandler.postDelayed(flushPendingCommentReplyRunnable, 1_400L)
                     }
                 } else if (pendingReplyText.isNotEmpty()) {
-                    // EditText cleared (child tapped Send or closed keyboard) -> flush immediately
                     debounceHandler.removeCallbacks(flushPendingCommentReplyRunnable)
                     flushPendingCommentReplyRunnable.run()
                 }
@@ -1292,7 +1314,7 @@ class IgAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // Only scan LEFT-ALIGNED incoming DM bubbles in the bottom half of the chat (ignores child's own right-aligned sent messages!)
+            // Only scan LEFT-ALIGNED incoming DM bubbles in the bottom half of the chat (ignores child's own right-aligned sent messages)
             val bottomHalfTop = (screenHeight * 0.50).toInt()
             val inputBarTop = (screenHeight * 0.86).toInt()
             val leftIncomingThreshold = (screenWidth * 0.28).toInt()
@@ -1352,50 +1374,64 @@ class IgAccessibilityService : AccessibilityService() {
             pkg == "com.coloros.safecenter"
     }
 
-    // Bug Fix #2: Skips invisible cached RecyclerView nodes (!node.isVisibleToUser) and bounds recursion depth
+    // Safe traversal: catches concurrent window hierarchy changes during fast scrolling and recycles child nodes on API < 33
+    @Suppress("DEPRECATION")
     private fun collectScreenNodes(node: AccessibilityNodeInfo?, out: MutableList<ScreenNodeItem>, depth: Int) {
-        if (node == null || out.size >= 90 || depth > 28 || !node.isVisibleToUser) return
-        val raw = (node.text ?: node.contentDescription)?.toString()?.trim() ?: ""
-        if (raw.isNotEmpty()) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            out.add(
-                ScreenNodeItem(
-                    text = raw,
-                    top = rect.top,
-                    bottom = rect.bottom,
-                    left = rect.left,
-                    right = rect.right,
-                    isEditable = node.isEditable
+        if (node == null || out.size >= 90 || depth > 28) return
+        try {
+            if (!node.isVisibleToUser) return
+            val raw = (node.text ?: node.contentDescription)?.toString()?.trim() ?: ""
+            if (raw.isNotEmpty()) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                out.add(
+                    ScreenNodeItem(
+                        text = raw,
+                        top = rect.top,
+                        bottom = rect.bottom,
+                        left = rect.left,
+                        right = rect.right,
+                        isEditable = node.isEditable
+                    )
                 )
-            )
-        }
-        val count = node.childCount
-        for (i in 0 until count) {
-            collectScreenNodes(node.getChild(i), out, depth + 1)
-        }
-    }
-
-    private fun forceEnableUncheckedSwitches(node: AccessibilityNodeInfo?) {
-        if (node == null || !node.isVisibleToUser) return
-        val cls = node.className?.toString() ?: ""
-        if ((cls.contains("Switch") || cls.contains("CheckBox")) && !node.isChecked && node.isClickable) {
-            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        }
-        for (i in 0 until node.childCount) {
-            forceEnableUncheckedSwitches(node.getChild(i))
+            }
+            val count = node.childCount
+            for (i in 0 until count) {
+                val child = node.getChild(i) ?: continue
+                try {
+                    collectScreenNodes(child, out, depth + 1)
+                } finally {
+                    if (Build.VERSION.SDK_INT < 33) {
+                        try { child.recycle() } catch (_: Exception) {}
+                    }
+                }
+            }
+        } catch (_: Exception) {
         }
     }
 
     override fun onInterrupt() {}
 }
 
-// 3. PARENT ONLY: Persistent Encrypted TLS Stream Receiver + Child Offline Watchdog (with clean socket lifecycle management)
+// 3. PARENT ONLY: Persistent Encrypted TLS Stream Receiver + Child Offline Watchdog
 class ParentAlertService : Service() {
 
+    companion object {
+        @Volatile private var activeConnection: HttpsURLConnection? = null
+        private val streamGeneration = AtomicInteger(0)
+
+        // Cleanly interrupts active socket when family key rotates so existing loop immediately switches to the new topic
+        fun reconnectActiveStream() {
+            streamGeneration.incrementAndGet()
+            try {
+                activeConnection?.disconnect()
+            } catch (_: Exception) {
+            }
+            activeConnection = null
+        }
+    }
+
     @Volatile private var running = false
-    @Volatile private var activeConnection: HttpsURLConnection? = null
-    private val streamGeneration = AtomicInteger(0)
     private var notifSeq = 100
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -1424,9 +1460,9 @@ class ParentAlertService : Service() {
 
         if (!running) {
             running = true
-            val myGen = streamGeneration.incrementAndGet()
             thread {
-                while (running && streamGeneration.get() == myGen && GuardEngine.isParentMode(applicationContext)) {
+                while (running && GuardEngine.isParentMode(applicationContext)) {
+                    val myGen = streamGeneration.get()
                     if (GuardEngine.shouldFireHeartbeatMissingAlert(applicationContext)) {
                         val missingAlert = JSONObject().apply {
                             put("reason", "tamper_attempt")
@@ -1472,7 +1508,7 @@ class ParentAlertService : Service() {
                             GuardEngine.addCheckpointLog(applicationContext, "CP4-ERR", "Stream returned HTTPS $code")
                         }
                     } catch (e: Exception) {
-                        if (running) {
+                        if (running && streamGeneration.get() == myGen) {
                             GuardEngine.cpParentStreamState = "Reconnecting TLS (${e.javaClass.simpleName})..."
                         }
                     } finally {
@@ -1543,12 +1579,7 @@ class ParentAlertService : Service() {
 
     override fun onDestroy() {
         running = false
-        streamGeneration.incrementAndGet()
-        try {
-            activeConnection?.disconnect()
-        } catch (_: Exception) {
-        }
-        activeConnection = null
+        reconnectActiveStream()
         super.onDestroy()
     }
 
@@ -1565,7 +1596,6 @@ class MainActivity : Activity() {
     private var showAdvancedLogs: Boolean = false
     private var displayed15MinCode: String = ""
 
-    // Dual-Palette Theme Tokens anchored on palette.pdf (#000100, #A1A6B4, #94C5CC, #B4D2E7, #F8F8F8) + Warm Family Companion Accents
     private data class ThemeColors(
         val bgCanvas: String,
         val bgCard: String,
@@ -1632,7 +1662,6 @@ class MainActivity : Activity() {
         }
     }
 
-    // Bug Fix #6: Skip tearing down view tree when an EditText is actively focused by the user, and preserve scroll position
     private val refreshReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             uiHandler.post {
@@ -1663,9 +1692,21 @@ class MainActivity : Activity() {
         handleDeepLinkIntent(intent)
     }
 
+    // Security Fix: Prevent unauthorized deep-link re-pairing if the phone is already locked in Child Mode
     private fun handleDeepLinkIntent(intent: Intent?) {
         val dataStr = intent?.dataString ?: return
         val parsed = GuardEngine.parsePairingString(dataStr) ?: return
+        if (GuardEngine.isChildMode(this) && !GuardEngine.isTemporarilyUnlocked(this)) {
+            GuardEngine.sendAlertFromChild(
+                this,
+                "tamper_attempt",
+                "Deep-Link Guard",
+                "Blocked unauthorized attempt to overwrite family pairing via igguard:// link while locked.",
+                bypassDedupe = true
+            )
+            Toast.makeText(this, "⛔ 子女保護鎖定中，無法覆寫家庭配對！請先解鎖。", Toast.LENGTH_LONG).show()
+            return
+        }
         GuardEngine.setFamilyToken(this, parsed.first)
         GuardEngine.setPin(this, parsed.second)
         GuardEngine.setRole(this, "child")
@@ -1721,7 +1762,7 @@ class MainActivity : Activity() {
                 )
                 .setCancelable(true)
                 .setPositiveButton("立即開啟 (Enable Now) →") { _, _ ->
-                    openNotificationListenerSettingsHighlighted()
+                    openNotificationListenerSettings()
                 }
                 .setNeutralButton("先解除「限制設定」") { _, _ ->
                     openAppDetailsSettings()
@@ -1739,7 +1780,7 @@ class MainActivity : Activity() {
                 )
                 .setCancelable(true)
                 .setPositiveButton("完成設定 (Enable Lock) →") { _, _ ->
-                    openAccessibilitySettingsHighlighted()
+                    openAccessibilitySettings()
                 }
                 .setNeutralButton("解除「限制設定」") { _, _ ->
                     openAppDetailsSettings()
@@ -1770,28 +1811,14 @@ class MainActivity : Activity() {
         startActivity(intent)
     }
 
-    private fun openNotificationListenerSettingsHighlighted() {
+    private fun openNotificationListenerSettings() {
         GuardEngine.grantTemporaryUnlock(this, 180_000L)
-        val cn = ComponentName(this, IgNotificationListener::class.java).flattenToString()
-        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
-            putExtra(":settings:fragment_args_key", cn)
-            putExtra(":settings:show_fragment_args", Bundle().apply {
-                putString(":settings:fragment_args_key", cn)
-            })
-        }
-        startActivity(intent)
+        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
     }
 
-    private fun openAccessibilitySettingsHighlighted() {
+    private fun openAccessibilitySettings() {
         GuardEngine.grantTemporaryUnlock(this, 180_000L)
-        val cn = ComponentName(this, IgAccessibilityService::class.java).flattenToString()
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-            putExtra(":settings:fragment_args_key", cn)
-            putExtra(":settings:show_fragment_args", Bundle().apply {
-                putString(":settings:fragment_args_key", cn)
-            })
-        }
-        startActivity(intent)
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
 
     private fun syncRoleServices() {
@@ -1820,7 +1847,6 @@ class MainActivity : Activity() {
         val role = GuardEngine.getRole(this)
         val isBright = GuardEngine.isBrightTheme(this)
 
-        // Warm Family Header Banner
         val heroHeader = makeCard(t, isHero = true)
         heroHeader.addView(label("🛡️ IG Guard v4.4", 23f, t.textPrimary, bold = true, bottomPad = 4))
         val badgeText = when (role) {
@@ -2310,7 +2336,7 @@ class MainActivity : Activity() {
                     )
                     Toast.makeText(this, "✅ 已成功解鎖 15 分鐘！", Toast.LENGTH_LONG).show()
                     renderUi(animate = true)
-                } else if (entered == GuardEngine.getPin(this)) {
+                } else if (GuardEngine.constantTimeEquals(entered, GuardEngine.getPin(this))) {
                     GuardEngine.recordPasswordAttempt(this, true)
                     GuardEngine.grantTemporaryUnlock(this, 3 * 60 * 1000L)
                     codeInput.setText("")
@@ -2387,7 +2413,7 @@ class MainActivity : Activity() {
                         Toast.makeText(this, "⛔ 密碼輸入已鎖定，請從家長手機遠端重設", Toast.LENGTH_LONG).show()
                         return@actionButton
                     }
-                    if (pinInput.text.toString().trim() == GuardEngine.getPin(this)) {
+                    if (GuardEngine.constantTimeEquals(pinInput.text.toString().trim(), GuardEngine.getPin(this))) {
                         GuardEngine.recordPasswordAttempt(this, true)
                         GuardEngine.setRole(this, "unconfigured")
                         syncRoleServices()
@@ -2403,7 +2429,6 @@ class MainActivity : Activity() {
             card.addView(
                 actionButton("🔄 更換全新家庭金鑰（自動同步更新子女手機金鑰）", t.btnPrimaryBg, t.btnPrimaryText) {
                     GuardEngine.rotateKeyAndNotifyChild(this, resetChildToUnconfigured = false)
-                    stopService(Intent(this, ParentAlertService::class.java))
                     syncRoleServices()
                     Toast.makeText(this, "✅ 已更換金鑰並透過加密通道自動更新子女手機！", Toast.LENGTH_LONG).show()
                     renderUi(animate = true)
