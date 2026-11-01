@@ -7,6 +7,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Person
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.ClipboardManager
@@ -56,15 +57,16 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import javax.net.ssl.HttpsURLConnection
 import kotlin.concurrent.thread
-import kotlin.math.abs
 import kotlin.random.Random
 
 object GuardEngine {
     const val ACTION_UI_REFRESH = "com.example.igguard.ACTION_UI_REFRESH"
     private const val PREFS_NAME = "ig_guard_prefs"
 
-    // 10-minute cross-source deduplication window for identical (reason|sender|message)
-    private const val DEDUPE_WINDOW_MS = 600_000L
+    // Short 3-second burst dedupe for notifications (so every new message from a stranger is sent to Parent, even repeated phrases!)
+    private const val NOTIF_BURST_DEDUPE_MS = 3_000L
+    // 45-second dedupe for live screen scanner (prevents static screen redraws from spamming while child views a chat)
+    private const val SCREEN_DEDUPE_MS = 45_000L
     private val recentAlerts = LinkedHashMap<String, Long>()
     private val seenNotifMsgTimestamps = LinkedHashSet<String>()
     private val pollLock = Any()
@@ -216,7 +218,6 @@ object GuardEngine {
     fun isChildHeartbeatOverdue(ctx: Context): Boolean {
         val lastMs = prefs(ctx).getLong("parent_last_child_hb_ms", 0L)
         if (lastMs == 0L) return false
-        // Overdue if > 100 minutes since last heartbeat (since max random interval is 95 mins)
         return (System.currentTimeMillis() - lastMs) > 100 * 60_000L
     }
 
@@ -307,7 +308,6 @@ object GuardEngine {
         prefs(ctx).edit().putLong("unlock_until_ms", until).apply()
     }
 
-    // Generates a 6-character alphanumeric 15-minute unlock code (over 1 billion combinations + 5-try lockout)
     fun generate15MinUnlockCode(ctx: Context, bucketOffset: Long = 0L): String {
         val alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
         val token = getOrCreateFamilyToken(ctx)
@@ -349,7 +349,6 @@ object GuardEngine {
     }
 
     // ================= 4. REMOTE KEY ROTATION & REMOTE CHILD UNLOCK/RESET =================
-    // Broadcasts a remote reset or key update on the OLD token before switching the Parent Phone to a new token!
     fun rotateKeyAndNotifyChild(ctx: Context, resetChildToUnconfigured: Boolean): String {
         val oldToken = getOrCreateFamilyToken(ctx)
         val oldTopic = getChannelTopicForToken(oldToken)
@@ -363,7 +362,6 @@ object GuardEngine {
             put("time", nowDateTimeStr())
         }.toString()
 
-        // Send encrypted command to the OLD channel so the Child Phone receives it and updates/unlocks immediately!
         postEncryptedToChannel(ctx, oldTopic, oldToken, plain) { _, _ ->
             if (!resetChildToUnconfigured) {
                 setFamilyToken(ctx, newToken)
@@ -486,18 +484,32 @@ object GuardEngine {
         return null
     }
 
-    fun getChildOwnHandles(ctx: Context): Set<String> {
-        val raw = prefs(ctx).getString("child_own_handles", "") ?: ""
+    // ================= 5. TRUSTED FRIENDS vs. FLAGGED OFFENDERS WATCHLIST =================
+    // Flagged offenders: strangers who have sent sexual/grooming content.
+    // Child Phone blocks opening their chat & wipes their notifications, while STILL forwarding ALL their messages to Parent Phone!
+    fun getFlaggedOffenders(ctx: Context): Set<String> {
+        val raw = prefs(ctx).getString("flagged_offenders_csv", "") ?: ""
         return raw.split(",").map { it.trim().lowercase().removePrefix("@") }.filter { it.isNotEmpty() }.toSet()
     }
 
-    fun rememberChildOwnHandle(ctx: Context, handle: String) {
-        val clean = handle.trim().lowercase().removePrefix("@")
-        if (clean.isEmpty() || clean == "instagram") return
-        val next = getChildOwnHandles(ctx).toMutableSet()
+    fun markSenderAsFlaggedOffender(ctx: Context, sender: String) {
+        val clean = sender.trim().lowercase().removePrefix("@")
+        if (clean.isEmpty() || clean == "instagram" || clean == "instagram_open_chat") return
+        val next = getFlaggedOffenders(ctx).toMutableSet()
         if (next.add(clean)) {
-            prefs(ctx).edit().putString("child_own_handles", next.joinToString(",")).apply()
+            prefs(ctx).edit().putString("flagged_offenders_csv", next.joinToString(",")).apply()
         }
+    }
+
+    fun isFlaggedOffender(ctx: Context, rawSender: String): Boolean {
+        val offenders = getFlaggedOffenders(ctx)
+        if (offenders.isEmpty()) return false
+        val norm = rawSender.trim().lowercase().removePrefix("@")
+        if (norm in offenders) return true
+        for (off in offenders) {
+            if (norm.contains("(@$off)") || norm.startsWith("$off ") || norm.endsWith(" $off")) return true
+        }
+        return false
     }
 
     fun getTrustedHandles(ctx: Context): Set<String> {
@@ -508,6 +520,9 @@ object GuardEngine {
     fun setTrustedHandles(ctx: Context, handles: Collection<String>) {
         val clean = handles.map { it.trim().lowercase().removePrefix("@") }.filter { it.isNotEmpty() }.distinct().sorted()
         prefs(ctx).edit().putString("trusted_csv", clean.joinToString(",")).apply()
+        // If parent explicitly approves a handle, remove it from flagged offenders
+        val remainingOffenders = getFlaggedOffenders(ctx) - clean.toSet()
+        prefs(ctx).edit().putString("flagged_offenders_csv", remainingOffenders.joinToString(",")).apply()
     }
 
     @Synchronized
@@ -522,15 +537,15 @@ object GuardEngine {
     }
 
     @Synchronized
-    fun shouldSendAlert(key: String, bypassDedupe: Boolean = false): Boolean {
+    fun shouldSendAlert(key: String, windowMs: Long, bypassDedupe: Boolean = false): Boolean {
         if (bypassDedupe) return true
         val now = System.currentTimeMillis()
         val iter = recentAlerts.entries.iterator()
         while (iter.hasNext()) {
-            if (now - iter.next().value > DEDUPE_WINDOW_MS) iter.remove()
+            if (now - iter.next().value > SCREEN_DEDUPE_MS) iter.remove()
         }
         val prev = recentAlerts[key]
-        if (prev != null && now - prev <= DEDUPE_WINDOW_MS) {
+        if (prev != null && now - prev <= windowMs) {
             return false
         }
         recentAlerts[key] = now
@@ -538,7 +553,7 @@ object GuardEngine {
     }
 
     fun isTrustedSender(ctx: Context, rawTitle: String, rawText: String): Boolean {
-        val trustedSet = getTrustedHandles(ctx) + getChildOwnHandles(ctx)
+        val trustedSet = getTrustedHandles(ctx)
         val titleNorm = rawTitle.trim().lowercase().removePrefix("@")
         if (titleNorm.isEmpty() || titleNorm == "instagram") return false
         if (titleNorm in trustedSet) return true
@@ -556,21 +571,30 @@ object GuardEngine {
         return false
     }
 
-    // Filters out status/receipt strings like "Recently seen" / "Seen 5m ago" / "已讀"
     fun isNonMessageUiString(raw: String): Boolean {
         val clean = raw.trim()
         if (clean.length < 2) return true
         return NON_MESSAGE_UI_PATTERN.matches(clean)
     }
 
+    // Evaluates a DM and NEVER ignores follow-up messages from a stranger or flagged offender!
     fun evaluateDm(ctx: Context, senderTitle: String, messageBody: String): String? {
         val text = messageBody.trim()
-        val senderNorm = senderTitle.trim().lowercase().removePrefix("@")
         if (text.isEmpty() || IGNORED_NOTIFICATIONS.matches(text) || isNonMessageUiString(text)) return null
-        if (senderNorm in getChildOwnHandles(ctx)) return null
+
+        // 1. Check if message contains explicit sexual/grooming keywords -> mark sender as Flagged Offender!
         if (SEXUAL_PATTERN.containsMatchIn(text) || SEXUAL_PATTERN.containsMatchIn(senderTitle)) {
+            markSenderAsFlaggedOffender(ctx, senderTitle)
             return "sexual_or_grooming_content"
         }
+
+        // 2. Even if follow-up message from a Flagged Offender has normal words ("Hehe", "Are you there?"),
+        // ALWAYS forward it to Parent Phone as a high-priority sexual/grooming follow-up so Parent keeps 100% supervision!
+        if (isFlaggedOffender(ctx, senderTitle)) {
+            return "sexual_or_grooming_content"
+        }
+
+        // 3. Otherwise, any sender not in Trusted Friends triggers a Stranger DM alert to Parent Phone
         if (!isTrustedSender(ctx, senderTitle, text)) {
             return "stranger_message"
         }
@@ -583,13 +607,20 @@ object GuardEngine {
         sender: String,
         text: String,
         bypassDedupe: Boolean = false,
+        fromNotification: Boolean = false,
         onComplete: ((Boolean, String) -> Unit)? = null
     ) {
         val cleanSender = sender.trim().ifEmpty { "unknown" }.take(80)
         val cleanText = text.trim().take(300)
         val dedupeKey = "${reason.lowercase()}|${cleanSender.lowercase().removePrefix("@")}|${cleanText.lowercase()}"
+        val windowMs = if (fromNotification) NOTIF_BURST_DEDUPE_MS else SCREEN_DEDUPE_MS
 
-        if (!shouldSendAlert(dedupeKey, bypassDedupe = bypassDedupe || reason == "test_alert" || reason == "heartbeat_ok")) {
+        if (!shouldSendAlert(
+                dedupeKey,
+                windowMs = windowMs,
+                bypassDedupe = bypassDedupe || reason == "test_alert" || reason == "heartbeat_ok"
+            )
+        ) {
             addCheckpointLog(ctx, "CP2-DEDUPE", "Skipped duplicate: @$cleanSender ($cleanText)")
             onComplete?.invoke(false, "Duplicate suppressed")
             return
@@ -632,7 +663,6 @@ object GuardEngine {
         thread {
             try {
                 val encryptedBody = encryptPayload(token, plainJson)
-                // Strictly enforce HttpsURLConnection (TLS 1.2/1.3) + AES-256-GCM E2EE
                 val conn = (URL("https://ntfy.sh/$topic").openConnection() as HttpsURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 8000
@@ -738,7 +768,6 @@ object GuardEngine {
                 }
             }
             "key_rotated" -> {
-                // Parent rotated the Family Key -> Child Phone automatically updates to the new Family Key!
                 val newToken = inner.optString("new_token")
                 val newPin = inner.optString("new_pin")
                 if (newToken.isNotEmpty()) {
@@ -749,7 +778,6 @@ object GuardEngine {
                 }
             }
             "remote_reset_child" -> {
-                // Parent remotely unlocked & reset Child Phone (solves forgotten password lock!)
                 if (role == "child") {
                     grantTemporaryUnlock(ctx, 10 * 60_000L)
                     setRole(ctx, "unconfigured")
@@ -810,7 +838,7 @@ object GuardEngine {
     }
 }
 
-// 1. CHILD ONLY: Reads incoming Instagram DM notifications + runs random 30-95 min heartbeat & remote-command sync
+// 1. CHILD ONLY: Intercepts EVERY stranger & flagged-offender notification (never ignores follow-up messages!)
 class IgNotificationListener : NotificationListenerService() {
 
     private val heartbeatHandler = Handler(Looper.getMainLooper())
@@ -820,7 +848,7 @@ class IgNotificationListener : NotificationListenerService() {
                 GuardEngine.checkAndSendChildHeartbeatIfDue(this@IgNotificationListener)
                 thread { GuardEngine.pollChannelOnce(applicationContext, since = "30m") }
             }
-            heartbeatHandler.postDelayed(this, 60_000L) // Checks once per minute if random 30-95m timer is due
+            heartbeatHandler.postDelayed(this, 60_000L)
         }
     }
 
@@ -858,82 +886,90 @@ class IgNotificationListener : NotificationListenerService() {
 
         val convHeader = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim() ?: ""
         val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
-        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim() ?: ""
+        val fallbackBody = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
+            ?: extras.getCharSequence(Notification.EXTRA_TEXT)
+            ?: "").toString().trim()
 
-        if (subText.isNotEmpty() && !subText.contains(" ")) {
-            GuardEngine.rememberChildOwnHandle(this, subText)
+        // Strip "[logged_in_account] " prefix from title if Instagram prepends it
+        val cleanTitle = if (rawTitle.startsWith("[") && rawTitle.contains("]")) {
+            rawTitle.substringAfter("]").trim().ifEmpty { rawTitle }
+        } else {
+            rawTitle
         }
 
-        val extractedPairs = ArrayList<Pair<String, String>>()
-        val msgBundles = getParcelableArrayCompat(extras, Notification.EXTRA_MESSAGES)
+        // Resolve ONE accurate (sender, message, msgTime) from the notification
+        var resolvedSender = ""
+        var resolvedMessage = ""
+        var resolvedTime = sbn.postTime
 
+        val msgBundles = getParcelableArrayCompat(extras, Notification.EXTRA_MESSAGES)
         if (!msgBundles.isNullOrEmpty()) {
-            // Only inspect the LATEST message in the bundle so older historical messages in the bundle aren't re-sent
             val latestBundle = msgBundles.lastOrNull() as? Bundle
             if (latestBundle != null) {
-                val msgText = latestBundle.getCharSequence("text")?.toString()?.trim() ?: ""
-                val msgSender = latestBundle.getCharSequence("sender")?.toString()?.trim() ?: ""
-                val msgTime = latestBundle.getLong("time", 0L)
-
-                if (convHeader.isNotEmpty() && msgSender.isNotEmpty() &&
-                    !convHeader.equals(msgSender, ignoreCase = true) && !convHeader.contains(" ")
-                ) {
-                    GuardEngine.rememberChildOwnHandle(this, convHeader)
+                resolvedMessage = latestBundle.getCharSequence("text")?.toString()?.trim() ?: ""
+                resolvedTime = latestBundle.getLong("time", sbn.postTime)
+                var bundleSender = latestBundle.getCharSequence("sender")?.toString()?.trim() ?: ""
+                if (bundleSender.isEmpty() && Build.VERSION.SDK_INT >= 28) {
+                    @Suppress("DEPRECATION")
+                    val person = latestBundle.getParcelable<Parcelable>("sender_person") as? Person
+                    bundleSender = person?.name?.toString()?.trim() ?: ""
                 }
-
-                val effectiveSender = msgSender.ifEmpty { rawTitle.ifEmpty { convHeader } }
-                val tsSig = "$effectiveSender|$msgTime|$msgText"
-                if (msgText.isNotEmpty() && (msgTime == 0L || GuardEngine.isNewNotificationMessageTimestamp(tsSig))) {
-                    extractedPairs.add(effectiveSender to msgText)
-                }
-            }
-        } else {
-            val fallbackBody = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
-                ?: extras.getCharSequence(Notification.EXTRA_TEXT)
-                ?: "").toString().trim()
-
-            if (fallbackBody.isNotEmpty()) {
-                var sender = rawTitle.ifEmpty { convHeader }
-                if (sender.startsWith("[") && sender.contains("]")) {
-                    val insideBracket = sender.substringAfter("[").substringBefore("]").trim()
-                    val afterBracket = sender.substringAfter("]").trim()
-                    if (insideBracket.isNotEmpty() && afterBracket.isNotEmpty()) {
-                        GuardEngine.rememberChildOwnHandle(this, insideBracket)
-                        sender = afterBracket
-                    }
-                }
-                var body = fallbackBody
-                if (body.contains(": ")) {
-                    val possibleSender = body.substringBefore(": ").trim()
-                    val possibleMsg = body.substringAfter(": ").trim()
-                    if (possibleSender.isNotEmpty() && !possibleSender.contains(" ") && possibleMsg.isNotEmpty()) {
-                        if (sender.isNotEmpty() && !sender.equals(possibleSender, ignoreCase = true) && !sender.contains(" ")) {
-                            GuardEngine.rememberChildOwnHandle(this, sender)
-                        }
-                        sender = possibleSender
-                        body = possibleMsg
-                    }
-                }
-                extractedPairs.add(sender to body)
+                resolvedSender = bundleSender
             }
         }
 
-        if (extractedPairs.isEmpty()) return
+        if (resolvedMessage.isEmpty()) {
+            resolvedMessage = fallbackBody
+        }
 
-        var wipeNotification = false
-        for ((sender, body) in extractedPairs.distinct()) {
-            val reason = GuardEngine.evaluateDm(this, sender, body)
-            if (reason == null) {
-                GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "Ignored trusted/self/status: @$sender")
-                continue
+        // Check if fallbackBody or resolvedMessage has "sender_handle: actual_message" format
+        if (resolvedMessage.contains(": ")) {
+            val possibleSender = resolvedMessage.substringBefore(": ").trim()
+            val possibleMsg = resolvedMessage.substringAfter(": ").trim()
+            if (possibleSender.isNotEmpty() && !possibleSender.contains(" ") && possibleMsg.isNotEmpty()) {
+                resolvedSender = possibleSender
+                resolvedMessage = possibleMsg
             }
-            GuardEngine.sendAlertFromChild(this, reason, sender, body)
-            if (reason == "sexual_or_grooming_content" && !GuardEngine.isTemporarilyUnlocked(this)) {
-                wipeNotification = true
+        } else if (fallbackBody.contains(": ")) {
+            val possibleSender = fallbackBody.substringBefore(": ").trim()
+            val possibleMsg = fallbackBody.substringAfter(": ").trim()
+            if (possibleSender.isNotEmpty() && !possibleSender.contains(" ") && possibleMsg == resolvedMessage) {
+                resolvedSender = possibleSender
             }
         }
 
-        if (wipeNotification) {
+        if (resolvedSender.isEmpty()) {
+            // Prefer cleanTitle (EXTRA_TITLE = sender name) over convHeader (EXTRA_CONVERSATION_TITLE = logged-in account)
+            resolvedSender = cleanTitle.ifEmpty { convHeader }
+        }
+
+        if (resolvedMessage.isEmpty() || resolvedSender.isEmpty()) return
+
+        val tsSig = "$resolvedSender|$resolvedTime|$resolvedMessage"
+        if (!GuardEngine.isNewNotificationMessageTimestamp(tsSig)) {
+            return
+        }
+
+        val reason = GuardEngine.evaluateDm(this, resolvedSender, resolvedMessage)
+        if (reason == null) {
+            GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "Ignored trusted/status: @$resolvedSender")
+            return
+        }
+
+        // Always forward every new message from strangers AND flagged offenders to the Parent Phone!
+        GuardEngine.sendAlertFromChild(
+            this,
+            reason = reason,
+            sender = resolvedSender,
+            text = resolvedMessage,
+            fromNotification = true
+        )
+
+        // If sexual/grooming OR sender is already a Flagged Offender, wipe the notification from the Child's screen
+        // so the child isn't harassed by the perpetrator, while the Parent STILL receives every message above!
+        if ((reason == "sexual_or_grooming_content" || GuardEngine.isFlaggedOffender(this, resolvedSender)) &&
+            !GuardEngine.isTemporarilyUnlocked(this)
+        ) {
             try {
                 cancelNotification(sbn.key)
             } catch (_: Exception) {
@@ -951,12 +987,11 @@ class IgNotificationListener : NotificationListenerService() {
     }
 }
 
-// 2. CHILD ONLY: Intercepts ONLY the latest bottom DM bubble in active chats (ignores upper history & "Recently seen")
+// 2. CHILD ONLY: Blocks child from opening chats with Flagged Offenders while intercepting bottom-most new messages in other chats
 class IgAccessibilityService : AccessibilityService() {
 
     private var lastScanMs = 0L
     private var lastRemoteSyncMs = 0L
-    // Tracks the peer & initial bottom bubble when a chat first opens so old history isn't dumped on thread open
     private var currentOpenPeer: String = ""
     private var lastReportedBottomBubble: String = ""
 
@@ -989,7 +1024,6 @@ class IgAccessibilityService : AccessibilityService() {
         GuardEngine.cpAccConnected = true
         GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
 
-        // Check if random 30-95 min heartbeat is due, and check for remote key rotation/reset every 45s
         GuardEngine.checkAndSendChildHeartbeatIfDue(this)
         if (now - lastRemoteSyncMs > 45_000L) {
             lastRemoteSyncMs = now
@@ -1057,7 +1091,6 @@ class IgAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // Detect if child is inside an ACTIVE 1-on-1 DM Conversation (message composer at bottom of screen)
             val composerNode = items.firstOrNull { item ->
                 item.top > (screenHeight * 0.55).toInt() && (
                     item.isEditable ||
@@ -1075,44 +1108,50 @@ class IgAccessibilityService : AccessibilityService() {
             }
 
             val composerTop = composerNode.top
-            val ownHandles = GuardEngine.getChildOwnHandles(this)
 
-            // 1. Extract peer's handle/name from the top header bar (top 20% of screen), skipping status strings like "Active now" / "Recently seen"
+            // 1. Extract peer's handle/name from the top header bar (top 21% of screen)
             val headerCandidates = items.filter { item ->
                 val clean = item.text.trim()
-                val low = clean.lowercase().removePrefix("@")
                 item.bottom <= (screenHeight * 0.21).toInt() &&
                     !item.isEditable &&
                     clean.length in 2..35 &&
-                    !GuardEngine.isNonMessageUiString(clean) &&
-                    low !in ownHandles
+                    !GuardEngine.isNonMessageUiString(clean)
             }.sortedBy { it.top }
 
-            // The first text in the DM header is the peer's Display Name / Handle (the line below it is usually "Active 5m ago" / "Recently seen")
             val peerHeader = headerCandidates.firstOrNull()?.text?.trim() ?: "Instagram_Open_Chat"
             val isPeerTrusted = GuardEngine.isTrustedSender(this, peerHeader, "")
 
-            // 2. ONLY look at the LOWER message region just above the composer box (between 42% of screen and composerTop)
-            // This ignores upper historical messages and filters out "Recently seen" / "Seen" / timestamps!
+            // 2. If this peer is already a Flagged Offender (sent sexual/grooming content previously),
+            // immediately block the child from opening this DM thread while still forwarding any visible bottom message to Parent!
             val recentBottomBubbles = items.filter { item ->
                 val clean = item.text.trim()
-                val low = clean.lowercase().removePrefix("@")
                 item.top >= (screenHeight * 0.42).toInt() &&
                     item.bottom <= composerTop + 10 &&
                     !item.isEditable &&
                     clean != peerHeader &&
-                    !GuardEngine.isNonMessageUiString(clean) &&
-                    low !in ownHandles
+                    !GuardEngine.isNonMessageUiString(clean)
             }.sortedBy { it.bottom }
 
-            // Pick ONLY the single newest message bubble at the very bottom of the conversation!
-            val latestBubble = recentBottomBubbles.lastOrNull() ?: return
-            val latestText = latestBubble.text.trim()
+            val latestBubble = recentBottomBubbles.lastOrNull()
+            val latestText = latestBubble?.text?.trim() ?: ""
+
+            if (GuardEngine.isFlaggedOffender(this, peerHeader)) {
+                if (latestText.isNotEmpty()) {
+                    GuardEngine.sendAlertFromChild(this, "sexual_or_grooming_content", peerHeader, latestText)
+                }
+                if (!dmUnlocked) {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }
+                return
+            }
+
+            if (latestText.isEmpty()) return
             val bubbleSig = "${peerHeader.lowercase()}|${latestText.lowercase()}"
 
-            // Check sexual / grooming content on the latest bottom bubble first
+            // 3. If the latest bottom bubble in an active chat contains sexual/grooming text -> mark peer as Flagged Offender, alert Parent, and back out!
             if (GuardEngine.SEXUAL_PATTERN.containsMatchIn(latestText)) {
                 lastReportedBottomBubble = bubbleSig
+                GuardEngine.markSenderAsFlaggedOffender(this, peerHeader)
                 GuardEngine.sendAlertFromChild(this, "sexual_or_grooming_content", peerHeader, latestText)
                 if (!dmUnlocked) {
                     performGlobalAction(GLOBAL_ACTION_BACK)
@@ -1120,7 +1159,7 @@ class IgAccessibilityService : AccessibilityService() {
                 return
             }
 
-            // When switching into a chat thread, record the existing bottom bubble once; only alert if it's a new stranger message
+            // 4. Active chat with a non-trusted stranger -> forward every new bottom message to Parent Phone
             if (peerHeader != currentOpenPeer) {
                 currentOpenPeer = peerHeader
             }
@@ -1209,7 +1248,6 @@ class ParentAlertService : Service() {
             running = true
             thread {
                 while (running && GuardEngine.isParentMode(applicationContext)) {
-                    // Check if Child Phone missed its 30-95 min random heartbeat (>100 mins silent)
                     if (GuardEngine.shouldFireHeartbeatMissingAlert(applicationContext)) {
                         val missingAlert = JSONObject().apply {
                             put("reason", "tamper_attempt")
@@ -1292,7 +1330,7 @@ class ParentAlertService : Service() {
         val text = alert.optString("text", "")
 
         val title = when (reason) {
-            "sexual_or_grooming_content" -> "🚨 色情/誘拐高危警報: $sender"
+            "sexual_or_grooming_content" -> "🚨 色情/高危對象訊息: $sender"
             "tamper_attempt" -> "⚠️ 防篡改/離線警告: $sender"
             "stranger_message" -> "💬 陌生人私訊: $sender"
             "heartbeat_ok" -> "💓 子女手機定時連線回報 (30–95m)"
@@ -1325,7 +1363,7 @@ class ParentAlertService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
-// 4. All-in-One Parent & Child UI (v4.2)
+// 4. All-in-One Parent & Child UI (v4.3)
 class MainActivity : Activity() {
 
     private lateinit var rootContainer: LinearLayout
@@ -1515,7 +1553,7 @@ class MainActivity : Activity() {
         rootContainer.removeAllViews()
         val role = GuardEngine.getRole(this)
 
-        rootContainer.addView(label("IG Teen Guard v4.2 • 端對端加密守護系統 🔒", 21f, "#F8FAFC", bold = true))
+        rootContainer.addView(label("IG Teen Guard v4.3 • 端對端加密守護系統 🔒", 21f, "#F8FAFC", bold = true))
         val badgeText = when (role) {
             "parent" -> "👨‍👩‍👧 家長手機模式 (Parent) • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
             "child" -> "🧒 子女保護模式 🔒 (Child) • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
@@ -1632,7 +1670,6 @@ class MainActivity : Activity() {
 
     // ================= PARENT MODE UI =================
     private fun renderParentDashboard() {
-        // 1. Active Heartbeat Monitor & E2EE Security Status Card
         val hbOverdue = GuardEngine.isChildHeartbeatOverdue(this)
         val hbCard = makeCard()
         hbCard.addView(
@@ -1656,7 +1693,6 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(hbCard)
 
-        // 2. 15-Minute Temporary Unlock Code Generator Card
         val unlockGenCard = makeCard()
         unlockGenCard.addView(label("🔑 產生 15 分鐘子女臨時解鎖碼 (6-Char Unlock Code)", 17f, "#38BDF8", bold = true, bottomPad = 8))
         unlockGenCard.addView(
@@ -1689,7 +1725,6 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(unlockGenCard)
 
-        // 3. Exclusive Family Pairing & Invite Card
         val pairCard = makeCard()
         pairCard.addView(label("🔗 配對子女手機 (AES-256-GCM 端對端加密)", 17f, "#FFFFFF", bold = true, bottomPad = 8))
         pairCard.addView(
@@ -1721,7 +1756,6 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(pairCard)
 
-        // 4. Trusted Friends Card
         val trustCard = makeCard()
         trustCard.addView(label("✅ 子女信任名單 (Approved IG Friends)", 17f, "#FFFFFF", bold = true, bottomPad = 8))
         val currentHandles = GuardEngine.getTrustedHandles(this)
@@ -1753,7 +1787,6 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(trustCard)
 
-        // 5. Live Alert Inbox Card
         val inboxCard = makeCard()
         inboxCard.addView(label("🚨 子女 IG 即時警報記錄 (Child Alert Inbox)", 17f, "#FFFFFF", bold = true, bottomPad = 12))
 
@@ -1783,7 +1816,7 @@ class MainActivity : Activity() {
 
                 val itemBox = makeAlertItemBox(reason)
                 val badge = when (reason) {
-                    "sexual_or_grooming_content" -> "🔴 色情 / 誘拐高危訊息"
+                    "sexual_or_grooming_content" -> "🔴 色情 / 高危封鎖對象訊息"
                     "tamper_attempt" -> "🟠 防篡改 / 離線警告"
                     "stranger_message" -> "🟡 陌生人私訊 (Stranger DM)"
                     "heartbeat_ok" -> "💓 子女手機定時連線回報 (30–95m)"
@@ -1795,9 +1828,11 @@ class MainActivity : Activity() {
                 itemBox.addView(label("內容 (Message): $text", 14f, "#E2E8F0", bottomPad = 8))
 
                 val cleanHandle = sender.trim().lowercase().removePrefix("@")
-                if (reason == "stranger_message" && cleanHandle !in currentHandles && !cleanHandle.contains(" ")) {
+                if ((reason == "stranger_message" || reason == "sexual_or_grooming_content") &&
+                    cleanHandle !in currentHandles && !cleanHandle.contains(" ")
+                ) {
                     itemBox.addView(
-                        actionButton("+ 將 @$cleanHandle 加入信任名單 (Approve)", "#334155") {
+                        actionButton("+ 將 @$cleanHandle 加入信任名單並解除封鎖 (Approve)", "#334155") {
                             val next = GuardEngine.getTrustedHandles(this).toMutableSet()
                             next.add(cleanHandle)
                             GuardEngine.setTrustedHandles(this, next)
@@ -1827,7 +1862,7 @@ class MainActivity : Activity() {
         val allReady = notifOn && accOn
         val unlockRemainingSec = GuardEngine.getUnlockRemainingSeconds(this)
         val lockoutRemainingSec = GuardEngine.checkPasswordLockoutRemainingSec(this)
-        val ownHandles = GuardEngine.getChildOwnHandles(this)
+        val offenders = GuardEngine.getFlaggedOffenders(this)
 
         val statusCard = makeCard()
         statusCard.addView(
@@ -1845,8 +1880,8 @@ class MainActivity : Activity() {
                     "• 步驟 1 訊息通知讀取：${if (notifOn) "已開啟 ✅" else "未開啟 ❌"}\n" +
                     "• 步驟 2 實時對話掃描及防篡改鎖：${if (accOn) "已開啟 ✅" else "未開啟 ❌"}\n" +
                     "• 定時心跳回報：每 30–95 分鐘隨機向家長手機加密回報連線狀態\n" +
-                    "• 保護鎖狀態：${if (unlockRemainingSec > 0) "⏳ 已臨時解鎖（剩餘 ${unlockRemainingSec / 60} 分 ${unlockRemainingSec % 60} 秒）" else "已鎖定 🔒（可正常使用 IG DM，最新陌生人/色情訊息會即時加密通知家長）"}\n" +
-                    "• 自動識別子女 IG 帳號：${if (ownHandles.isEmpty()) "(收到首個訊息時自動識別)" else ownHandles.joinToString(", ") { "@$it" }}",
+                    "• 保護鎖狀態：${if (unlockRemainingSec > 0) "⏳ 已臨時解鎖（剩餘 ${unlockRemainingSec / 60} 分 ${unlockRemainingSec % 60} 秒）" else "已鎖定 🔒（所有陌生人及高危對象新訊息均會即時轉發家長）"}\n" +
+                    "• 已封鎖高危帳號 (禁止子女進入對話，但新訊息仍會通知家長)：${if (offenders.isEmpty()) "(無)" else offenders.joinToString(", ") { "@$it" }}",
                 14f,
                 "#E2E8F0",
                 bottomPad = 16
@@ -1875,7 +1910,6 @@ class MainActivity : Activity() {
         )
         rootContainer.addView(statusCard)
 
-        // 15-Minute Temporary Unlock Card on Child Phone (with 5-attempt brute-force lockout)
         val unlockCard = makeCard()
         unlockCard.addView(label("🔑 輸入家長 15 分鐘臨時解鎖碼 (6-Char Unlock Code)", 16f, "#4ADE80", bold = true, bottomPad = 8))
         if (lockoutRemainingSec > 0) {
