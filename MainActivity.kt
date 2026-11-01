@@ -484,7 +484,7 @@ object GuardEngine {
     }
 
     // ================= 5. EXPLICIT CHILD HANDLE + TRUSTED FRIENDS + FLAGGED OFFENDERS =================
-    // Stores the child's own IG handle explicitly (e.g. "MyName") so:
+    // Stores the child's own IG handle explicitly (e.g. "zuck") so:
     // 1) It is never confused with a stranger's handle when parsing notification titles, and
     // 2) Approving a stranger never adds the child's own account ID into the trusted friends list!
     fun getChildSelfHandle(ctx: Context): String {
@@ -933,7 +933,7 @@ class IgNotificationListener : NotificationListenerService() {
             if (remainder.isNotEmpty()) cleanTitle = remainder
         }
 
-        // If convHeader and cleanTitle are both present and different (e.g. convHeader="citreae_313", cleanTitle="LeoAccountIsDeleted"),
+        // If convHeader and cleanTitle are both present and different (e.g. convHeader="zuck", cleanTitle="stranger_account"),
         // and Child Self Handle is not set yet, convHeader is the recipient's logged-in account!
         if (convHeader.isNotEmpty() && cleanTitle.isNotEmpty() &&
             !convHeader.equals(cleanTitle, ignoreCase = true) &&
