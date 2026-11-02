@@ -66,7 +66,7 @@ import kotlin.concurrent.thread
 import kotlin.random.Random
 
 /**
- * IG Guard v4.4 (Refined & Play-Protect-Clean Release Edition)
+ * IG Guard v4.5 (Refined & Play-Protect-Clean Release Edition)
  * Family-Friendly Instagram DM & Comment-Reply Safety Guard
  * Co-authored & maintained with @citreae_313
  * Example protected teen account handle: @zuck
@@ -1944,7 +1944,7 @@ class MainActivity : Activity() {
         val isBright = GuardEngine.isBrightTheme(this)
 
         val heroHeader = makeCard(t, isHero = true)
-        heroHeader.addView(label("🛡️ IG Guard v4.4", 23f, t.textPrimary, bold = true, bottomPad = 4))
+        heroHeader.addView(label("🛡️ IG Guard v4.5", 23f, t.textPrimary, bold = true, bottomPad = 4))
         val badgeText = when (role) {
             "parent" -> "🏡 家長守護中心 • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
             "child" -> "🌱 子女守護模式 🔒 • 核對圖案: ${GuardEngine.getSafetyEmojis(this)}"
