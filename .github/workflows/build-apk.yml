@@ -26,14 +26,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p app/src/main/java/hk/family/igguard
+          mkdir -p app/src/main/java/app/family/igguard
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/values
 
           if [ -f MainActivity_v4.kt ] && grep -q "object GuardEngine" MainActivity_v4.kt; then
-            sed "s/^package .*/package hk.family.igguard/" MainActivity_v4.kt > app/src/main/java/hk/family/igguard/MainActivity.kt
+            sed "s/^package .*/package app.family.igguard/" MainActivity_v4.kt > app/src/main/java/app/family/igguard/MainActivity.kt
           elif [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
-            sed "s/^package .*/package hk.family.igguard/" MainActivity.kt > app/src/main/java/hk/family/igguard/MainActivity.kt
+            sed "s/^package .*/package app.family.igguard/" MainActivity.kt > app/src/main/java/app/family/igguard/MainActivity.kt
           else
             echo "ERROR: No MainActivity source containing GuardEngine was found." >&2
             exit 1
@@ -76,11 +76,11 @@ jobs:
           }
 
           android {
-              namespace 'hk.family.igguard'
+              namespace 'app.family.igguard'
               compileSdk 34
 
               defaultConfig {
-                  applicationId "hk.family.igguard"
+                  applicationId "app.family.igguard"
                   minSdk 26
                   targetSdk 34
                   versionCode $VER_CODE
@@ -91,7 +91,7 @@ jobs:
                   persistentKey {
                       storeFile file("ig_guard.keystore")
                       storePassword "${{ secrets.RETIRED_EXPOSED_SIGNING_PASSWORD }}"
-                      keyAlias "igguard_key"
+                      keyAlias "family_key"
                       keyPassword "${{ secrets.RETIRED_EXPOSED_SIGNING_PASSWORD }}"
                   }
               }
@@ -131,7 +131,7 @@ jobs:
               android:canRetrieveWindowContent="true"
               android:description="@string/acc_desc"
               android:notificationTimeout="200"
-              android:packageNames="com.instagram.android,com.android.settings,com.samsung.android.lool,com.miui.securitycenter,com.coloros.safecenter" />
+              android:packageNames="com.instagram.android" />
           EOF
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
@@ -193,10 +193,10 @@ jobs:
           EOF
 
       - name: Compile Signed APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleRelease --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ig-guard-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/release/app-release.apk
