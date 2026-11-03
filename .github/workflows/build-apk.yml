@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,6 +19,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 34
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
@@ -30,10 +39,10 @@ jobs:
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/values
 
-          if [ -f MainActivity_v4.kt ] && grep -q "object GuardEngine" MainActivity_v4.kt; then
-            sed "s/^package .*/package app.family.igguard/" MainActivity_v4.kt > app/src/main/java/app/family/igguard/MainActivity.kt
-          elif [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
+          if [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
             sed "s/^package .*/package app.family.igguard/" MainActivity.kt > app/src/main/java/app/family/igguard/MainActivity.kt
+          elif [ -f MainActivity_v4.kt ] && grep -q "object GuardEngine" MainActivity_v4.kt; then
+            sed "s/^package .*/package app.family.igguard/" MainActivity_v4.kt > app/src/main/java/app/family/igguard/MainActivity.kt
           else
             echo "ERROR: No MainActivity source containing GuardEngine was found." >&2
             exit 1
@@ -60,6 +69,10 @@ jobs:
           }
           rootProject.name = "IGGuard"
           include(":app")
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
           EOF
 
           cat > build.gradle <<'EOF'
@@ -144,6 +157,7 @@ jobs:
               <application
                   android:label="@string/app_name"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  <meta-data android:name="isMonitoringTool" android:value="child_monitoring" />
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -191,6 +205,24 @@ jobs:
               </application>
           </manifest>
           EOF
+
+      - name: Run regression checks
+        run: |
+          python3 tests/check_ui.py
+          mkdir -p app/src/test/java/app/family/igguard
+          cp tests/*Test.kt app/src/test/java/app/family/igguard/
+          cat >> app/build.gradle <<'EOF'
+          android { testOptions {
+              unitTests.includeAndroidResources = true
+              unitTests.all { maxHeapSize = '1g' }
+          } }
+          dependencies {
+              testImplementation 'junit:junit:4.13.2'
+              testImplementation 'org.json:json:20240303'
+              testImplementation 'org.robolectric:robolectric:4.14.1'
+          }
+          EOF
+          gradle testDebugUnitTest --no-daemon
 
       - name: Compile Signed APK
         run: gradle assembleRelease --no-daemon
