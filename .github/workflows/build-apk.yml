@@ -96,7 +96,7 @@ jobs:
                   minSdk 26
                   targetSdk 34
                   versionCode $VER_CODE
-                  versionName "4.${{ github.run_number }}"
+                  versionName "4.6"
               }
 
               signingConfigs {
