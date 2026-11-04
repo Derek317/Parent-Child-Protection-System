@@ -29,7 +29,7 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Assemble Android project structure and persistent signing key
+      - name: Assemble Android project structure
         run: |
           set -euo pipefail
 
@@ -37,6 +37,7 @@ jobs:
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/values
           cp -R ui-res/. app/src/main/res/
+          cp FamilySecurity.kt app/src/main/java/app/family/igguard/
 
           if [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
             sed "s/^package .*/package app.family.igguard/" MainActivity.kt > app/src/main/java/app/family/igguard/MainActivity.kt
@@ -47,7 +48,6 @@ jobs:
             exit 1
           fi
 
-          echo "${{ secrets.RETIRED_EXPOSED_KEYSTORE }}" | base64 -d > app/ig_guard.keystore
 
           VER_CODE=$((100 + ${{ github.run_number }}))
 
@@ -100,21 +100,20 @@ jobs:
               }
 
               signingConfigs {
-                  persistentKey {
-                      storeFile file("ig_guard.keystore")
-                      storePassword "${{ secrets.RETIRED_EXPOSED_SIGNING_PASSWORD }}"
-                      keyAlias "family_key"
-                      keyPassword "${{ secrets.RETIRED_EXPOSED_SIGNING_PASSWORD }}"
+                  privateRelease {
+                      if (System.getenv('APK_KEYSTORE_PATH')) {
+                          storeFile file(System.getenv('APK_KEYSTORE_PATH'))
+                          storePassword System.getenv('APK_KEYSTORE_PASSWORD')
+                          keyAlias System.getenv('APK_KEY_ALIAS')
+                          keyPassword System.getenv('APK_KEY_PASSWORD')
+                      }
                   }
               }
 
               buildTypes {
-                  debug {
-                      signingConfig signingConfigs.persistentKey
-                  }
                   release {
                       minifyEnabled false
-                      signingConfig signingConfigs.persistentKey
+                      if (System.getenv('APK_KEYSTORE_PATH')) signingConfig signingConfigs.privateRelease
                   }
               }
 
@@ -148,12 +147,18 @@ jobs:
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <permission android:name="app.family.igguard.INTERNAL" android:protectionLevel="signature" />
+              <uses-permission android:name="app.family.igguard.INTERNAL" />
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
               <application
+                  android:allowBackup="false"
+                  android:fullBackupContent="false"
+                  android:dataExtractionRules="@xml/private_data_rules"
+                  android:usesCleartextTraffic="false"
                   android:label="@string/app_name"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
                   <meta-data android:name="isMonitoringTool" android:value="child_monitoring" />
@@ -207,7 +212,7 @@ jobs:
 
       - name: Run regression checks
         run: |
-          python3 tests/check_ui.py
+          python3 -m unittest discover -s tests -p 'check_*.py'
           mkdir -p app/src/test/java/app/family/igguard
           cp tests/*Test.kt app/src/test/java/app/family/igguard/
           cat >> app/build.gradle <<'EOF'
@@ -223,11 +228,39 @@ jobs:
           EOF
           gradle testDebugUnitTest --no-daemon
 
-      - name: Compile Signed APK
-        run: gradle assembleRelease --no-daemon
+      - name: Compile APK
+        id: package
+        env:
+          APK_KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
+          APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+          APK_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+          APK_KEY_PASSWORD: ${{ secrets.APK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          configured=0
+          for value in "$APK_KEYSTORE_BASE64" "$APK_KEYSTORE_PASSWORD" "$APK_KEY_ALIAS" "$APK_KEY_PASSWORD"; do
+            if [ -n "$value" ]; then configured=$((configured + 1)); fi
+          done
+          if [ "$configured" != 0 ] && [ "$configured" != 4 ]; then
+            echo "Configure all four APK signing secrets; partial signing configuration is rejected." >&2
+            exit 1
+          fi
+          unset APK_KEYSTORE_PATH
+          if [ "$configured" = 4 ]; then
+            umask 077
+            export APK_KEYSTORE_PATH="$(mktemp "$RUNNER_TEMP/ig-guard-key.XXXXXX")"
+            trap 'rm -f "$APK_KEYSTORE_PATH"' EXIT
+            printf '%s' "$APK_KEYSTORE_BASE64" | base64 --decode > "$APK_KEYSTORE_PATH"
+            artifact_name=ig-guard-signed-apk
+          else
+            artifact_name=ig-guard-unsigned-apk
+            echo "Signing secrets are not configured. This unsigned APK requires private signing before installation. See docs/signing.md." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          gradle assembleRelease --no-daemon
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ig-guard-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: app/build/outputs/apk/release/*.apk
