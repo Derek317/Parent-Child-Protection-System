@@ -249,8 +249,24 @@ jobs:
           if [ "$configured" = 4 ]; then
             umask 077
             export APK_KEYSTORE_PATH="$(mktemp "$RUNNER_TEMP/ig-guard-key.XXXXXX")"
-            trap 'rm -f "$APK_KEYSTORE_PATH"' EXIT
-            printf '%s' "$APK_KEYSTORE_BASE64" | base64 --decode > "$APK_KEYSTORE_PATH"
+            trap 'rm -f "$APK_KEYSTORE_PATH" "$APK_KEYSTORE_PATH.csr"' EXIT
+            if ! printf '%s' "$APK_KEYSTORE_BASE64" | base64 --decode > "$APK_KEYSTORE_PATH"; then
+              echo "::error::[SIGNING_BASE64] APK_KEYSTORE_BASE64 is not valid Base64. Supply the encoded keystore contents, not a filename."
+              exit 1
+            fi
+            if ! keytool -list -keystore "$APK_KEYSTORE_PATH" -storepass:env APK_KEYSTORE_PASSWORD </dev/null >/dev/null 2>&1; then
+              echo "::error::[SIGNING_STORE] The decoded keystore cannot be opened with APK_KEYSTORE_PASSWORD. Verify that password on the exact local file and replace the Base64 secret from that file."
+              exit 1
+            fi
+            if ! keytool -list -keystore "$APK_KEYSTORE_PATH" -storepass:env APK_KEYSTORE_PASSWORD -alias "$APK_KEY_ALIAS" </dev/null >/dev/null 2>&1; then
+              echo "::error::[SIGNING_ALIAS] The keystore opened successfully, but APK_KEY_ALIAS does not identify an entry in it."
+              exit 1
+            fi
+            if ! keytool -certreq -keystore "$APK_KEYSTORE_PATH" -storepass:env APK_KEYSTORE_PASSWORD -alias "$APK_KEY_ALIAS" -keypass:env APK_KEY_PASSWORD -file "$APK_KEYSTORE_PATH.csr" </dev/null >/dev/null 2>&1; then
+              echo "::error::[SIGNING_KEY_PASSWORD] The keystore and alias are valid, but the private key cannot be used with APK_KEY_PASSWORD. If you used one password, put that same value in both password secrets."
+              exit 1
+            fi
+            echo "Signing keystore, alias and private-key password verified."
             artifact_name=ig-guard-signed-apk
           else
             artifact_name=ig-guard-unsigned-apk
