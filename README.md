@@ -28,3 +28,6 @@ This project compiles directly in the cloud via **GitHub Actions** with zero loc
 
 * `MainActivity.kt` (or `MainActivity_v4.kt`): Single-file Kotlin source containing `GuardEngine`, `IgNotificationListener`, `IgAccessibilityService`, `ParentAlertService`, and `MainActivity`.
 * `.github/workflows/build-apk.yml`: Assembles the Android Gradle project, signs the APK with a persistent 2048-bit RSA keystore, and auto-increments `versionCode` so future updates install in-place without uninstalling the previous version.
+* `ui-res/`: Native fonts, vector icons, light/dark themes and sheet animations used by the role-first family interface; copied into the generated Android project by the workflow. See [asset licences](UI_ASSET_LICENSES.md).
+
+The app opens with role choice and retains existing protection until an authorised role change. Parent and child each have four navigation sections. Charts, alerts, connection states and family settings use real stored data; new installations have an empty trust list.

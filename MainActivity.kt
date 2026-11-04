@@ -2,6 +2,9 @@ package app.family.igguard
 
 import android.accessibilityservice.AccessibilityService
 import android.app.Activity
+import android.app.Dialog
+import android.animation.ValueAnimator
+import android.content.res.ColorStateList
 import android.app.AlertDialog
 import android.app.Notification
 import android.app.NotificationChannel
@@ -14,6 +17,7 @@ import android.content.ActivityNotFoundException
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.DialogInterface
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
@@ -24,6 +28,8 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -39,14 +45,19 @@ import android.text.TextWatcher
 import android.text.Editable
 import android.util.Base64
 import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.ImageButton
+import android.widget.Space
 import android.view.Gravity
 import android.view.accessibility.AccessibilityManager
-import android.widget.PopupMenu
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.EditText
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -792,7 +803,7 @@ object GuardEngine {
 
     fun getTrustedHandles(ctx: Context): Set<String> {
         val selfHandle = getChildSelfHandle(ctx)
-        val raw = prefs(ctx).getString("trusted_csv", "mum_hk,dad_hk,school_friend_1") ?: ""
+        val raw = prefs(ctx).getString("trusted_csv", "") ?: ""
         val key = "$selfHandle|$raw"
         if (key == cachedTrustedRaw) return cachedTrustedSet
         val parsed = raw.split(",")
@@ -1926,20 +1937,31 @@ class ParentAlertService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
-// 4. Warm, Family-Friendly UI with Dual Palettes from palette.pdf (#000100, #A1A6B4, #94C5CC, #B4D2E7, #F8F8F8) & Streamlined 1-Tap Setup
+// Native family UI. Monitoring, cryptography and pairing remain in the existing engine.
 class MainActivity : Activity() {
-
     private lateinit var scrollView: ScrollView
     private lateinit var rootContainer: LinearLayout
     private lateinit var screenShell: LinearLayout
     private lateinit var fixedHeader: LinearLayout
+    private lateinit var contentFrame: FrameLayout
+    private lateinit var bottomNav: LinearLayout
     private lateinit var statusText: TextView
-    private var section = "overview"
+    private var section = "role"
     private var renderedRole = ""
+    private var renderedSession: Triple<String, String, Int>? = null
+    private var selectedEntryRole = ""
+    private var chartMode = "trend"
+    private var alertFilter = "all"
     private val inputDrafts = mutableMapOf<String, String>()
+    private val uiHandler = Handler(Looper.getMainLooper())
     private var activityVisible = false
     private var displayedChartDate = ""
     private var chartZone = ZoneId.systemDefault()
+    private var displayed15MinCode = ""
+    private var lastRenderedSection = ""
+    private var unlockTimerText: TextView? = null
+    private val drawableIds = mutableMapOf<String, Int>()
+    private val fonts = mutableMapOf<Boolean, Typeface>()
     private val statusTicker = object : Runnable {
         override fun run() {
             if (!activityVisible) return
@@ -1949,194 +1971,819 @@ class MainActivity : Activity() {
             uiHandler.postDelayed(this, 5_000L)
         }
     }
-    private val uiHandler = Handler(Looper.getMainLooper())
-    private var showAdvancedLogs: Boolean = false
-    private var displayed15MinCode: String = ""
 
     private data class ThemeColors(
-        val bgCanvas: String,
-        val bgCard: String,
-        val bgHero: String,
-        val bgInput: String,
-        val bgChip: String,
-        val borderSubtle: String,
-        val textPrimary: String,
-        val textSecondary: String,
-        val textMuted: String,
-        val accentSeafoam: String,
-        val accentPowderSky: String,
-        val btnPrimaryBg: String,
-        val btnPrimaryText: String,
-        val btnSecondaryBg: String,
-        val btnSecondaryText: String,
-        val warmHoney: String,
-        val warmCoral: String,
-        val warningButtonBg: String,
-        val warningButtonText: String
+        val bgCanvas: String, val bgCard: String, val bgHero: String, val bgInput: String,
+        val bgChip: String, val borderSubtle: String, val textPrimary: String,
+        val textSecondary: String, val textMuted: String, val accentSeafoam: String,
+        val accentPowderSky: String, val btnPrimaryBg: String, val btnPrimaryText: String,
+        val btnSecondaryBg: String, val btnSecondaryText: String, val warmHoney: String,
+        val warmCoral: String, val warningButtonBg: String, val warningButtonText: String
     )
-
     private fun currentTheme(): ThemeColors {
         return if (GuardEngine.isBrightTheme(this)) {
             ThemeColors(
-                bgCanvas = "#F8F8F8",
-                bgCard = "#FFFDF9",
-                bgHero = "#EAF4F7",
-                bgInput = "#F4F1EA",
-                bgChip = "#EDF6F9",
-                borderSubtle = "#B4D2E7",
-                textPrimary = "#000100",
-                textSecondary = "#525A65",
-                textMuted = "#606B76",
-                accentSeafoam = "#2E7782",
-                accentPowderSky = "#B4D2E7",
-                btnPrimaryBg = "#94C5CC",
-                btnPrimaryText = "#000100",
-                btnSecondaryBg = "#B4D2E7",
-                btnSecondaryText = "#000100",
-                warmHoney = "#875000",
-                warmCoral = "#B91C36",
-                warningButtonBg = "#875000",
-                warningButtonText = "#FFFFFF"
+                bgCanvas = "#F6F8F5", bgCard = "#FFFFFF", bgHero = "#EAF1EB", bgInput = "#FFFFFF",
+                bgChip = "#EAF1EB", borderSubtle = "#DEE7DF", textPrimary = "#202B24",
+                textSecondary = "#5D6C61", textMuted = "#5D6C61", accentSeafoam = "#315644",
+                accentPowderSky = "#61786A", btnPrimaryBg = "#315644", btnPrimaryText = "#FFFFFF",
+                btnSecondaryBg = "#FFFFFF", btnSecondaryText = "#315644", warmHoney = "#865917",
+                warmCoral = "#A83142", warningButtonBg = "#865917", warningButtonText = "#FFFFFF"
             )
         } else {
             ThemeColors(
-                bgCanvas = "#121518",
-                bgCard = "#1D2227",
-                bgHero = "#232B32",
-                bgInput = "#000100",
-                bgChip = "#26313A",
-                borderSubtle = "#36404A",
-                textPrimary = "#F8F8F8",
-                textSecondary = "#B4D2E7",
-                textMuted = "#A1A6B4",
-                accentSeafoam = "#94C5CC",
-                accentPowderSky = "#B4D2E7",
-                btnPrimaryBg = "#94C5CC",
-                btnPrimaryText = "#000100",
-                btnSecondaryBg = "#2B343D",
-                btnSecondaryText = "#F8F8F8",
-                warmHoney = "#DDBA78",
-                warmCoral = "#FF667D",
-                warningButtonBg = "#D4AE67",
-                warningButtonText = "#171C22"
+                bgCanvas = "#151E18", bgCard = "#1D2820", bgHero = "#2B3F2E", bgInput = "#1D2820",
+                bgChip = "#2B3F2E", borderSubtle = "#354436", textPrimary = "#ECF2EC",
+                textSecondary = "#AFBEB0", textMuted = "#AFBEB0", accentSeafoam = "#CEE1CE",
+                accentPowderSky = "#AFBEB0", btnPrimaryBg = "#CEE1CE", btnPrimaryText = "#1D3422",
+                btnSecondaryBg = "#1D2820", btnSecondaryText = "#CEE1CE", warmHoney = "#E8CC96",
+                warmCoral = "#FFB2BF", warningButtonBg = "#E8CC96", warningButtonText = "#1D3422"
             )
         }
     }
-
+    private fun font(bold: Boolean = false): Typeface = fonts.getOrPut(bold) {
+        val id = resources.getIdentifier(if (bold) "manrope_semibold" else "manrope_regular", "font", packageName)
+        if (id != 0) resources.getFont(id) else Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
+    }
+    private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
+    private fun color(s: String) = Color.parseColor(s)
+    private fun background(fill: String, radius: Int = 10, border: String? = null) = GradientDrawable().apply {
+        setColor(color(fill)); cornerRadius = dp(radius).toFloat()
+        if (border != null) setStroke(dp(1), color(border))
+    }
+    private fun icon(name: String, tint: String, size: Int = 24): ImageView = ImageView(this).apply {
+        val id = drawableIds.getOrPut(name) { resources.getIdentifier("ic_guard_" + name.replace('-', '_'), "drawable", packageName) }
+        if (id != 0) setImageDrawable(resources.getDrawable(id, theme).mutate().apply { setTint(color(tint)) })
+        layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+    private fun iconButton(name: String, description: String, onClick: () -> Unit): ImageButton = ImageButton(this).apply {
+        val t = currentTheme()
+        val id = drawableIds.getOrPut(name) { resources.getIdentifier("ic_guard_" + name.replace('-', '_'), "drawable", packageName) }
+        if (id != 0) setImageDrawable(resources.getDrawable(id, theme).mutate().apply { setTint(color(t.textSecondary)) })
+        background = ripple(t.bgCanvas, 10)
+        contentDescription = description
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+        setOnClickListener(sessionClick(onClick))
+    }
+    private fun ripple(fill: String, radius: Int = 10, border: String? = null): RippleDrawable {
+        val accent = color(currentTheme().accentSeafoam)
+        return RippleDrawable(ColorStateList.valueOf((accent and 0x00ffffff) or 0x18000000), background(fill, radius, border), background("#FFFFFF", radius))
+    }
+    private fun applyTheme() {
+        val bright = GuardEngine.isBrightTheme(this)
+        val id = resources.getIdentifier(if (bright) "GuardThemeLight" else "GuardThemeDark", "style", packageName)
+        if (id != 0) setTheme(id)
+        val t = currentTheme()
+        window.statusBarColor = color(t.bgCanvas)
+        window.navigationBarColor = color(t.bgCard)
+        window.decorView.systemUiVisibility = if (bright) View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0
+    }
     private val refreshReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             uiHandler.post {
                 if (!activityVisible) return@post
+                val changed = renderedSession != GuardEngine.captureRelaySession(this@MainActivity)
+                if (changed) syncRoleServices()
                 updateStatus()
-                val changedRole = renderedRole != GuardEngine.getRole(this@MainActivity)
-                if (changedRole) syncRoleServices()
-                if (changedRole || (currentFocus !is EditText && section in setOf("overview", "alerts"))) renderUi()
+                if (changed || (currentFocus !is EditText && section in setOf("overview", "alerts"))) renderUi()
             }
         }
     }
-
     override fun onCreate(savedInstanceState: Bundle?) {
+        applyTheme()
         super.onCreate(savedInstanceState)
         GuardEngine.syncChildComponents(this)
-        section = savedInstanceState?.getString("section") ?: "overview"
+        section = savedInstanceState?.getString("section") ?: "role"
         renderedRole = savedInstanceState?.getString("rendered_role") ?: GuardEngine.getRole(this)
-        savedInstanceState?.getBundle("drafts")?.let { bundle ->
-            for (key in bundle.keySet()) inputDrafts[key] = bundle.getString(key) ?: ""
-        }
+        selectedEntryRole = savedInstanceState?.getString("entry_role") ?: ""
+        chartMode = savedInstanceState?.getString("chart_mode") ?: "trend"
+        alertFilter = savedInstanceState?.getString("alert_filter") ?: "all"
+        displayed15MinCode = savedInstanceState?.getString("unlock_code") ?: ""
+        savedInstanceState?.getBundle("drafts")?.let { b -> for (key in b.keySet()) inputDrafts[key] = b.getString(key) ?: "" }
         screenShell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        fixedHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(8), dp(16), dp(8))
-        }
-        scrollView = ScrollView(this).apply { isFillViewport = true }
-        rootContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(24))
-        }
-        scrollView.addView(rootContainer)
+        fixedHeader = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(4), dp(16), 0) }
+        contentFrame = FrameLayout(this)
+        bottomNav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         screenShell.addView(fixedHeader)
-        screenShell.addView(scrollView, LinearLayout.LayoutParams(-1, 0, 1f))
+        screenShell.addView(contentFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+        screenShell.addView(bottomNav)
+        scrollView = ScrollView(this)
+        rootContainer = LinearLayout(this)
         setContentView(screenShell)
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         handleDeepLinkIntent(intent)
     }
-
     override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString("section", section)
-        outState.putString("rendered_role", renderedRole)
+        outState.putString("section", section); outState.putString("rendered_role", renderedRole)
+        outState.putString("entry_role", selectedEntryRole); outState.putString("chart_mode", chartMode)
+        outState.putString("alert_filter", alertFilter); outState.putString("unlock_code", displayed15MinCode)
         outState.putBundle("drafts", Bundle().apply { for ((key, value) in inputDrafts) putString(key, value) })
         super.onSaveInstanceState(outState)
     }
-
-    @Deprecated("Android Activity back navigation")
+    @Deprecated("Activity back navigation")
     override fun onBackPressed() {
-        if (section != "overview") navigateTo("overview") else super.onBackPressed()
+        when {
+            section.endsWith("_setup") -> navigateTo("role")
+            section == "role" -> super.onBackPressed()
+            section != "overview" -> navigateTo("overview")
+            else -> navigateTo("role")
+        }
     }
-
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        handleDeepLinkIntent(intent)
-    }
-
+    override fun onNewIntent(intent: Intent?) { super.onNewIntent(intent); handleDeepLinkIntent(intent) }
     private fun handleDeepLinkIntent(intent: Intent?) {
-        val dataStr = intent?.dataString ?: return
-        val parsed = GuardEngine.parsePairingString(dataStr) ?: return
+        val parsed = GuardEngine.parsePairingString(intent?.dataString ?: return) ?: return
         if (GuardEngine.isChildMode(this) && !GuardEngine.isTemporarilyUnlocked(this)) {
-            GuardEngine.sendAlertFromChild(
-                this,
-                "tamper_attempt",
-                "Deep-Link Guard",
-                "Blocked unauthorized attempt to overwrite family pairing via igguard:// link while locked.",
-                bypassDedupe = true
-            )
-            Toast.makeText(this, "⛔ 子女保護鎖定中，無法覆寫家庭配對！請先解鎖。", Toast.LENGTH_LONG).show()
-            return
+            GuardEngine.sendAlertFromChild(this, "tamper_attempt", "Deep-Link Guard", "Blocked unauthorized attempt to overwrite family pairing via igguard:// link while locked.", bypassDedupe = true)
+            Toast.makeText(this, "子女保護鎖定中，請先由家長解鎖。", Toast.LENGTH_LONG).show(); return
         }
-        GuardEngine.setFamilyToken(this, parsed.first)
-        GuardEngine.setPin(this, parsed.second)
-        GuardEngine.setRole(this, "child")
-        GuardEngine.markInitialSetupConfirmationSent(this, false)
-        GuardEngine.scheduleNextRandomHeartbeat(this)
-        Toast.makeText(this, "✅ 已透過專屬加密連結完成家庭配對！", Toast.LENGTH_LONG).show()
+        dismissUiDialogs()
+        GuardEngine.setFamilyToken(this, parsed.first); GuardEngine.setPin(this, parsed.second)
+        GuardEngine.setRole(this, "child"); GuardEngine.markInitialSetupConfirmationSent(this, false)
+        GuardEngine.scheduleNextRandomHeartbeat(this); section = "permissions"
+        Toast.makeText(this, "已完成家庭配對。", Toast.LENGTH_LONG).show()
     }
-
     override fun onResume() {
-        super.onResume()
-        activityVisible = true
+        super.onResume(); activityVisible = true
         val filter = IntentFilter(GuardEngine.ACTION_UI_REFRESH)
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(refreshReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(refreshReceiver, filter)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(refreshReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(refreshReceiver, filter)
+        if (GuardEngine.isChildMode(this) && GuardEngine.isNotificationListenerEnabledStatic(this)) {
+            try { NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java)) } catch (_: Exception) {}
         }
-        if (GuardEngine.isChildMode(this) && GuardEngine.isNotificationListenerEnabledStatic(this) && Build.VERSION.SDK_INT >= 24) {
-            try {
-                NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java))
-            } catch (_: Exception) {
+        syncRoleServices(); checkInitialPairingConfirmation(); renderUi()
+        uiHandler.removeCallbacks(statusTicker); uiHandler.post(statusTicker)
+    }
+    override fun onPause() {
+        super.onPause(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
+        try { unregisterReceiver(refreshReceiver) } catch (_: Exception) {}
+    }
+    override fun onDestroy() { activityVisible = false; uiHandler.removeCallbacksAndMessages(null); dismissUiDialogs(); super.onDestroy() }
+
+    private fun navigateTo(destination: String) {
+        val role = GuardEngine.getRole(this)
+        val permitted = if (role == "parent") setOf("role", "overview", "alerts", "family", "settings")
+            else if (role == "child") setOf("role", "overview", "permissions", "unlock", "settings")
+            else setOf("role", "parent_setup", "child_setup", "settings")
+        if (destination !in permitted) return
+        section = destination
+        currentFocus?.clearFocus()
+        renderUi(animate = true)
+    }
+    private fun selectEntryRole(role: String) {
+        if (role !in setOf("parent", "child")) return
+        selectedEntryRole = role
+        renderUi()
+    }
+    private fun continueEntryRole() {
+        if (selectedEntryRole !in setOf("parent", "child")) return
+        val current = GuardEngine.getRole(this)
+        if (current == selectedEntryRole) { navigateTo("overview"); return }
+        val proceed = {
+            if (current != "unconfigured") { GuardEngine.setRole(this, "unconfigured"); syncRoleServices() }
+            section = if (selectedEntryRole == "parent") "parent_setup" else "child_setup"
+            renderUi(animate = true)
+        }
+        if (current == "child") verifyParentForRoleChange(proceed) else proceed()
+    }
+    private fun verifyParentForRoleChange(onSuccess: () -> Unit) {
+        val t = currentTheme()
+        showSheet("切換身份，需要家長確認。") { dialog ->
+            addView(label("為保護既有家庭設定，請輸入目前的家長主密碼。", 14f, t.textSecondary, bottomPad = 18))
+            val password = inputBox(t, "家長主密碼", "", isPassword = true, remember = false).apply { tag = "role_password" }
+            addView(password)
+            val error = label("", 13f, t.warmCoral); addView(error)
+            addView(actionButton("驗證並繼續", t.btnPrimaryBg, t.btnPrimaryText) {
+                val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
+                if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒，或由家長手機遠端救援。"; return@actionButton }
+                val ok = GuardEngine.constantTimeEquals(password.text.toString().trim(), GuardEngine.getPin(this@MainActivity))
+                GuardEngine.recordPasswordAttempt(this@MainActivity, ok)
+                if (ok) { inputDrafts.remove("家長主密碼"); dialog.dismiss(); onSuccess() }
+                else { error.text = "家長主密碼不正確。"; password.error = "請重新輸入" }
+            })
+        }
+    }
+    private fun renderUi(animate: Boolean = false) {
+        applyTheme()
+        val t = currentTheme(); val role = GuardEngine.getRole(this)
+        val session = GuardEngine.captureRelaySession(this)
+        if (renderedSession != null && renderedSession != session) {
+            dismissUiDialogs(); inputDrafts.clear(); displayed15MinCode = ""
+        }
+        renderedSession = session
+        if (renderedRole != role) {
+            if (role == "unconfigured" && !section.endsWith("_setup")) section = "role"
+            else if (section !in setOf("role", "permissions", "overview") && !section.endsWith("_setup")) section = "overview"
+            inputDrafts.clear(); renderedRole = role
+        }
+        val focus = currentFocus as? EditText
+        val focusHint = focus?.hint?.toString(); val selection = focus?.selectionStart ?: -1
+        val sameSection = lastRenderedSection == section
+        val savedY = if (sameSection) scrollView.scrollY else 0
+        val old = if (contentFrame.childCount > 0) contentFrame.getChildAt(contentFrame.childCount - 1) else null
+        old?.animate()?.cancel()
+        contentFrame.removeAllViews()
+        if (animate && old != null && !sameSection && ValueAnimator.areAnimatorsEnabled()) contentFrame.addView(old)
+        screenShell.setBackgroundColor(color(t.bgCanvas))
+        buildHeader(t, role); buildBottomNavigation(t, role)
+        scrollView = ScrollView(this).apply { isFillViewport = true; isVerticalScrollBarEnabled = false }
+        rootContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(if (section == "role") 26 else 20), dp(24), dp(28))
+        }
+        scrollView.addView(rootContainer)
+        contentFrame.addView(scrollView, FrameLayout.LayoutParams(-1, -1))
+        unlockTimerText = null
+        when {
+            section == "role" -> renderRoleChoice(t)
+            section == "parent_setup" && role == "unconfigured" -> renderParentSetup(t)
+            section == "child_setup" && role == "unconfigured" -> renderChildSetup(t)
+            section == "settings" -> renderSettings(t)
+            role == "parent" -> when(section) { "alerts" -> renderParentAlerts(t); "family" -> renderParentFamily(t); else -> renderParentOverview(t) }
+            role == "child" -> when(section) { "permissions" -> renderChildPermissions(t); "unlock" -> renderChildUnlock(t); else -> renderChildOverview(t) }
+            else -> renderRoleChoice(t)
+        }
+        if (sameSection && focusHint != null) {
+            descendants(rootContainer).filterIsInstance<EditText>().firstOrNull { it.hint?.toString() == focusHint }?.let {
+                it.requestFocus(); it.setSelection(selection.coerceIn(0, it.text.length))
             }
         }
-        syncRoleServices()
-        checkInitialPairingConfirmation()
-        renderUi(animate = true)
-        uiHandler.removeCallbacks(statusTicker)
-        uiHandler.post(statusTicker)
+        scrollView.post { scrollView.scrollTo(0, savedY) }
+        if (animate && old != null && !sameSection && ValueAnimator.areAnimatorsEnabled()) {
+            val incoming = scrollView
+            incoming.alpha = 0f; incoming.translationX = dp(12).toFloat()
+            incoming.animate().alpha(1f).translationX(0f).setDuration(240).setInterpolator(DecelerateInterpolator()).start()
+            old.animate().alpha(0f).translationX(-dp(8).toFloat()).setDuration(180).withEndAction {
+                if (old.parent === contentFrame) contentFrame.removeView(old)
+            }.start()
+            old.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            for (view in descendants(old)) { view.isEnabled = false; view.isClickable = false; view.isFocusable = false }
+        }
+        lastRenderedSection = section; updateStatus()
     }
-
-    override fun onDestroy() {
-        activityVisible = false
-        uiHandler.removeCallbacksAndMessages(null)
-        super.onDestroy()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        activityVisible = false
-        uiHandler.removeCallbacksAndMessages(null)
-        try {
-            unregisterReceiver(refreshReceiver)
-        } catch (_: Exception) {
+    private fun buildHeader(t: ThemeColors, role: String) {
+        fixedHeader.removeAllViews(); fixedHeader.setBackgroundColor(color(t.bgCanvas))
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(60) }
+        if (section.endsWith("_setup")) row.addView(iconButton("arrow-left", "返回身份選擇") { navigateTo("role") })
+        else row.addView(icon("shield-check", t.accentSeafoam, 28))
+        row.addView(label("IG Guard", 18f, t.textPrimary, true).apply { setPadding(dp(9), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(iconButton(if (GuardEngine.isBrightTheme(this)) "moon" else "sun", "切換淺色或深色模式") {
+            GuardEngine.setBrightTheme(this, !GuardEngine.isBrightTheme(this)); renderUi()
+        })
+        fixedHeader.addView(row)
+        statusText = label("", 12f, t.textSecondary).apply { setPadding(0, dp(5), 0, dp(12)) }
+        if (section != "role" && !section.endsWith("_setup") && role != "unconfigured") {
+            fixedHeader.addView(statusText); divider(fixedHeader, t)
         }
     }
+    private fun buildBottomNavigation(t: ThemeColors, role: String) {
+        bottomNav.removeAllViews()
+        bottomNav.visibility = if (section == "role" || section.endsWith("_setup") || role == "unconfigured") View.GONE else View.VISIBLE
+        if (bottomNav.visibility != View.VISIBLE) return
+        bottomNav.setBackgroundColor(color(t.bgCard)); bottomNav.setPadding(dp(12), dp(8), dp(12), dp(10))
+        val destinations = if (role == "parent") listOf(Triple("overview", "house", "總覽"), Triple("alerts", "bell-simple", "提醒"), Triple("family", "users-three", "家庭"), Triple("settings", "gear-six", "設定"))
+            else listOf(Triple("overview", "house", "總覽"), Triple("permissions", "shield", "權限"), Triple("unlock", "key", "解鎖"), Triple("settings", "gear-six", "設定"))
+        for ((destination, glyph, title) in destinations) {
+            val selected = section == destination
+            val tab = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; minimumHeight = dp(56)
+                background = ripple(if (selected) t.bgChip else t.bgCard, 8)
+                isClickable = true; isFocusable = true; isSelected = selected; contentDescription = title
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                setOnClickListener { if (section != destination) navigateTo(destination) }
+                tag = "nav_$destination"
+            }
+            tab.addView(icon(glyph, if (selected) t.accentSeafoam else t.textMuted, 23))
+            tab.addView(label(title, 11f, if (selected) t.accentSeafoam else t.textMuted, selected, topPad = 4).apply { gravity = Gravity.CENTER })
+            bottomNav.addView(tab, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
+        }
+    }
+    private fun updateStatus() {
+        if (!::statusText.isInitialized) return
+        val t = currentTheme()
+        statusText.text = when (GuardEngine.getRole(this)) {
+            "parent" -> when {
+                GuardEngine.isChildHeartbeatOverdue(this) -> "子女回報逾時 · 請查看連接狀態"
+                GuardEngine.hasChildHeartbeat(this) -> "已收到子女回報 · 加密守護通道"
+                else -> "等待子女手機回報"
+            }
+            "child" -> {
+                val notification = if (!GuardEngine.isNotificationListenerEnabledStatic(this)) "通知未授權" else if (GuardEngine.cpNotifConnected) "通知已連接" else "通知等待連接"
+                val screen = if (!GuardEngine.isAccessibilityEnabledStatic(this)) "畫面未授權" else if (GuardEngine.cpAccConnected) "畫面已連接" else "畫面等待連接"
+                "$notification · $screen" + if (GuardEngine.isTemporarilyUnlocked(this)) " · 暫時解鎖中" else ""
+            }
+            else -> "選擇這部手機的身份"
+        }
+        statusText.setTextColor(color(if (GuardEngine.isParentMode(this) && GuardEngine.isChildHeartbeatOverdue(this)) t.warmCoral else t.textSecondary))
+        unlockTimerText?.text = if (GuardEngine.getUnlockRemainingSeconds(this) > 0) "暫時解鎖中 · 剩餘 ${formatSeconds(GuardEngine.getUnlockRemainingSeconds(this))}" else "保護已重新上鎖"
+    }
+    private fun formatSeconds(seconds: Long) = "%02d:%02d".format(seconds / 60, seconds % 60)
+    private fun heading(title: String, subtitle: String, t: ThemeColors) {
+        rootContainer.addView(label(title, 27f, t.textPrimary, true, bottomPad = 10))
+        if (subtitle.isNotEmpty()) rootContainer.addView(label(subtitle, 14f, t.textSecondary, bottomPad = 22))
+    }
+    private fun renderRoleChoice(t: ThemeColors) {
+        rootContainer.addView(label("每一段成長，都值得守護", 12f, t.accentSeafoam, true, bottomPad = 14))
+        rootContainer.addView(label("一起，\n守護成長。", 36f, t.textPrimary, true, bottomPad = 18))
+        rootContainer.addView(label("選擇這部手機的使用者。\n讓每個人都有適合自己的守護方式。", 14f, t.textSecondary, bottomPad = 28))
+        for ((role, title, description) in listOf(Triple("parent", "我是家長", "查看提醒、管理家庭與保護設定。"), Triple("child", "這是子女手機", "連結家人，建立安心的上網空間。"))) {
+            val selected = selectedEntryRole == role
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(20), dp(16), dp(20)); minimumHeight = dp(100)
+                background = ripple(if (selected) t.bgChip else t.bgCard, 12, if (selected) t.accentSeafoam else t.borderSubtle)
+                isClickable = true; isFocusable = true; isSelected = selected
+                contentDescription = "$title。$description"
+                tag = "entry_$role"; setOnClickListener { selectEntryRole(role) }
+            }
+            card.addView(icon(if (role == "parent") "users-three" else "plant", t.accentSeafoam, 28))
+            val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(8), 0) }
+            words.addView(label(title, 17f, t.textPrimary, true, bottomPad = 6))
+            words.addView(label(description, 12f, t.textSecondary))
+            card.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
+            card.addView(icon(if (selected) "check-circle" else "caret-right", t.accentSeafoam, 20))
+            rootContainer.addView(card, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(12)) })
+        }
+        rootContainer.addView(Space(this), LinearLayout.LayoutParams(1, 0, 1f))
+        rootContainer.addView(actionButton("繼續", t.btnPrimaryBg, t.btnPrimaryText) { continueEntryRole() }.apply {
+            isEnabled = selectedEntryRole.isNotEmpty(); alpha = if (isEnabled) 1f else .5f; tag = "continue_role"
+        })
+        rootContainer.addView(label("配對後，子女手機切換身份需要家長驗證。", 12f, t.textMuted, topPad = 10).apply { gravity = Gravity.CENTER })
+    }
+    private fun renderParentSetup(t: ThemeColors) {
+        heading("從一個安心的家開始。", "設定只由家長保管的主密碼，再邀請子女手機加入。", t)
+        rootContainer.addView(label("家長主密碼", 14f, t.textPrimary, true, bottomPad = 10))
+        val password = inputBox(t, "最少 8 位字元，包含字母及數字", "", true); rootContainer.addView(password)
+        val error = label("", 13f, t.warmCoral); rootContainer.addView(error)
+        rootContainer.addView(textAction("產生高強度密碼") {
+            password.setText(GuardEngine.generateRandomStrongPassword()); error.text = ""; password.error = null
+        })
+        rootContainer.addView(actionButton("建立家庭", t.btnPrimaryBg, t.btnPrimaryText) {
+            val candidate = password.text.toString().trim()
+            if (!GuardEngine.isStrongPasswordValid(candidate)) { error.text = "請輸入最少 8 位字元，並同時包含字母及數字。"; password.error = "密碼長度或格式不正確"; return@actionButton }
+            GuardEngine.setPin(this, candidate); GuardEngine.getOrCreateFamilyToken(this); GuardEngine.setRole(this, "parent")
+            section = "overview"; syncRoleServices(); renderUi(animate = true)
+        })
+        rootContainer.addView(label("主密碼用於保護角色切換及解鎖設定，請妥善保管。", 13f, t.textSecondary, topPad = 16))
+    }
+    private fun renderChildSetup(t: ThemeColors) {
+        heading("讓家人，安心相連。", "請家長傳送配對邀請，再將邀請貼到下方。", t)
+        val invite = inputBox(t, "貼上家長的配對邀請", "").apply { minLines = 3; gravity = Gravity.TOP }
+        rootContainer.addView(invite)
+        val error = label("", 13f, t.warmCoral); rootContainer.addView(error)
+        fun pair(raw: String) {
+            val parsed = GuardEngine.parsePairingString(raw)
+            if (parsed == null) { error.text = "未找到有效邀請，請貼上家長發出的完整配對訊息。"; return }
+            GuardEngine.setFamilyToken(this, parsed.first); GuardEngine.setPin(this, parsed.second); GuardEngine.setRole(this, "child")
+            GuardEngine.markInitialSetupConfirmationSent(this, false); GuardEngine.scheduleNextRandomHeartbeat(this)
+            section = "permissions"; syncRoleServices(); renderUi(animate = true); openDirectNotificationToggle()
+        }
+        rootContainer.addView(actionButton("連結家庭", t.btnPrimaryBg, t.btnPrimaryText) { pair(invite.text.toString()) })
+        rootContainer.addView(actionButton("從剪貼簿貼上並配對", t.btnSecondaryBg, t.btnSecondaryText) {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            pair(cm?.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: "")
+        })
+        rootContainer.addView(label("配對後，請與家長核對兩部手機上的 4 個安全圖案。", 13f, t.textSecondary, topPad = 18))
+    }
 
+    private fun renderParentOverview(t: ThemeColors) {
+        heading("家人，安心相連。", "今天的守護資訊，都在這裡。", t)
+        val connected = GuardEngine.hasChildHeartbeat(this)
+        val card = makeCard(t)
+        val handle = GuardEngine.getChildSelfHandle(this)
+        card.addView(label(if (handle.isEmpty()) "子女手機" else "@$handle", 16f, t.textPrimary, true, bottomPad = 8))
+        card.addView(label(if (connected) GuardEngine.getLastChildHeartbeatInfo(this) else "等待子女手機回報", 13f, t.textSecondary))
+        if (!connected) card.addView(textAction("邀請子女配對") { showPairingInvite(t) })
+        rootContainer.addView(card)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+            rootContainer.addView(textAction("尚未授權系統通知 · 前往設定") { navigateTo("settings") })
+        }
+        renderWeeklyCharts(t)
+        val latest = GuardEngine.getParentAlerts(this).firstOrNull { it.optString("reason") !in setOf("heartbeat_ok", "pairing_verified", "test_alert") }
+        if (latest != null) {
+            sectionTitle("最新提醒", t)
+            rootContainer.addView(row("bell-simple", alertTitle(latest.optString("reason")), latest.optString("time"), t) { showAlertDetails(latest, t) })
+            rootContainer.addView(textAction("查看全部提醒") { navigateTo("alerts") })
+        }
+    }
+    private fun renderWeeklyCharts(t: ThemeColors) {
+        val stats = GuardEngine.getParentStatistics(this)
+        chartZone = stats.zone; displayedChartDate = stats.dates.last()
+        val values = stats.dailyTotals()
+        sectionTitle("本週守護摘要", t)
+        val card = makeCard(t)
+        card.addView(label("${values.sum()} 則", 34f, t.textPrimary, true, bottomPad = 6))
+        card.addView(label("${stats.dates.first()} — ${stats.dates.last()} · ${stats.zone.id}", 12f, t.textMuted, bottomPad = 16))
+        val tabs = LinearLayout(this)
+        for ((mode, title) in listOf("trend" to "每日趨勢", "types" to "警報分類")) {
+            tabs.addView(Button(this).apply {
+                text = title; textSize = 13f; typeface = font(chartMode == mode); isAllCaps = false
+                setTextColor(color(if (chartMode == mode) t.accentSeafoam else t.textMuted))
+                background = ripple(if (chartMode == mode) t.bgChip else t.bgCard, 7)
+                minimumHeight = dp(48); isSelected = chartMode == mode
+                setOnClickListener { chartMode = mode; renderUi() }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        card.addView(tabs)
+        val line = chartMode == "trend"
+        card.addView(AlertChartView(if (line) values else stats.typeTotals(), if (line) stats.dates.map { it.takeLast(2) } else AlertStatistics.labels, line, t),
+            LinearLayout.LayoutParams(-1, (dp(if (line) 185 else 250) * resources.configuration.fontScale).toInt()))
+        card.addView(label(if (values.sum() == 0L) "此期間尚未記錄安全警報。" else "不包括例行心跳、配對成功及測試訊息。", 12f, t.textMuted, topPad = 10))
+        card.addView(textAction("統計說明與重設") {
+            showSheet("關於這份守護摘要") { dialog ->
+                addView(label("最近 7 個日曆天的安全警報。折線顯示每天合計，分類顯示各類型的期間總數。\n\n統計時區：${stats.zone.id}\n持續統計開始：${Instant.ofEpochMilli(stats.state.optLong("coverage_start")).atZone(stats.zone).toLocalDate()}\n\n" + if (stats.state.optBoolean("history_partial")) "已匯入可用舊記錄；早期版本只保留 60 則，因此較早數字可能不完整。" else "清除收件匣不會清除統計。", 14f, t.textSecondary, bottomPad = 18))
+                addView(actionButton("重設統計數字", t.btnSecondaryBg, t.btnSecondaryText) {
+                    alert().setTitle("重設統計？").setMessage("清除圖表計數，保留收件匣及去重記錄。舊警報不會重新計入。")
+                        .setNegativeButton("取消", null).setPositiveButton("重設") { _, _ -> GuardEngine.resetParentStatistics(this@MainActivity); dialog.dismiss(); renderUi() }.show()
+                })
+            }
+        })
+        rootContainer.addView(card)
+    }
+    private inner class AlertChartView(private val values: List<Long>, private val names: List<String>, private val line: Boolean, private val t: ThemeColors) : View(this@MainActivity) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = font() }
+        init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES; contentDescription = names.indices.joinToString("；") { "${names[it]}：${values[it]} 則" } }
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            paint.textSize = 12f * resources.displayMetrics.scaledDensity
+            paint.strokeWidth = dp(2).toFloat()
+            val maximum = (values.maxOrNull() ?: 0L).coerceAtLeast(1L)
+            if (!line) {
+                val row = height.toFloat() / values.size
+                for (i in values.indices) {
+                    val y = i * row + paint.textSize
+                    paint.color = color(t.textSecondary); canvas.drawText("${names[i]} · ${values[i]}", 0f, y, paint)
+                    paint.color = color(t.borderSubtle); canvas.drawRoundRect(0f, y + dp(8), width.toFloat(), y + dp(13), dp(2).toFloat(), dp(2).toFloat(), paint)
+                    paint.color = color(if (i == 1) t.warmCoral else if (i == 2) t.warmHoney else t.accentSeafoam)
+                    canvas.drawRoundRect(0f, y + dp(8), width * (values[i].toDouble() / maximum).toFloat(), y + dp(13), dp(2).toFloat(), dp(2).toFloat(), paint)
+                }
+                return
+            }
+            val left = maxOf(dp(25).toFloat(), paint.measureText(maximum.toString()) + dp(8)); val right = width - dp(10).toFloat()
+            val top = paint.textSize + dp(15); val bottom = height - paint.textSize - dp(15)
+            if (right <= left || bottom <= top) return
+            val ticks = if (maximum <= 4) (0L..maximum).toList() else listOf(0L, maximum/2, maximum)
+            for (tick in ticks) {
+                val y = bottom - (bottom-top) * (tick.toDouble()/maximum).toFloat()
+                paint.color = color(t.borderSubtle); canvas.drawLine(left, y, right, y, paint)
+                paint.color = color(t.textMuted); canvas.drawText(tick.toString(), 0f, y + paint.textSize/3, paint)
+            }
+            fun x(i: Int) = left + (right-left)*i/(values.size-1).coerceAtLeast(1)
+            fun y(i: Int) = bottom - (bottom-top)*(values[i].toDouble()/maximum).toFloat()
+            paint.color = color(t.accentSeafoam)
+            for (i in 1 until values.size) canvas.drawLine(x(i-1), y(i-1), x(i), y(i), paint)
+            for (i in values.indices) {
+                paint.color = color(t.accentSeafoam); canvas.drawCircle(x(i), y(i), dp(3).toFloat(), paint)
+                paint.color = color(t.textMuted); canvas.drawText(names[i], x(i)-paint.measureText(names[i])/2, height-dp(3).toFloat(), paint)
+            }
+        }
+    }
+    private fun renderParentFamily(t: ThemeColors) {
+        heading("一起建立，安心的界線。", "家庭配對、信任好友與臨時解鎖。", t)
+        rootContainer.addView(row("link", "邀請子女配對", "傳送家庭專屬配對邀請", t) { showPairingInvite(t) })
+        rootContainer.addView(row("key", "15 分鐘臨時解鎖", "給需要的片刻空間，無需透露主密碼", t) {
+            displayed15MinCode = GuardEngine.generate15MinUnlockCode(this)
+            GuardEngine.push15MinUnlockCodeFromParent(this, displayed15MinCode)
+            showSheet("給孩子，15 分鐘的空間。") { dialog ->
+                addView(label("把這個臨時碼告訴子女。", 14f, t.textSecondary))
+                addView(label(displayed15MinCode, 32f, t.textPrimary, true, topPad = 22, bottomPad = 22).apply { gravity = Gravity.CENTER; setTextIsSelectable(true) })
+                addView(label("解鎖碼已透過現有加密通道同步，有效時間依既有規則處理。", 13f, t.textSecondary, bottomPad = 18))
+                addView(actionButton("複製解鎖碼", t.btnPrimaryBg, t.btnPrimaryText) { copyText("IGGuardUnlock", displayed15MinCode); dialog.dismiss() })
+            }
+        })
+        sectionTitle("信任好友", t)
+        val current = GuardEngine.getTrustedHandles(this)
+        if (current.isEmpty()) rootContainer.addView(label("尚未加入信任好友。請確認對方身份後，再加入名單。", 14f, t.textSecondary, bottomPad = 16))
+        for (handle in current) rootContainer.addView(row("users-three", "@$handle", "已獲家長批准 · 點按管理", t) {
+            alert().setTitle("移除 @$handle？").setMessage("對方的新訊息將重新依照既有保護規則檢查。")
+                .setNegativeButton("保留", null).setPositiveButton("移除") { _, _ ->
+                    clearTrustDraft(); GuardEngine.setTrustedHandles(this, GuardEngine.getTrustedHandles(this) - handle)
+                    GuardEngine.syncTrustedFromParent(this); renderUi()
+                }.show()
+        })
+        rootContainer.addView(label("編輯信任名單", 14f, t.textPrimary, true, topPad = 22, bottomPad = 10))
+        val handles = inputBox(t, "輸入好友帳號，以逗號分隔", current.joinToString(", ")); rootContainer.addView(handles)
+        rootContainer.addView(actionButton("儲存並加密同步", t.btnPrimaryBg, t.btnPrimaryText) {
+            val updated = handles.text.toString().split(",")
+            clearTrustDraft(); GuardEngine.setTrustedHandles(this, updated); GuardEngine.syncTrustedFromParent(this)
+            Toast.makeText(this, "信任名單已儲存並同步。", Toast.LENGTH_SHORT).show(); renderUi()
+        })
+        val self = GuardEngine.getChildSelfHandle(this)
+        rootContainer.addView(label(if (self.isEmpty()) "子女 Instagram 帳號會在收到通知或開啟個人檔案後自動識別。" else "子女 Instagram 帳號：@$self", 13f, t.textSecondary, topPad = 12))
+    }
+    private fun showPairingInvite(t: ThemeColors) {
+        showSheet("讓家人，加入這份守護。") { dialog ->
+            addView(label("將家庭專屬邀請傳送到子女手機，並核對兩部手機上的安全圖案。", 14f, t.textSecondary, bottomPad = 20))
+            addView(label(GuardEngine.getSafetyEmojis(this@MainActivity), 30f, t.textPrimary, bottomPad = 22).apply { gravity = Gravity.CENTER })
+            addView(actionButton("傳送配對邀請", t.btnPrimaryBg, t.btnPrimaryText) {
+                val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, GuardEngine.buildPairingInviteText(this@MainActivity)) }
+                startActivity(Intent.createChooser(intent, "傳送配對邀請"))
+            })
+            addView(actionButton("複製配對訊息", t.btnSecondaryBg, t.btnSecondaryText) { copyText("IGGuardInvite", GuardEngine.buildPairingInviteText(this@MainActivity)); dialog.dismiss() })
+        }
+    }
+    private fun clearTrustDraft() { inputDrafts.remove("輸入好友帳號，以逗號分隔") }
+    private fun addTrustedSender(handle: String) {
+        clearTrustDraft()
+        val next = GuardEngine.getTrustedHandles(this).toMutableSet(); next.add(handle)
+        GuardEngine.setTrustedHandles(this, next)
+        Toast.makeText(this, "已將 @$handle 加入信任名單。", Toast.LENGTH_SHORT).show(); renderUi()
+    }
+    private fun alertTitle(reason: String) = when (reason) {
+        "sexual_or_grooming_content" -> "一則需要優先留意的對話"
+        "stranger_message" -> "未在信任名單中的訊息 / 回覆"
+        "tamper_attempt" -> "防篡改或裝置離線提醒"
+        "heartbeat_ok" -> "子女手機連線回報"
+        "pairing_verified" -> "子女手機已成功配對"
+        "unlock_used" -> "子女使用了臨時解鎖碼"
+        else -> "家庭守護通知"
+    }
+    private fun renderParentAlerts(t: ThemeColors) {
+        heading("每一則提醒，都有脈絡。", "先了解，再與孩子好好聊聊。", t)
+        val filters = LinearLayout(this)
+        for ((key, title) in listOf("all" to "全部", "high" to "高危", "stranger" to "陌生人", "device" to "裝置")) {
+            filters.addView(Button(this).apply {
+                text = title; textSize = 12f; typeface = font(alertFilter == key); isAllCaps = false; minimumHeight = dp(48)
+                setTextColor(color(if (alertFilter == key) t.btnPrimaryText else t.textSecondary))
+                background = ripple(if (alertFilter == key) t.btnPrimaryBg else t.bgCanvas, 7)
+                isSelected = alertFilter == key; setOnClickListener { alertFilter = key; renderUi() }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        rootContainer.addView(filters)
+        val alerts = GuardEngine.getParentAlerts(this).filter { alert -> when (alertFilter) {
+            "high" -> alert.optString("reason") == "sexual_or_grooming_content"
+            "stranger" -> alert.optString("reason") == "stranger_message"
+            "device" -> alert.optString("reason") in setOf("tamper_attempt", "heartbeat_ok", "pairing_verified", "unlock_used")
+            else -> true
+        } }
+        if (alerts.isEmpty()) rootContainer.addView(label("暫時沒有提醒。\n需要你留意的訊息，會出現在這裡。", 15f, t.textSecondary, topPad = 28, bottomPad = 24))
+        for (alert in alerts) {
+            val reason = alert.optString("reason")
+            val tint = if (reason == "sexual_or_grooming_content") t.warmCoral else if (reason == "tamper_attempt") t.warmHoney else t.textPrimary
+            rootContainer.addView(label(alert.optString("time"), 12f, t.textMuted, topPad = 18, bottomPad = 7))
+            rootContainer.addView(row(if (reason == "sexual_or_grooming_content") "shield-warning" else "chat-circle", alertTitle(reason), alert.optString("sender", "未識別來源"), t, tint) { showAlertDetails(alert, t) })
+        }
+        rootContainer.addView(textAction("立即刷新最新提醒") { thread { GuardEngine.pollChannelOnce(applicationContext, since = "6h") }; Toast.makeText(this, "正在同步加密提醒。", Toast.LENGTH_SHORT).show() })
+        if (GuardEngine.getParentAlerts(this).isNotEmpty()) rootContainer.addView(textAction("清除收件匣記錄") {
+            alert().setTitle("清除收件匣？").setMessage("圖表統計及去重記錄會保留。")
+                .setNegativeButton("取消", null).setPositiveButton("清除") { _, _ -> GuardEngine.clearParentAlerts(this); renderUi() }.show()
+        })
+    }
+    private fun showAlertDetails(alert: JSONObject, t: ThemeColors) {
+        showSheet(alertTitle(alert.optString("reason"))) { dialog ->
+            val reason = alert.optString("reason"); val sender = alert.optString("sender", "未識別來源")
+            addView(label("$sender · ${alert.optString("time")}", 13f, t.textSecondary, bottomPad = 18))
+            addView(label(alert.optString("text"), 16f, t.textPrimary, bottomPad = 22).apply { setTextIsSelectable(true) })
+            val handle = sender.substringBefore(" ").trim().lowercase(Locale.US).removePrefix("@")
+            if (reason in setOf("stranger_message", "sexual_or_grooming_content") && !sender.startsWith("子女留言") &&
+                handle !in GuardEngine.getTrustedHandles(this@MainActivity) && !GuardEngine.isChildSelfHandle(this@MainActivity, handle) && !handle.contains(" ") && !handle.contains("instagram")) {
+                addView(actionButton("加入信任好友並解除封鎖", t.btnSecondaryBg, t.btnSecondaryText) {
+                    addTrustedSender(handle); GuardEngine.syncTrustedFromParent(this@MainActivity); dialog.dismiss()
+                })
+            }
+            addView(actionButton("關閉", t.btnPrimaryBg, t.btnPrimaryText) { dialog.dismiss() })
+        }
+    }
+    private fun renderChildOverview(t: ThemeColors) {
+        rootContainer.addView(icon("plant", t.accentSeafoam, 42))
+        heading("安心上網，\n自在成長。", "給你探索的空間，也給家人一份安心。", t)
+        val notification = GuardEngine.isNotificationListenerEnabledStatic(this) && GuardEngine.cpNotifConnected
+        val screen = GuardEngine.isAccessibilityEnabledStatic(this) && GuardEngine.cpAccConnected
+        val card = makeCard(t)
+        card.addView(label(if (notification && screen) "你的保護已準備好" else "完成設定，讓保護正常運作。", 17f, t.textPrimary, true, bottomPad = 8))
+        card.addView(label(if (notification && screen) "通知及畫面保護已連接。" else "通知讀取保護背景訊息；畫面保護處理對話、留言回覆及防靜音。", 14f, t.textSecondary))
+        rootContainer.addView(card)
+        rootContainer.addView(actionButton("查看保護狀態", t.btnPrimaryBg, t.btnPrimaryText) { navigateTo("permissions") })
+        rootContainer.addView(row("key", "需要暫時解鎖？", "輸入家長提供的解鎖碼", t) { navigateTo("unlock") })
+        rootContainer.addView(textAction("裝置及家庭詳情") {
+            showSheet("裝置及家庭詳情") { dialog ->
+                val handle = GuardEngine.getChildSelfHandle(this@MainActivity)
+                val offenders = GuardEngine.getFlaggedOffenders(this@MainActivity)
+                addView(label("家庭核對圖案：${GuardEngine.getSafetyEmojis(this@MainActivity)}\n\nInstagram 帳號：${if (handle.isEmpty()) "等待自動識別" else "@$handle"}\n\n高危帳號：${if (offenders.isEmpty()) "暫無記錄" else offenders.joinToString(", ") { "@$it" }}", 14f, t.textPrimary, bottomPad = 20))
+                addView(actionButton("關閉", t.btnPrimaryBg, t.btnPrimaryText) { dialog.dismiss() })
+            }
+        })
+    }
+    private fun renderChildPermissions(t: ThemeColors) {
+        heading("每個設定，都說清楚。", "了解每項權限的用途，再前往 Android 設定確認。", t)
+        val notification = GuardEngine.isNotificationListenerEnabledStatic(this)
+        val screen = GuardEngine.isAccessibilityEnabledStatic(this)
+        rootContainer.addView(row("bell-simple", "Instagram 通知", if (notification) { if (GuardEngine.cpNotifConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取 IG 通知並加密傳送警報。", t) { openDirectNotificationToggle() })
+        rootContainer.addView(row("shield-check", "進階畫面保護", if (screen) { if (GuardEngine.cpAccConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。辨識高危對話、留言及靜音操作。", t) { openAccessibilityToggle() })
+        rootContainer.addView(row("info", "監察狀態通知", "持續顯示子女保護模式，與通知讀取是不同權限。", t) { requestAppNotifications() })
+        if ((!notification || !screen) && Build.VERSION.SDK_INT >= 33) {
+            val card = makeCard(t, true)
+            card.addView(label("設定開關變灰了？", 16f, t.textPrimary, true, bottomPad = 8))
+            card.addView(label("部分裝置需要先嘗試開啟權限，才會顯示受限設定選項。", 14f, t.textSecondary))
+            card.addView(textAction("受限設定協助") { openAppDetailsSettings() }); rootContainer.addView(card)
+        }
+        rootContainer.addView(textAction("立即發送測試及心跳回報") { GuardEngine.checkAndSendChildHeartbeatIfDue(this, force = true); Toast.makeText(this, "正在發送加密回報。", Toast.LENGTH_SHORT).show() })
+    }
+    private fun renderChildUnlock(t: ThemeColors) {
+        heading("需要一點，自己的時間。", "輸入家長提供的 6 位臨時碼，可解鎖 15 分鐘。家長主密碼可解鎖 3 分鐘。", t)
+        val input = inputBox(t, "臨時解鎖碼 或 家長主密碼", "", true); rootContainer.addView(input)
+        val error = label("", 13f, t.warmCoral); rootContainer.addView(error)
+        val lockout = GuardEngine.checkPasswordLockoutRemainingSec(this)
+        if (lockout > 0) error.text = "輸入已鎖定，剩餘 $lockout 秒。"
+        rootContainer.addView(actionButton("驗證並暫時解鎖", t.btnPrimaryBg, t.btnPrimaryText) {
+            val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this)
+            if (remaining > 0) { error.text = "請等 $remaining 秒後再試。"; return@actionButton }
+            val entered = input.text.toString().trim()
+            when {
+                GuardEngine.verify15MinUnlockCode(this, entered) -> {
+                    GuardEngine.recordPasswordAttempt(this, true); GuardEngine.grantTemporaryUnlock(this, 15 * 60_000L)
+                    input.setText("")
+                    GuardEngine.sendAlertFromChild(this, "unlock_used", "@${GuardEngine.getChildSelfHandle(this).ifEmpty { "child" }}", "子女手機已使用 6 位臨時解鎖碼解鎖 15 分鐘", bypassDedupe = true)
+                    renderUi()
+                }
+                GuardEngine.constantTimeEquals(entered, GuardEngine.getPin(this)) -> {
+                    GuardEngine.recordPasswordAttempt(this, true); GuardEngine.grantTemporaryUnlock(this, 3 * 60_000L)
+                    input.setText(""); renderUi()
+                }
+                else -> { GuardEngine.recordPasswordAttempt(this, false); error.text = "解鎖碼或家長主密碼不正確。"; input.error = "請重新輸入" }
+            }
+        })
+        unlockTimerText = label("", 16f, t.accentSeafoam, true, topPad = 24); rootContainer.addView(unlockTimerText)
+        if (GuardEngine.isTemporarilyUnlocked(this)) rootContainer.addView(textAction("立即重新上鎖") { GuardEngine.grantTemporaryUnlock(this, 0); renderUi() })
+    }
+    private fun renderSettings(t: ThemeColors) {
+        heading("保護，照你的步調。", "把常用設定留在容易找到的地方。", t)
+        sectionTitle("顯示方式", t)
+        val modes = LinearLayout(this)
+        for ((bright, text) in listOf(true to "淺色模式", false to "深色模式")) {
+            modes.addView(actionButton(text, if (GuardEngine.isBrightTheme(this) == bright) t.bgChip else t.bgCard, t.accentSeafoam) {
+                GuardEngine.setBrightTheme(this, bright); renderUi()
+            }, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(8), 0) })
+        }
+        rootContainer.addView(modes)
+        sectionTitle("保護與通知", t)
+        rootContainer.addView(row("bell-simple", if (GuardEngine.isParentMode(this)) "家長警報通知" else "監察狀態通知", "管理系統通知的顯示方式", t) { requestAppNotifications() })
+        rootContainer.addView(row("shield", "權限與相容性", "了解 Android 授權及銀行 App 提醒", t) {
+            showSheet("清楚了解，每一份授權。") { dialog ->
+                addView(label("通知存取、無障礙服務及系統通知是不同權限，正式授權由 Android 處理。\n\n子女模式會讀取 Instagram 通知及畫面。銀行 App 或 Play Protect 仍可能提示風險，允許受限設定不代表這些服務已認可本 App。家長模式不啟用子女監察服務。\n\n若遇到封鎖，請保留完整警告及版本資料，交由開發者向 Google 提交審查。", 14f, t.textSecondary, bottomPad = 18))
+                addView(actionButton("受限設定協助", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss(); openAppDetailsSettings() })
+            }
+        })
+        rootContainer.addView(row("info", "字型與圖示授權", "開放字型與圖示的來源及授權", t) {
+            showSheet("字型與圖示授權") { _ ->
+                val id = resources.getIdentifier("ui_asset_licenses", "raw", packageName)
+                if (id != 0) addView(label(resources.openRawResource(id).bufferedReader().use { it.readText() }, 12f, t.textSecondary))
+            }
+        })
+        renderCollapsibleDiagnostics(t)
+        renderRoleSwitchFooter(t, GuardEngine.isChildMode(this))
+    }
+    private fun renderCollapsibleDiagnostics(t: ThemeColors) {
+        rootContainer.addView(row("pulse", "連接與診斷", "查看最新裝置連接狀態", t) {
+            showSheet("連接與診斷") { dialog ->
+                addView(label("加密通道：${GuardEngine.cpParentStreamState}\n\n最新傳送：${GuardEngine.cpLastHttpStatus}", 14f, t.textPrimary, bottomPad = 18))
+                addView(label(GuardEngine.getCheckpointLogs(this@MainActivity), 12f, t.textSecondary, bottomPad = 18))
+                addView(actionButton("清除診斷記錄", t.btnSecondaryBg, t.btnSecondaryText) { GuardEngine.clearCheckpointLogs(this@MainActivity); dialog.dismiss() })
+            }
+        })
+    }
+    private fun renderRoleSwitchFooter(t: ThemeColors, requirePin: Boolean) {
+        sectionTitle("家庭管理", t)
+        if (GuardEngine.isParentMode(this)) rootContainer.addView(row("key", "家長主密碼與金鑰", "密碼查看、金鑰更新及遠端救援", t) {
+            showSheet("家長主密碼與金鑰") { dialog ->
+                addView(actionButton("查看家長主密碼", t.btnSecondaryBg, t.btnSecondaryText) {
+                    alert().setTitle("家長主密碼").setMessage(GuardEngine.getPin(this@MainActivity)).setPositiveButton("關閉", null).show()
+                })
+                addView(actionButton("更新家庭金鑰並同步子女手機", t.btnSecondaryBg, t.btnSecondaryText) {
+                    GuardEngine.rotateKeyAndNotifyChild(this@MainActivity, resetChildToUnconfigured = false); syncRoleServices()
+                    Toast.makeText(this@MainActivity, "已更新金鑰並發送同步指令。", Toast.LENGTH_LONG).show(); dialog.dismiss(); renderUi()
+                })
+                addView(actionButton("遠端解除子女保護並重設身份", t.btnSecondaryBg, t.btnSecondaryText) {
+                    alert().setTitle("遠端重設子女手機？").setMessage("發送加密救援指令，暫時解除子女手機保護並返回身份設定。")
+                        .setNegativeButton("取消", null).setPositiveButton("發送救援") { _, _ ->
+                            GuardEngine.rotateKeyAndNotifyChild(this@MainActivity, resetChildToUnconfigured = true)
+                            Toast.makeText(this@MainActivity, "已發送遠端救援指令。", Toast.LENGTH_LONG).show(); dialog.dismiss()
+                        }.show()
+                })
+            }
+        })
+        rootContainer.addView(row("arrows-left-right", "切換手機身份", if (requirePin) "需要家長主密碼驗證" else "返回身份選擇畫面", t) {
+            if (requirePin) verifyParentForRoleChange {
+                GuardEngine.setRole(this, "unconfigured"); syncRoleServices(); selectedEntryRole = ""; section = "role"; renderUi(animate = true)
+            } else navigateTo("role")
+        })
+        if (requirePin) rootContainer.addView(label("忘記家長主密碼時，可由家長手機使用遠端救援。", 13f, t.textSecondary, topPad = 16))
+    }
+    private var activeSheet: Dialog? = null
+    private val uiDialogs = mutableSetOf<Dialog>()
+    private fun trackDialog(dialog: Dialog) {
+        uiDialogs.add(dialog)
+        dialog.setOnDismissListener {
+            uiDialogs.remove(dialog)
+            if (activeSheet === dialog) activeSheet = null
+        }
+    }
+    private fun dismissUiDialogs() {
+        uiDialogs.toList().forEach { it.dismiss() }
+        uiDialogs.clear(); activeSheet = null
+    }
+    // A detached parent control must never act on a newly paired child's credentials.
+    private fun sessionClick(action: () -> Unit): View.OnClickListener {
+        val session = GuardEngine.captureRelaySession(this)
+        return View.OnClickListener {
+            if (GuardEngine.captureRelaySession(this) == session) action()
+            else { dismissUiDialogs(); renderUi() }
+        }
+    }
+    private fun alert(): AlertDialog.Builder {
+        val session = GuardEngine.captureRelaySession(this)
+        return object : AlertDialog.Builder(this@MainActivity) {
+            override fun show(): AlertDialog = super.show().also { trackDialog(it) }
+            override fun setPositiveButton(text: CharSequence?, listener: DialogInterface.OnClickListener?): AlertDialog.Builder =
+                super.setPositiveButton(text) { dialog, which ->
+                    if (GuardEngine.captureRelaySession(this@MainActivity) == session) listener?.onClick(dialog, which)
+                    else { dialog.dismiss(); dismissUiDialogs(); renderUi() }
+                }
+        }
+    }
+    private fun showSheet(title: String, content: LinearLayout.(Dialog) -> Unit) {
+        activeSheet?.dismiss()
+        val t = currentTheme(); val dialog = Dialog(this)
+        val wrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = background(t.bgCard, 18); setPadding(dp(24), dp(10), dp(24), dp(24)) }
+        val handle = View(this).apply { background = background(t.borderSubtle, 3) }
+        wrap.addView(handle, LinearLayout.LayoutParams(dp(32), dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; setMargins(0, 0, 0, dp(14)) })
+        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(label(title, 21f, t.textPrimary, true), LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(iconButton("x", "關閉對話框") { dialog.dismiss() }); wrap.addView(header)
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(14), 0, 0) }
+        body.content(dialog); wrap.addView(body)
+        val scroll = ScrollView(this).apply { addView(wrap); isFillViewport = false }
+        dialog.setContentView(scroll)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)); setGravity(Gravity.BOTTOM)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND); setDimAmount(.30f)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            attributes = attributes.apply { windowAnimations = if (ValueAnimator.areAnimatorsEnabled()) resources.getIdentifier("GuardSheetAnimation", "style", packageName) else 0 }
+        }
+        trackDialog(dialog)
+        dialog.show()
+        val width = resources.displayMetrics.widthPixels
+        scroll.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec((resources.displayMetrics.heightPixels * .82f).toInt(), View.MeasureSpec.AT_MOST))
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, scroll.measuredHeight.coerceAtMost((resources.displayMetrics.heightPixels * .82f).toInt()))
+        if (Build.VERSION.SDK_INT >= 28) wrap.accessibilityPaneTitle = title
+        activeSheet = dialog
+    }
+    private fun copyText(title: String, value: String) {
+        (getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.setPrimaryClip(android.content.ClipData.newPlainText(title, value))
+        Toast.makeText(this, "已複製。", Toast.LENGTH_SHORT).show()
+    }
+    private fun descendants(view: View): List<View> = listOf(view) + if (view is ViewGroup) (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
+    private fun divider(parent: LinearLayout, t: ThemeColors) { parent.addView(View(this).apply { setBackgroundColor(color(t.borderSubtle)) }, LinearLayout.LayoutParams(-1, dp(1))) }
+    private fun sectionTitle(title: String, t: ThemeColors) { rootContainer.addView(label(title, 16f, t.textPrimary, true, topPad = 22, bottomPad = 14)) }
+    private fun makeCard(t: ThemeColors, isHero: Boolean = false): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; background = background(if (isHero) t.bgHero else t.bgCard, 12, t.borderSubtle)
+        setPadding(dp(18), dp(18), dp(18), dp(18))
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(12), 0, dp(12)) }
+    }
+    private fun row(glyph: String, title: String, description: String, t: ThemeColors, tint: String = t.textPrimary, onClick: () -> Unit): LinearLayout {
+        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val line = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(74); setPadding(0, dp(14), 0, dp(14))
+            isClickable = true; isFocusable = true; background = ripple(t.bgCanvas, 8)
+            contentDescription = "$title。$description"; setOnClickListener(sessionClick(onClick))
+        }
+        line.addView(icon(glyph, t.accentSeafoam, 24))
+        val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(10), 0) }
+        words.addView(label(title, 15f, tint, true, bottomPad = 5)); words.addView(label(description, 13f, t.textSecondary))
+        line.addView(words, LinearLayout.LayoutParams(0, -2, 1f)); line.addView(icon("caret-right", t.textMuted, 18))
+        outer.addView(line); divider(outer, t); return outer
+    }
+    private fun label(text: String, sizeSp: Float, hexColor: String, bold: Boolean = false, topPad: Int = 0, bottomPad: Int = 0): TextView = TextView(this).apply {
+        this.text = text; textSize = sizeSp; typeface = font(bold); setTextColor(color(hexColor))
+        includeFontPadding = false; setLineSpacing(dp(3).toFloat(), 1.05f)
+        setPadding(0, dp(topPad), 0, dp(bottomPad))
+        if (bold && sizeSp >= 20 && Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
+    }
+    private fun inputBox(t: ThemeColors, hintText: String, initialValue: String, isPassword: Boolean = false, remember: Boolean = true): EditText = EditText(this).apply {
+        hint = hintText; contentDescription = hintText; textSize = 15f; typeface = font()
+        setTextColor(color(t.textPrimary)); setHintTextColor(color(t.textMuted)); background = background(t.bgInput, 8, t.borderSubtle)
+        inputType = if (isPassword) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_CLASS_TEXT
+        setText(if (remember) inputDrafts[hintText] ?: initialValue else initialValue)
+        if (remember) addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { inputDrafts[hintText] = s.toString() }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+        minimumHeight = dp(54); setPadding(dp(14), dp(14), dp(14), dp(14)); isSaveEnabled = false
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(12)) }
+    }
+    private fun actionButton(title: String, hexBg: String, hexText: String, onClick: () -> Unit): Button = Button(this).apply {
+        text = title; textSize = 14f; typeface = font(true); isAllCaps = false
+        setTextColor(color(hexText)); background = ripple(hexBg, 8, if (hexBg == currentTheme().btnSecondaryBg) currentTheme().borderSubtle else null)
+        minimumHeight = dp(52); setPadding(dp(14), dp(13), dp(14), dp(13)); setOnClickListener(sessionClick(onClick))
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(5), 0, dp(8)) }
+    }
+    private fun textAction(title: String, onClick: () -> Unit): Button = Button(this).apply {
+        val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
+        setTextColor(color(t.accentSeafoam)); background = ripple(t.bgCanvas, 8); minimumHeight = dp(48)
+        gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(0, dp(10), 0, dp(6)); setOnClickListener(sessionClick(onClick))
+        layoutParams = LinearLayout.LayoutParams(-1, -2)
+    }
     private fun checkInitialPairingConfirmation() {
         if (!GuardEngine.isChildMode(this)) return
         val notifOn = GuardEngine.isNotificationListenerEnabledStatic(this)
@@ -2150,7 +2797,7 @@ class MainActivity : Activity() {
                 "子女手機 (${Build.MODEL}) 已開啟 IG 私訊保護！系統將自動偵測並同步子女 IG 帳號。",
                 bypassDedupe = true
             )
-            Toast.makeText(this, "🎉 IG Guard 私訊保護已啟動並通知家長手機！", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "IG Guard 保護已啟動並通知家長手機。", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -2167,7 +2814,7 @@ class MainActivity : Activity() {
         val purpose = if (accessibility)
             "讀取 Instagram 畫面以偵測高危對話、留言回覆及靜音操作，並在需要時返回上一頁。此功能需要無障礙存取；銀行 App 可能因此提示風險。"
         else "讀取 Instagram 通知，將警報加密傳送到家長手機，並清除高危通知。Android 授予的是通知存取權；本 App 只處理 Instagram。"
-        AlertDialog.Builder(this).setTitle(if (accessibility) "進階畫面保護" else "通知讀取保護")
+        alert().setTitle(if (accessibility) "進階畫面保護" else "通知讀取保護")
             .setMessage(purpose + "\n\n下一步由 Android 顯示授權頁。請自行閱讀及確認；App 不能代你授權。若開關被封鎖，返回此頁選擇「受限設定協助」。")
             .setNegativeButton("稍後", null)
             .setPositiveButton("前往系統設定") { _, _ -> launchAccessSettings(accessibility) }.show()
@@ -2198,7 +2845,7 @@ class MainActivity : Activity() {
     }
 
     private fun openAppDetailsSettings() {
-        AlertDialog.Builder(this).setTitle("受限設定協助 · Samsung / Android")
+        alert().setTitle("受限設定協助 · Samsung / Android")
             .setMessage("1. 先在通知存取或無障礙頁嘗試開啟 IG Guard，閱讀系統顯示的限制。\n\n2. 若系統要求允許受限設定，再開啟本 App 的資訊頁。在支援此流程的裝置，右上角 ⋮ 才可能出現「允許受限設定」。依系統提示確認身份。\n\n3. 返回本 App，再次開啟原來的權限。\n\n若沒有該選項，請遵從裝置顯示的說明；選項取決於系統版本及安裝來源。這項操作不代表 Play Protect 或銀行 App 已認可本 App。")
             .setNegativeButton("返回", null)
             .setPositiveButton("開啟 App 資訊") { _, _ ->
@@ -2240,902 +2887,4 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
-
-    private fun navigateTo(destination: String) {
-        section = destination
-        currentFocus?.clearFocus()
-        scrollView.scrollTo(0, 0)
-        renderUi()
-    }
-
-    private fun updateStatus() {
-        if (!::statusText.isInitialized) return
-        val role = GuardEngine.getRole(this)
-        statusText.text = when (role) {
-            "parent" -> {
-                val heartbeat = when {
-                    GuardEngine.isChildHeartbeatOverdue(this) -> "子女回報逾時"
-                    GuardEngine.hasChildHeartbeat(this) -> "已收到子女回報"
-                    else -> "等待首次子女回報"
-                }
-                "$heartbeat · ${GuardEngine.cpParentStreamState}"
-            }
-            "child" -> {
-                val notification = if (!GuardEngine.isNotificationListenerEnabledStatic(this)) "通知未授權"
-                    else if (GuardEngine.cpNotifConnected) "通知已連接" else "通知等待連接"
-                val screen = if (!GuardEngine.isAccessibilityEnabledStatic(this)) "畫面保護未開啟"
-                    else if (GuardEngine.cpAccConnected) "畫面保護已連接" else "畫面保護等待連接"
-                "$notification · $screen" + if (GuardEngine.isTemporarilyUnlocked(this)) " · 暫時解鎖中" else ""
-            }
-            else -> "選擇這部手機的身份以開始配對"
-        }
-    }
-
-    private fun renderUi(animate: Boolean = false) {
-        val savedScrollY = scrollView.scrollY
-        val t = currentTheme()
-        val role = GuardEngine.getRole(this)
-        if (renderedRole != role) {
-            section = "overview"
-            inputDrafts.clear()
-            renderedRole = role
-        }
-        screenShell.setBackgroundColor(Color.parseColor(t.bgCanvas))
-        fixedHeader.setBackgroundColor(Color.parseColor(t.bgCard))
-        fixedHeader.removeAllViews()
-        val titleRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        titleRow.addView(label("IG Guard · " + when(role) { "parent" -> "家長"; "child" -> "子女"; else -> "設定" }, 20f, t.textPrimary, true), LinearLayout.LayoutParams(0, -2, 1f))
-        titleRow.addView(Button(this).apply {
-            text = "選單"
-            contentDescription = "開啟頁面選單，目前頁面：$section"
-            minHeight = dp(48)
-            setTextColor(Color.parseColor(t.btnSecondaryText))
-            backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor(t.btnSecondaryBg))
-            setOnClickListener { anchor ->
-                val destinations = if (role == "parent") linkedMapOf("overview" to "總覽", "alerts" to "警報", "family" to "家庭", "settings" to "設定")
-                    else if (role == "child") linkedMapOf("overview" to "總覽", "permissions" to "權限", "unlock" to "解鎖", "settings" to "設定")
-                    else linkedMapOf("overview" to "配對", "settings" to "設定")
-                PopupMenu(this@MainActivity, anchor).apply {
-                    destinations.entries.forEachIndexed { index, entry -> menu.add(0, index, index, entry.value) }
-                    setOnMenuItemClickListener { item -> navigateTo(destinations.keys.elementAt(item.itemId)); true }
-                    show()
-                }
-            }
-        })
-        fixedHeader.addView(titleRow)
-        statusText = label("", 12f, t.textSecondary)
-        fixedHeader.addView(statusText)
-        updateStatus()
-        rootContainer.removeAllViews()
-        when {
-            section == "settings" -> renderSettings(t)
-            role == "unconfigured" -> renderEasyOnboardingScreen(t)
-            role == "parent" -> when(section) {
-                "family" -> renderParentFamily(t)
-                "alerts" -> renderParentAlerts(t)
-                else -> renderParentOverview(t)
-            }
-            role == "child" -> when(section) {
-                "permissions" -> renderChildPermissions(t)
-                "unlock" -> renderChildUnlock(t)
-                else -> renderChildOverview(t)
-            }
-        }
-        if (!animate && savedScrollY > 0) scrollView.post { scrollView.scrollTo(0, savedScrollY) }
-    }
-
-    private fun renderSettings(t: ThemeColors) {
-        val card = makeCard(t)
-        card.addView(label("顯示與通知", 20f, t.textPrimary, true))
-        card.addView(actionButton(if (GuardEngine.isBrightTheme(this)) "使用深色模式" else "使用淺色模式", t.btnSecondaryBg, t.btnSecondaryText) {
-            GuardEngine.setBrightTheme(this, !GuardEngine.isBrightTheme(this))
-            renderUi()
-        })
-        if (GuardEngine.isParentMode(this)) {
-            val allowed = Build.VERSION.SDK_INT < 33 || checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED
-            card.addView(label(if (allowed) "系統通知已授權；仍請確認警報通知頻道未被靜音。" else "警報仍會存入收件匣，但系統通知尚未授權。", 14f, t.textSecondary))
-            card.addView(actionButton("設定家長警報通知", t.btnPrimaryBg, t.btnPrimaryText) {
-                requestAppNotifications()
-            })
-        }
-        card.addView(label("Play Protect 與銀行相容性", 17f, t.textPrimary, true, topPad = 12))
-        card.addView(label("子女模式會使用通知存取及無障礙服務。即使只處理 Instagram，Play Protect 或銀行 App 仍可能提示風險。家長模式不啟用子女監察服務。請保留系統安全檢查；如被封鎖，記錄完整警告及 App 版本，交由開發者向 Google 提交審查。允許受限設定不等於解除 Play Protect 警告。", 14f, t.textSecondary))
-        rootContainer.addView(card)
-        if (GuardEngine.getRole(this) != "unconfigured") {
-            renderCollapsibleDiagnostics(t)
-            renderRoleSwitchFooter(t, requirePin = GuardEngine.isChildMode(this))
-        }
-    }
-
-    private fun renderChildOverview(t: ThemeColors) {
-        val tCard = makeCard(t)
-        tCard.addView(label("子女保護總覽", 20f, t.textPrimary, true))
-        tCard.addView(label("家庭核對圖案：${GuardEngine.getSafetyEmojis(this)}", 14f, t.textSecondary, bottomPad = 12))
-        tCard.addView(label("通知讀取處理背景 IG 訊息；畫面保護處理聊天室攔截、留言回覆及防靜音。兩項都開啟並連接，才有完整覆蓋。", 14f, t.textSecondary, bottomPad = 12))
-        tCard.addView(actionButton("檢查權限與連接", t.btnPrimaryBg, t.btnPrimaryText) { navigateTo("permissions") })
-        tCard.addView(actionButton("輸入家長解鎖碼", t.btnSecondaryBg, t.btnSecondaryText) { navigateTo("unlock") })
-        rootContainer.addView(tCard)
-    }
-
-    private fun renderEasyOnboardingScreen(t: ThemeColors) {
-        val parentCard = makeCard(t)
-        parentCard.addView(label("🏡 我是家長 (Parent Phone)", 19f, t.accentSeafoam, bold = true, bottomPad = 8))
-        parentCard.addView(
-            label(
-                "全天候加密接收子女 Instagram 嘅陌生人私訊、留言回覆及色情誘導警告；子女 IG 帳號會由子女手機自動偵測並同步，無需手動輸入。",
-                13f,
-                t.textSecondary,
-                bottomPad = 14
-            )
-        )
-        val pwInput = inputBox(t, "設定高強度家長主密碼 (最少 8 位英文字母+數字)", GuardEngine.getPin(this), isPassword = false)
-        parentCard.addView(pwInput)
-
-        parentCard.addView(
-            actionButton("🏡 設定為「家長手機」並產生配對邀請", t.btnPrimaryBg, t.btnPrimaryText) {
-                val candidate = pwInput.text.toString().trim()
-                if (!GuardEngine.isStrongPasswordValid(candidate)) {
-                    Toast.makeText(this, "⚠️ 主密碼必須最少 8 個字元，並同時包含英文字母及數字！", Toast.LENGTH_LONG).show()
-                    return@actionButton
-                }
-                GuardEngine.setPin(this, candidate)
-                GuardEngine.getOrCreateFamilyToken(this)
-                GuardEngine.setRole(this, "parent")
-                syncRoleServices()
-                renderUi(animate = true)
-            }
-        )
-        rootContainer.addView(parentCard)
-
-        val childCard = makeCard(t)
-        childCard.addView(label("🌱 這是子女手機 (Child Phone)", 19f, t.warmHoney, bold = true, bottomPad = 8))
-        childCard.addView(
-            label(
-                "先喺家長手機按「傳送配對邀請」去子女 WhatsApp / SMS，喺子女手機【複製】該段訊息，然後按下方按鈕即可一鍵完成配對！",
-                13f,
-                t.textSecondary,
-                bottomPad = 14
-            )
-        )
-
-        childCard.addView(
-            actionButton("📋 一鍵貼上家長配對邀請並啟動保護", t.btnPrimaryBg, t.btnPrimaryText) {
-                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                val clipText = cm?.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: ""
-                val parsed = GuardEngine.parsePairingString(clipText)
-                if (parsed != null) {
-                    GuardEngine.setFamilyToken(this, parsed.first)
-                    GuardEngine.setPin(this, parsed.second)
-                    GuardEngine.setRole(this, "child")
-                    GuardEngine.markInitialSetupConfirmationSent(this, false)
-                    GuardEngine.scheduleNextRandomHeartbeat(this)
-                    syncRoleServices()
-                    renderUi(animate = true)
-                    openDirectNotificationToggle()
-                } else {
-                    Toast.makeText(
-                        this,
-                        "⚠️ 剪貼簿未搵到配對碼！請先喺 WhatsApp/SMS 複製家長傳來嘅配對訊息，或在下方手動貼上。",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        )
-
-        val manualInput = inputBox(t, "或在此貼上家長傳來嘅配對訊息 / 專屬金鑰", "")
-        childCard.addView(manualInput)
-        childCard.addView(
-            actionButton("🔗 使用上方貼上嘅內容配對子女手機", t.btnSecondaryBg, t.btnSecondaryText) {
-                val parsed = GuardEngine.parsePairingString(manualInput.text.toString())
-                if (parsed != null) {
-                    GuardEngine.setFamilyToken(this, parsed.first)
-                    GuardEngine.setPin(this, parsed.second)
-                    GuardEngine.setRole(this, "child")
-                    GuardEngine.markInitialSetupConfirmationSent(this, false)
-                    GuardEngine.scheduleNextRandomHeartbeat(this)
-                    syncRoleServices()
-                    renderUi(animate = true)
-                    openDirectNotificationToggle()
-                } else {
-                    Toast.makeText(this, "格式不正確，請複製家長手機發出嘅完整配對邀請訊息", Toast.LENGTH_LONG).show()
-                }
-            }
-        )
-        rootContainer.addView(childCard)
-    }
-
-    // ================= PARENT MODE UI =================
-    private fun renderParentOverview(t: ThemeColors) {
-        rootContainer.addView(label("最後子女回報：${GuardEngine.getLastChildHeartbeatInfo(this)}", 12f, t.textSecondary, bottomPad = 12))
-
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
-            rootContainer.addView(actionButton("尚未授權系統通知 · 前往設定", t.warningButtonBg, t.warningButtonText) { navigateTo("settings") })
-        }
-        renderWeeklyCharts(t)
-    }
-
-    private fun renderWeeklyCharts(t: ThemeColors) {
-        val stats = GuardEngine.getParentStatistics(this)
-        chartZone = stats.zone
-        displayedChartDate = stats.dates.last()
-        val totals = stats.dailyTotals()
-        val types = stats.typeTotals()
-        val card = makeCard(t)
-        card.addView(label("最近 7 天 · ${totals.sum()} 則警報", 20f, t.textPrimary, true, bottomPad = 8))
-        card.addView(label("${stats.dates.first()} — ${stats.dates.last()} · ${stats.zone.id}\n不包括例行心跳、配對成功及測試訊息；每日折線為當日各類警報合計。", 13f, t.textSecondary, bottomPad = 12))
-        if (totals.sum() == 0L) card.addView(label("此期間尚未記錄安全警報。圖表會在收到警報後更新。", 14f, t.textSecondary, bottomPad = 12))
-        card.addView(label("按類型統計", 17f, t.textPrimary, true, bottomPad = 8))
-        card.addView(AlertChartView(types, AlertStatistics.labels, false, t), LinearLayout.LayoutParams(-1, (dp(52) * types.size * resources.configuration.fontScale).toInt()))
-        card.addView(label("每日警報總數", 17f, t.textPrimary, true, topPad = 16, bottomPad = 8))
-        card.addView(AlertChartView(totals, stats.dates.map { it.takeLast(2) }, true, t), LinearLayout.LayoutParams(-1, (dp(190) * resources.configuration.fontScale).toInt()))
-        card.addView(label(stats.dates.indices.joinToString(" · ") { "${stats.dates[it].substring(5)}: ${totals[it]}" }, 12f, t.textSecondary, topPad = 8))
-        val since = Instant.ofEpochMilli(stats.state.optLong("coverage_start")).atZone(stats.zone).toLocalDate()
-        card.addView(label("持續統計開始：$since。" + if (stats.state.optBoolean("history_partial")) " 已匯入可用舊記錄；先前版本只保留 60 則，因此早期數據可能不完整。" else "清除收件匣不會清除統計。", 12f, t.textMuted, topPad = 12))
-        card.addView(actionButton("重設統計數字", t.btnSecondaryBg, t.btnSecondaryText) {
-            AlertDialog.Builder(this).setTitle("重設統計？")
-                .setMessage("清除圖表計數，保留收件匣及去重記錄。舊警報不會重新計入。")
-                .setNegativeButton("取消", null).setPositiveButton("重設") { _, _ ->
-                    GuardEngine.resetParentStatistics(this)
-                    renderUi()
-                }.show()
-        })
-        rootContainer.addView(card)
-    }
-
-    private inner class AlertChartView(
-        private val values: List<Long>, private val names: List<String>,
-        private val line: Boolean, private val t: ThemeColors
-    ) : View(this@MainActivity) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val scaledText = 12f * resources.displayMetrics.scaledDensity
-        init {
-            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
-            contentDescription = (if (line) "每日警報總數。" else "七天警報分類。") +
-                names.indices.joinToString("；") { "${names[it]}：${values[it]}" }
-        }
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            if (width <= 0 || height <= 0) return
-            paint.textSize = scaledText
-            paint.strokeWidth = dp(2).toFloat()
-            val maximum = (values.maxOrNull() ?: 0L).coerceAtLeast(1L)
-            val ink = Color.parseColor(t.textPrimary)
-            val accent = Color.parseColor(t.accentSeafoam)
-            if (!line) {
-                val row = height.toFloat() / values.size
-                values.indices.forEach { i ->
-                    val y = i * row
-                    paint.color = ink
-                    canvas.drawText("${names[i]} · ${values[i]}", 0f, y + scaledText, paint)
-                    paint.color = Color.parseColor(t.borderSubtle)
-                    val top = y + scaledText + dp(8)
-                    canvas.drawRoundRect(0f, top, width.toFloat(), top + dp(9), dp(4).toFloat(), dp(4).toFloat(), paint)
-                    paint.color = accent
-                    canvas.drawRoundRect(0f, top, width * (values[i].toDouble() / maximum).toFloat(), top + dp(9), dp(4).toFloat(), dp(4).toFloat(), paint)
-                }
-                return
-            }
-            val left = maxOf(dp(32).toFloat(), paint.measureText(maximum.toString()) + dp(8))
-            val right = width - dp(12).toFloat()
-            val top = scaledText + dp(4)
-            val bottom = height - scaledText - dp(12)
-            if (right <= left || bottom <= top) return
-            // Only integer ticks; small counts do not produce misleading fractional alerts.
-            val ticks = if (maximum <= 4) (0L..maximum).toList() else listOf(0L, maximum / 2, maximum)
-            for (tick in ticks) {
-                val y = bottom - (bottom - top) * (tick.toDouble() / maximum).toFloat()
-                paint.color = Color.parseColor(t.borderSubtle)
-                canvas.drawLine(left, y, right, y, paint)
-                paint.color = ink
-                canvas.drawText(tick.toString(), 0f, y + scaledText / 3, paint)
-            }
-            fun x(i: Int) = left + (right - left) * i / (values.size - 1).coerceAtLeast(1)
-            fun y(i: Int) = bottom - (bottom - top) * (values[i].toDouble() / maximum).toFloat()
-            paint.color = accent
-            for (i in 1 until values.size) canvas.drawLine(x(i-1), y(i-1), x(i), y(i), paint)
-            for (i in values.indices) {
-                paint.color = accent
-                canvas.drawCircle(x(i), y(i), dp(3).toFloat(), paint)
-                paint.color = ink
-                canvas.drawText(names[i], x(i) - paint.measureText(names[i])/2, height - dp(2).toFloat(), paint)
-            }
-        }
-    }
-
-    private fun renderParentFamily(t: ThemeColors) {
-        val unlockGenCard = makeCard(t)
-        unlockGenCard.addView(label("🔑 產生 15 分鐘子女臨時解鎖碼 (6-Char Unlock Code)", 17f, t.warmHoney, bold = true, bottomPad = 8))
-        unlockGenCard.addView(
-            label(
-                "無需透露您嘅家長主密碼！按下方按鈕即可產生一個 6 位英數「15 分鐘臨時解鎖碼」，讓子女暫時解鎖 15 分鐘。",
-                13f,
-                t.textSecondary,
-                bottomPad = 12
-            )
-        )
-        if (displayed15MinCode.isNotEmpty()) {
-            unlockGenCard.addView(
-                label(
-                    "👉 當前 15 分鐘臨時解鎖碼：$displayed15MinCode",
-                    20f,
-                    t.warmHoney,
-                    bold = true,
-                    bottomPad = 14
-                )
-            )
-        }
-        unlockGenCard.addView(
-            actionButton("✨ 立即產生 6 位數 15 分鐘解鎖碼", t.warningButtonBg, t.warningButtonText) {
-                val code = GuardEngine.generate15MinUnlockCode(this)
-                displayed15MinCode = code
-                GuardEngine.push15MinUnlockCodeFromParent(this, code)
-                Toast.makeText(this, "✅ 已產生並加密同步 15 分鐘解鎖碼：$code", Toast.LENGTH_LONG).show()
-                renderUi(animate = true)
-            }
-        )
-        rootContainer.addView(unlockGenCard)
-
-        val pairCard = makeCard(t)
-        pairCard.addView(label("🔗 配對子女手機 (AES-256-GCM 端對端加密)", 17f, t.textPrimary, bold = true, bottomPad = 8))
-        pairCard.addView(
-            label(
-                "• 家庭安全核對圖案：${GuardEngine.getSafetyEmojis(this)}",
-                14f,
-                t.textSecondary,
-                bottomPad = 14
-            )
-        )
-
-        pairCard.addView(
-            actionButton("📲 傳送專屬配對邀請去子女手機 (WhatsApp / SMS)", t.btnPrimaryBg, t.btnPrimaryText) {
-                val invite = GuardEngine.buildPairingInviteText(this)
-                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, invite)
-                }
-                startActivity(Intent.createChooser(sendIntent, "傳送配對邀請去子女手機"))
-            }
-        )
-
-        pairCard.addView(
-            actionButton("📋 複製專屬配對訊息 (Copy Pairing Invite)", t.btnSecondaryBg, t.btnSecondaryText) {
-                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                cm?.setPrimaryClip(android.content.ClipData.newPlainText("IGGuardInvite", GuardEngine.buildPairingInviteText(this)))
-                Toast.makeText(this, "已複製！請透過 WhatsApp/SMS 發送給子女手機", Toast.LENGTH_LONG).show()
-            }
-        )
-        pairCard.addView(actionButton("查看家長主密碼", t.btnSecondaryBg, t.btnSecondaryText) {
-            AlertDialog.Builder(this).setTitle("家長主密碼")
-                .setMessage(GuardEngine.getPin(this)).setPositiveButton("關閉", null).show()
-        })
-        rootContainer.addView(pairCard)
-
-        // Issue #1 Fix: Removed redundant manual Child IG ID input box! Displays auto-detected child handle from Child Phone.
-        val trustCard = makeCard(t)
-        trustCard.addView(label("🤝 信任朋友白名單 & 自動偵測子女帳號", 17f, t.textPrimary, bold = true, bottomPad = 8))
-
-        val autoDetectedChild = GuardEngine.getChildSelfHandle(this)
-        trustCard.addView(
-            label(
-                "🧒 子女 Instagram 帳號 (由子女手機自動識別並同步)：" +
-                    if (autoDetectedChild.isEmpty()) "等待子女手機收到首則 IG 通知或打開個人檔案自動同步 (例如 @zuck)" else "@$autoDetectedChild ✅",
-                13.5f,
-                t.accentSeafoam,
-                bold = true,
-                bottomPad = 12
-            )
-        )
-
-        val currentHandles = GuardEngine.getTrustedHandles(this)
-        trustCard.addView(
-            label(
-                "已批准嘅信任朋友名單 (點選下方標籤可快速移除)：",
-                13f,
-                t.textSecondary,
-                bold = true,
-                bottomPad = 8
-            )
-        )
-
-        if (currentHandles.isNotEmpty()) {
-            val chipScroll = HorizontalScrollView(this).apply {
-                isHorizontalScrollBarEnabled = false
-            }
-            val chipRow = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 0, 0, 16)
-            }
-            for (h in currentHandles) {
-                val chipBg = GradientDrawable().apply {
-                    setColor(Color.parseColor(t.bgChip))
-                    cornerRadius = 999f
-                    setStroke(2, Color.parseColor(t.borderSubtle))
-                }
-                val chipBtn = Button(this).apply {
-                    text = "@$h  ✕"
-                    textSize = 12f
-                    isAllCaps = false
-                    setTextColor(Color.parseColor(t.textPrimary))
-                    background = chipBg
-                    setPadding(28, 12, 28, 12)
-                    val lp = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    )
-                    lp.setMargins(0, 0, 16, 0)
-                    layoutParams = lp
-                    setOnClickListener {
-                        inputDrafts.keys.removeAll { it.startsWith("以逗號分隔") }
-                        val next = GuardEngine.getTrustedHandles(this@MainActivity).toMutableSet()
-                        next.remove(h)
-                        GuardEngine.setTrustedHandles(this@MainActivity, next)
-                        GuardEngine.syncTrustedFromParent(this@MainActivity)
-                        Toast.makeText(this@MainActivity, "已從白名單移除 @$h", Toast.LENGTH_SHORT).show()
-                        renderUi(animate = true)
-                    }
-                }
-                chipRow.addView(chipBtn)
-            }
-            chipScroll.addView(chipRow)
-            trustCard.addView(chipScroll)
-        }
-
-        val handlesInput = inputBox(
-            t,
-            "以逗號分隔信任朋友帳號 (例如 mum_hk, dad_hk, school_friend_1)",
-            currentHandles.joinToString(", ")
-        )
-        trustCard.addView(handlesInput)
-
-        trustCard.addView(
-            actionButton("💾 儲存並加密同步信任朋友名單", t.btnPrimaryBg, t.btnPrimaryText) {
-                inputDrafts.remove(handlesInput.hint.toString())
-                val updated = handlesInput.text.toString().split(",")
-                GuardEngine.setTrustedHandles(this, updated)
-                GuardEngine.syncTrustedFromParent(this)
-                Toast.makeText(this, "✅ 已儲存並加密同步去子女手機！", Toast.LENGTH_SHORT).show()
-                renderUi(animate = true)
-            }
-        )
-        rootContainer.addView(trustCard)
-
-    }
-
-    private fun addTrustedSender(handle: String) {
-        inputDrafts.keys.removeAll { it.startsWith("以逗號分隔") }
-        val next = GuardEngine.getTrustedHandles(this).toMutableSet()
-        next.add(handle)
-        GuardEngine.setTrustedHandles(this, next)
-        Toast.makeText(this, "已將 @$handle 加入信任名單並同步；先前未儲存的名單草稿已更新。", Toast.LENGTH_LONG).show()
-        renderUi()
-    }
-
-    private fun renderParentAlerts(t: ThemeColors) {
-        val currentHandles = GuardEngine.getTrustedHandles(this)
-        val inboxCard = makeCard(t)
-        inboxCard.addView(label("📬 子女 IG 私訊及留言回覆警報收件匣", 17f, t.textPrimary, bold = true, bottomPad = 12))
-
-        inboxCard.addView(
-            actionButton("🔄 立即刷新最新警報 (Refresh Now)", t.btnSecondaryBg, t.btnSecondaryText) {
-                Toast.makeText(this, "正在同步最新加密警報...", Toast.LENGTH_SHORT).show()
-                thread { GuardEngine.pollChannelOnce(applicationContext, since = "6h") }
-            }
-        )
-
-        val alerts = GuardEngine.getParentAlerts(this)
-        if (alerts.isEmpty()) {
-            inboxCard.addView(
-                label(
-                    "🌱 暫時未有警報。當子女收到陌生人私訊、色情誘導字眼，或在貼文輸入留言回覆時，系統會即時加密顯示喺呢度。",
-                    14f,
-                    t.textSecondary,
-                    bottomPad = 8
-                )
-            )
-        } else {
-            for (alert in alerts) {
-                val reason = alert.optString("reason", "alert")
-                val sender = alert.optString("sender", "unknown")
-                val text = alert.optString("text", "")
-                val time = alert.optString("time", "")
-
-                val itemBox = makeAlertItemBox(t, reason)
-                val badge = when (reason) {
-                    "sexual_or_grooming_content" -> "🔴 高危色情 / 誘導訊息 (已封鎖子女對話，家長持續監測中)"
-                    "tamper_attempt" -> "🟠 防篡改 / 離線警告"
-                    "stranger_message" -> "🟡 陌生人 IG 私訊 / 子女留言回覆"
-                    "heartbeat_ok" -> "💓 子女手機定時連線回報 (30–95m)"
-                    "pairing_verified" -> "🟢 子女手機配對成功"
-                    else -> "🔔 系統通知"
-                }
-                itemBox.addView(label("$badge  •  $time", 12f, t.textPrimary, bold = true, bottomPad = 4))
-                itemBox.addView(label("發訊者 / 來源: @$sender", 14f, t.accentSeafoam, bold = true, bottomPad = 4))
-                itemBox.addView(label("訊息內容: $text", 14f, t.textPrimary, bottomPad = 10))
-
-                val cleanHandle = sender.substringBefore(" ").trim().lowercase(Locale.US).removePrefix("@")
-                if ((reason == "stranger_message" || reason == "sexual_or_grooming_content") &&
-                    !sender.startsWith("子女留言") &&
-                    cleanHandle !in currentHandles &&
-                    !GuardEngine.isChildSelfHandle(this, cleanHandle) &&
-                    !cleanHandle.contains(" ") &&
-                    !cleanHandle.contains("instagram")
-                ) {
-                    itemBox.addView(
-                        actionButton("＋ 將 @$cleanHandle 加入信任好友並解除封鎖", t.btnSecondaryBg, t.btnSecondaryText) {
-                            addTrustedSender(cleanHandle)
-                            GuardEngine.syncTrustedFromParent(this)
-                        }
-                    )
-                }
-                inboxCard.addView(itemBox)
-            }
-
-            inboxCard.addView(
-                actionButton("🗑️ 清除警報記錄 (Clear History)", t.btnSecondaryBg, t.btnSecondaryText) {
-                    GuardEngine.clearParentAlerts(this)
-                    renderUi(animate = true)
-                }
-            )
-        }
-        rootContainer.addView(inboxCard)
-    }
-
-    // Child protection uses explicit, system-owned special-access approval.
-    private fun renderChildPermissions(t: ThemeColors) {
-        val notifOn = GuardEngine.isNotificationListenerEnabledStatic(this)
-        val accOn = GuardEngine.isAccessibilityEnabledStatic(this)
-        val unlockRemainingSec = GuardEngine.getUnlockRemainingSeconds(this)
-        val offenders = GuardEngine.getFlaggedOffenders(this)
-        val selfHandle = GuardEngine.getChildSelfHandle(this)
-
-        val statusCard = makeCard(t)
-        statusCard.addView(
-            label(
-                if (notifOn && GuardEngine.cpNotifConnected) "通知保護已連接" else if (notifOn) "通知已授權 · 等待服務連接" else "設定通知讀取以啟用 IG 私訊保護",
-                18f,
-                if (notifOn) t.accentSeafoam else t.warmHoney,
-                bold = true,
-                bottomPad = 10
-            )
-        )
-        statusCard.addView(
-            label(
-                "• 家庭安全核對圖案：${GuardEngine.getSafetyEmojis(this)}\n" +
-                    "• 核心私訊通知保護：${if (notifOn) "系統已授權" else "未開啟 ❌"}\n" +
-                    "• 進階畫面保護鎖 (攔截聊天室 & 留言回覆)：${if (accOn) "已開啟 ✅" else "選用 (未開啟)"}\n" +
-                    "• 保護鎖狀態：${if (unlockRemainingSec > 0) "⏳ 已臨時解鎖（剩餘 ${unlockRemainingSec / 60} 分 ${unlockRemainingSec % 60} 秒）" else "已鎖定 🔒"}\n" +
-                    "• 自動偵測子女 IG 帳號：${if (selfHandle.isEmpty()) "自動識別中 (收到通知或開啟個人檔案即自動同步)" else "@$selfHandle ✅"}\n" +
-                    "• 已攔截高危帳號：${if (offenders.isEmpty()) "(無)" else offenders.joinToString(", ") { "@$it" }}",
-                14f,
-                t.textPrimary,
-                bottomPad = 16
-            )
-        )
-
-        statusCard.addView(actionButton("設定監察狀態通知", t.btnSecondaryBg, t.btnSecondaryText) { requestAppNotifications() })
-        statusCard.addView(label("建議允許系統通知，持續顯示子女模式監察提示。這與讀取 Instagram 通知是兩項不同權限。", 13f, t.textSecondary, bottomPad = 12))
-        if (!notifOn) {
-            statusCard.addView(
-                actionButton("設定通知讀取保護", t.btnPrimaryBg, t.btnPrimaryText) {
-                    openDirectNotificationToggle()
-                }
-            )
-        }
-
-        if (!accOn) {
-            statusCard.addView(
-                actionButton("🛡️ 開啟進階「聊天室攔截及留言回覆保護」", t.btnSecondaryBg, t.btnSecondaryText) {
-                    openAccessibilityToggle()
-                }
-            )
-        }
-        if ((!notifOn || !accOn) && Build.VERSION.SDK_INT >= 33) {
-                statusCard.addView(
-                    actionButton("通知或無障礙開關被封鎖？受限設定協助", t.btnSecondaryBg, t.btnSecondaryText) {
-                        openAppDetailsSettings()
-                    }
-                )
-        }
-
-        statusCard.addView(
-            actionButton("💓 立即發送測試及心跳回報去家長手機", t.btnPrimaryBg, t.btnPrimaryText) {
-                Toast.makeText(this, "正在加密發送心跳及測試通知...", Toast.LENGTH_SHORT).show()
-                GuardEngine.checkAndSendChildHeartbeatIfDue(this, force = true)
-                uiHandler.postDelayed({ renderUi(animate = false) }, 1200L)
-            }
-        )
-        rootContainer.addView(statusCard)
-
-    }
-
-    private fun renderChildUnlock(t: ThemeColors) {
-        val unlockRemainingSec = GuardEngine.getUnlockRemainingSeconds(this)
-        val lockoutRemainingSec = GuardEngine.checkPasswordLockoutRemainingSec(this)
-        val selfHandle = GuardEngine.getChildSelfHandle(this)
-        val unlockCard = makeCard(t)
-        unlockCard.addView(label("🔑 輸入家長 15 分鐘臨時解鎖碼 (6-Char Unlock Code)", 16f, t.warmHoney, bold = true, bottomPad = 8))
-        if (lockoutRemainingSec > 0) {
-            unlockCard.addView(
-                label(
-                    "⛔ 密碼錯誤次數過多！已鎖定輸入（剩餘 ${lockoutRemainingSec / 60} 分 ${lockoutRemainingSec % 60} 秒）",
-                    14f,
-                    t.warmCoral,
-                    bold = true,
-                    bottomPad = 12
-                )
-            )
-        } else {
-            unlockCard.addView(
-                label(
-                    "請輸入家長手機產生嘅 6 位英數「15 分鐘臨時解鎖碼」（或輸入 8+ 位家長主密碼解鎖 3 分鐘）：",
-                    13f,
-                    t.textSecondary,
-                    bottomPad = 12
-                )
-            )
-        }
-        val codeInput = inputBox(t, "輸入 6 位臨時解鎖碼 或 家長主密碼", "", isPassword = true)
-        unlockCard.addView(codeInput)
-
-        unlockCard.addView(
-            actionButton("🔓 驗證並臨時解鎖 (Verify & Unlock)", t.warningButtonBg, t.warningButtonText) {
-                val lockRem = GuardEngine.checkPasswordLockoutRemainingSec(this)
-                if (lockRem > 0) {
-                    Toast.makeText(this, "⛔ 已鎖定，請等 ${lockRem} 秒後再試", Toast.LENGTH_LONG).show()
-                    renderUi(animate = true)
-                    return@actionButton
-                }
-                val entered = codeInput.text.toString().trim()
-                if (GuardEngine.verify15MinUnlockCode(this, entered)) {
-                    GuardEngine.recordPasswordAttempt(this, true)
-                    GuardEngine.grantTemporaryUnlock(this, 15 * 60 * 1000L)
-                    codeInput.setText("")
-                    GuardEngine.sendAlertFromChild(
-                        this,
-                        "unlock_used",
-                        "@${selfHandle.ifEmpty { "child" }}",
-                        "子女手機已使用 6 位臨時解鎖碼解鎖 15 分鐘",
-                        bypassDedupe = true
-                    )
-                    Toast.makeText(this, "✅ 已成功解鎖 15 分鐘！", Toast.LENGTH_LONG).show()
-                    renderUi(animate = true)
-                } else if (GuardEngine.constantTimeEquals(entered, GuardEngine.getPin(this))) {
-                    GuardEngine.recordPasswordAttempt(this, true)
-                    GuardEngine.grantTemporaryUnlock(this, 3 * 60 * 1000L)
-                    codeInput.setText("")
-                    Toast.makeText(this, "✅ 家長主密碼正確：已解鎖 3 分鐘", Toast.LENGTH_LONG).show()
-                    renderUi(animate = true)
-                } else {
-                    GuardEngine.recordPasswordAttempt(this, false)
-                    Toast.makeText(this, "❌ 解鎖碼或主密碼不正確！", Toast.LENGTH_SHORT).show()
-                    renderUi(animate = true)
-                }
-            }
-        )
-
-        if (unlockRemainingSec > 0) {
-            unlockCard.addView(
-                actionButton("🔒 立即重新上鎖 (Re-Lock Now)", t.btnSecondaryBg, t.btnSecondaryText) {
-                    GuardEngine.grantTemporaryUnlock(this, 0L)
-                    Toast.makeText(this, "🔒 已重新啟動保護鎖", Toast.LENGTH_SHORT).show()
-                    renderUi(animate = true)
-                }
-            )
-        }
-        rootContainer.addView(unlockCard)
-    }
-
-    private fun renderCollapsibleDiagnostics(t: ThemeColors) {
-        val diagCard = makeCard(t)
-        diagCard.addView(
-            actionButton(
-                if (showAdvancedLogs) "🔽 隱藏進階系統診斷紀錄" else "🔧 顯示進階系統診斷紀錄 (Checkpoints)",
-                t.btnSecondaryBg,
-                t.btnSecondaryText
-            ) {
-                showAdvancedLogs = !showAdvancedLogs
-                renderUi(animate = true)
-            }
-        )
-        if (showAdvancedLogs) {
-            diagCard.addView(
-                label(
-                    "Last TLS/E2EE Status: ${GuardEngine.cpLastHttpStatus}\n\n" + GuardEngine.getCheckpointLogs(this),
-                    12f,
-                    t.textSecondary,
-                    topPad = 8,
-                    bottomPad = 12
-                )
-            )
-            diagCard.addView(
-                actionButton("🧹 清除診斷紀錄 (Clear Logs)", t.btnSecondaryBg, t.btnSecondaryText) {
-                    GuardEngine.clearCheckpointLogs(this)
-                    renderUi()
-                }
-            )
-        }
-        rootContainer.addView(diagCard)
-    }
-
-    private fun renderRoleSwitchFooter(t: ThemeColors, requirePin: Boolean) {
-        val card = makeCard(t)
-        card.addView(label("⚙️ 重設手機身份及遠端金鑰管理", 15f, t.textSecondary, bold = true, bottomPad = 8))
-        if (requirePin) {
-            card.addView(
-                label(
-                    "💡 如忘記家長主密碼，可在【家長手機】點選「🔓 遠端解除子女手機保護並重設」，子女手機會自動解鎖並返回初始畫面。",
-                    12f,
-                    t.accentSeafoam,
-                    bottomPad = 10
-                )
-            )
-            val pinInput = inputBox(t, "輸入 8+ 位家長主密碼以切換角色", "", isPassword = true)
-            card.addView(pinInput)
-            card.addView(
-                actionButton("切換手機角色 / 重新配對 (需要家長主密碼)", t.btnSecondaryBg, t.btnSecondaryText) {
-                    if (GuardEngine.checkPasswordLockoutRemainingSec(this) > 0) {
-                        Toast.makeText(this, "⛔ 密碼輸入已鎖定，請從家長手機遠端重設", Toast.LENGTH_LONG).show()
-                        return@actionButton
-                    }
-                    if (GuardEngine.constantTimeEquals(pinInput.text.toString().trim(), GuardEngine.getPin(this))) {
-                        GuardEngine.recordPasswordAttempt(this, true)
-                        GuardEngine.setRole(this, "unconfigured")
-                        syncRoleServices()
-                        renderUi(animate = true)
-                    } else {
-                        GuardEngine.recordPasswordAttempt(this, false)
-                        Toast.makeText(this, "家長主密碼錯誤！", Toast.LENGTH_SHORT).show()
-                        renderUi(animate = true)
-                    }
-                }
-            )
-        } else {
-            card.addView(
-                actionButton("🔄 更換全新家庭金鑰（自動同步更新子女手機金鑰）", t.btnPrimaryBg, t.btnPrimaryText) {
-                    GuardEngine.rotateKeyAndNotifyChild(this, resetChildToUnconfigured = false)
-                    syncRoleServices()
-                    Toast.makeText(this, "✅ 已更換金鑰並透過加密通道自動更新子女手機！", Toast.LENGTH_LONG).show()
-                    renderUi(animate = true)
-                }
-            )
-            card.addView(
-                actionButton("🔓 遠端解除子女手機保護並重設角色 (忘記密碼救援)", t.btnSecondaryBg, t.btnSecondaryText) {
-                    GuardEngine.rotateKeyAndNotifyChild(this, resetChildToUnconfigured = true)
-                    Toast.makeText(this, "✅ 已發送遠端解鎖及重設指令去子女手機！", Toast.LENGTH_LONG).show()
-                }
-            )
-            card.addView(
-                actionButton("切換此部家長手機角色 (Switch Role)", t.btnSecondaryBg, t.btnSecondaryText) {
-                    GuardEngine.setRole(this, "unconfigured")
-                    syncRoleServices()
-                    renderUi(animate = true)
-                }
-            )
-        }
-        rootContainer.addView(card)
-    }
-
-    private fun makeCard(t: ThemeColors, isHero: Boolean = false): LinearLayout {
-        val bg = GradientDrawable().apply {
-            setColor(Color.parseColor(if (isHero) t.bgHero else t.bgCard))
-            cornerRadius = dp(16).toFloat()
-            setStroke(if (isHero) 4 else 3, Color.parseColor(t.borderSubtle))
-        }
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = bg
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            val lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            lp.setMargins(0, 0, 0, dp(16))
-            layoutParams = lp
-        }
-    }
-
-    private fun makeAlertItemBox(t: ThemeColors, reason: String): LinearLayout {
-        val borderColor = when (reason) {
-            "sexual_or_grooming_content" -> t.warmCoral
-            "tamper_attempt" -> t.warmHoney
-            "stranger_message" -> t.accentSeafoam
-            else -> t.accentPowderSky
-        }
-        val bg = GradientDrawable().apply {
-            setColor(Color.parseColor(t.bgInput))
-            cornerRadius = 26f
-            setStroke(4, Color.parseColor(borderColor))
-        }
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = bg
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            val lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            lp.setMargins(0, 0, 0, 22)
-            layoutParams = lp
-        }
-    }
-
-    private fun label(
-        text: String,
-        sizeSp: Float,
-        hexColor: String,
-        bold: Boolean = false,
-        topPad: Int = 0,
-        bottomPad: Int = 0
-    ): TextView {
-        return TextView(this).apply {
-            this.text = text
-            textSize = sizeSp
-            setTextColor(Color.parseColor(hexColor))
-            if (bold) setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, dp(topPad), 0, dp(bottomPad))
-        }
-    }
-
-    private fun inputBox(t: ThemeColors, hintText: String, initialValue: String, isPassword: Boolean = false): EditText {
-        val bg = GradientDrawable().apply {
-            setColor(Color.parseColor(t.bgInput))
-            cornerRadius = 22f
-            setStroke(3, Color.parseColor(t.borderSubtle))
-        }
-        return EditText(this).apply {
-            hint = hintText
-            setText(inputDrafts[hintText] ?: initialValue)
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { inputDrafts[hintText] = s.toString() }
-                override fun afterTextChanged(s: Editable?) {}
-            })
-            setHintTextColor(Color.parseColor(t.textMuted))
-            setTextColor(Color.parseColor(t.textPrimary))
-            background = bg
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            minHeight = dp(48)
-            inputType = if (isPassword) {
-                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            } else {
-                InputType.TYPE_CLASS_TEXT
-            }
-            val lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            lp.setMargins(0, 0, 0, 20)
-            layoutParams = lp
-        }
-    }
-
-    private fun actionButton(title: String, hexBg: String, hexText: String, onClick: () -> Unit): Button {
-        val bg = GradientDrawable().apply {
-            setColor(Color.parseColor(hexBg))
-            cornerRadius = 26f
-        }
-        return Button(this).apply {
-            text = title
-            setTextColor(Color.parseColor(hexText))
-            setTypeface(typeface, Typeface.BOLD)
-            isAllCaps = false
-            textSize = 14f
-            background = bg
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            minHeight = dp(48)
-            val lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            lp.setMargins(0, 0, 0, 18)
-            layoutParams = lp
-            setOnClickListener { v ->
-                v.animate().scaleX(0.96f).scaleY(0.96f).setDuration(75L).withEndAction {
-                    v.animate().scaleX(1f).scaleY(1f).setDuration(115L).start()
-                    onClick()
-                }.start()
-            }
-        }
-    }
 }

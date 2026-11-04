@@ -62,9 +62,9 @@ class PermissionUiTest {
         scroll.scrollTo(0,300)
         invoke(a,"navigateTo","settings")
         shadowOf(android.os.Looper.getMainLooper()).idle()
-        assertEquals(0,scroll.scrollY)
+        assertEquals(0,(field(a,"scrollView") as ScrollView).scrollY)
         invoke(a,"navigateTo","family")
-        assertEquals("friend_one, friend_two",all(root).filterIsInstance<EditText>().first().text.toString())
+        assertEquals("friend_one, friend_two",all(field(a,"rootContainer") as View).filterIsInstance<EditText>().first().text.toString())
         assertNotSame(scroll,(field(a,"fixedHeader") as View).parent)
         controller.stop().destroy()
     }
@@ -111,7 +111,7 @@ class PermissionUiTest {
         val root=field(a,"rootContainer") as ViewGroup
         all(root).filterIsInstance<EditText>().first().setText("stale_unsaved")
         invoke(a,"addTrustedSender","new_friend")
-        val displayed=all(root).filterIsInstance<EditText>().first().text.toString().split(", ").toSet()
+        val displayed=all(field(a,"rootContainer") as View).filterIsInstance<EditText>().first().text.toString().split(", ").toSet()
         assertEquals(GuardEngine.getTrustedHandles(ctx),displayed)
         assertTrue("new_friend" in displayed)
         assertFalse("stale_unsaved" in displayed)

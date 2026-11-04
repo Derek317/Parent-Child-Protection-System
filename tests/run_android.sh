@@ -18,6 +18,7 @@ s='\n'.join(x for x in s.splitlines() if 'base64 -d > app/ig_guard.keystore' not
 s=s.replace('${{ github.run_number }}','1').replace('signingConfig signingConfigs.persistentKey','signingConfig signingConfigs.debug')
 (out/'generate.sh').write_text(s)
 shutil.copyfile(repo/'MainActivity.kt',out/'MainActivity.kt')
+shutil.copytree(repo/'ui-res',out/'ui-res',dirs_exist_ok=True)
 PY
 cd "$build_dir"
 bash generate.sh

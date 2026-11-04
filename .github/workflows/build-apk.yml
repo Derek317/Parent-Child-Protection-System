@@ -36,6 +36,7 @@ jobs:
           mkdir -p app/src/main/java/app/family/igguard
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/values
+          cp -R ui-res/. app/src/main/res/
 
           if [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
             sed "s/^package .*/package app.family.igguard/" MainActivity.kt > app/src/main/java/app/family/igguard/MainActivity.kt
