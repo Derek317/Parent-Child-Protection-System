@@ -1,0 +1,19 @@
+<resources>
+    <style name="GuardThemeLight" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#315644</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#F6F8F5</item>
+    </style>
+    <style name="GuardThemeDark" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#CEE1CE</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#151E18</item>
+    </style>
+    <style name="GuardSheetAnimation">
+        <item name="android:windowEnterAnimation">@anim/guard_sheet_enter</item>
+        <item name="android:windowExitAnimation">@anim/guard_sheet_exit</item>
+    </style>
+</resources>
