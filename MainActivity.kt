@@ -178,14 +178,6 @@ object GuardEngine {
         Triple(getRole(ctx), getOrCreateFamilyToken(ctx), relayGeneration)
     }
 
-    // O(1) in-memory caches for AES-256 key, Trusted Handles Set, and Flagged Offenders Set
-    @Volatile private var cachedKeyToken: String = ""
-    @Volatile private var cachedSecretKey: SecretKeySpec? = null
-    @Volatile private var cachedTrustedRaw: String = ""
-    @Volatile private var cachedTrustedSet: Set<String> = emptySet()
-    @Volatile private var cachedOffendersRaw: String = ""
-    @Volatile private var cachedOffendersSet: Set<String> = emptySet()
-
     // Live Checkpoint & Heartbeat States
     @Volatile var cpNotifConnected: Boolean = false
     @Volatile var cpLastNotifTime: String = "Never"
@@ -201,9 +193,6 @@ object GuardEngine {
 
     private val PAIR_V42_REGEX = Regex("IGGUARD-PAIR-V42:([a-zA-Z0-9\\-]{8,64}):([a-zA-Z0-9_\\-=]+)")
     private val PAIR_LEGACY_REGEX = Regex("IGGUARD-PAIR:([a-zA-Z0-9\\-]{8,64}):([^\\]\\s]+)")
-    private val TOKEN_PARAM_REGEX = Regex("token=([a-zA-Z0-9\\-]{8,64})")
-    private val PW_PARAM_REGEX = Regex("pw=([a-zA-Z0-9_\\-=]+)")
-    private val PIN_PARAM_REGEX = Regex("pin=([^&\\s]+)")
     private val VALID_IG_HANDLE_REGEX = Regex("^[a-z0-9._]{2,30}$")
 
     // shortcut: regex keyword matching for sexual/grooming DMs, upgrade to on-device classifier if false positives arise
@@ -300,16 +289,9 @@ object GuardEngine {
     // ================= 1. END-TO-END ENCRYPTION (AES-256-GCM over HTTPS) =================
     private fun deriveAesKey(token: String): SecretKeySpec {
         val clean = token.trim().lowercase(Locale.US)
-        val existingKey = cachedSecretKey
-        if (clean == cachedKeyToken && existingKey != null) {
-            return existingKey
-        }
         val keyBytes = MessageDigest.getInstance("SHA-256")
             .digest("ig_guard_e2ee_aes256_v4.2:$clean".toByteArray(Charsets.UTF_8))
-        val newSpec = SecretKeySpec(keyBytes, "AES")
-        cachedKeyToken = clean
-        cachedSecretKey = newSpec
-        return newSpec
+        return SecretKeySpec(keyBytes, "AES")
     }
 
     fun encryptPayload(token: String, plainJson: String): String {
@@ -325,25 +307,15 @@ object GuardEngine {
         return JSONObject().put("e2ee", b64).toString()
     }
 
-    fun decryptPayload(token: String, wireStr: String): JSONObject? {
-        return try {
-            val wrapper = JSONObject(wireStr)
-            if (wrapper.has("e2ee")) {
-                val combined = Base64.decode(wrapper.getString("e2ee"), Base64.NO_WRAP)
-                if (combined.size <= 12) return null
-                val iv = combined.copyOfRange(0, 12)
-                val cipherBytes = combined.copyOfRange(12, combined.size)
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                cipher.init(Cipher.DECRYPT_MODE, deriveAesKey(token), GCMParameterSpec(128, iv))
-                val plainBytes = cipher.doFinal(cipherBytes)
-                JSONObject(String(plainBytes, Charsets.UTF_8))
-            } else {
-                wrapper
-            }
-        } catch (_: Exception) {
-            null
+    fun decryptPayload(token: String, wireStr: String): JSONObject? = try {
+        val combined = Base64.decode(JSONObject(wireStr).getString("e2ee"), Base64.NO_WRAP)
+        if (combined.size < 28) null
+        else {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, deriveAesKey(token), GCMParameterSpec(128, combined.copyOfRange(0, 12)))
+            JSONObject(String(cipher.doFinal(combined.copyOfRange(12, combined.size)), Charsets.UTF_8))
         }
-    }
+    } catch (_: Exception) { null }
 
     // ================= 2. RANDOM 30-95 MIN HEARTBEAT RELAY & WATCHDOG =================
     fun scheduleNextRandomHeartbeat(ctx: Context): Long {
@@ -383,12 +355,14 @@ object GuardEngine {
         )
     }
 
-    fun recordChildHeartbeatOnParent(ctx: Context, summary: String) {
-        prefs(ctx).edit()
-            .putLong("parent_last_child_hb_ms", System.currentTimeMillis())
+    fun recordChildHeartbeatOnParent(ctx: Context, summary: String, sentAt: Long) {
+        val now = System.currentTimeMillis()
+        if (sentAt <= 0 || sentAt > now + 120_000L) return
+        val timestamp = minOf(sentAt, now)
+        if (timestamp <= prefs(ctx).getLong("parent_last_child_hb_ms", 0L)) return
+        prefs(ctx).edit().putLong("parent_last_child_hb_ms", timestamp)
             .putString("parent_last_child_hb_text", "${nowDateTimeStr()} — $summary")
-            .putBoolean("parent_hb_missing_alerted", false)
-            .apply()
+            .putBoolean("parent_hb_missing_alerted", false).apply()
     }
 
     fun getLastChildHeartbeatInfo(ctx: Context): String {
@@ -414,6 +388,7 @@ object GuardEngine {
 
     // ================= 3. STRONG PASSWORD + BRUTE-FORCE LOCKOUT + 15-MIN UNLOCK =================
     fun getPin(ctx: Context): String {
+        if (isChildMode(ctx)) return prefs(ctx).getString("parent_password_verifier", "") ?: ""
         val existing = prefs(ctx).getString("parent_master_password", null)
         if (!existing.isNullOrBlank()) return existing
         val generated = generateRandomStrongPassword()
@@ -423,8 +398,35 @@ object GuardEngine {
 
     fun setPin(ctx: Context, password: String) {
         val clean = password.trim()
-        if (clean.length >= 8) {
-            prefs(ctx).edit().putString("parent_master_password", clean).apply()
+        require(isStrongPasswordValid(clean)) { "A strong parent password is required" }
+        if (isChildMode(ctx)) storeChildVerifier(ctx, FamilySecurity.passwordVerifier(clean))
+        else prefs(ctx).edit().putString("parent_master_password", clean)
+            .putString("parent_share_verifier", FamilySecurity.passwordVerifier(clean)).remove("parent_password_verifier").apply()
+    }
+
+    private fun storeChildVerifier(ctx: Context, verifier: String) {
+        require(FamilySecurity.isVerifier(verifier))
+        prefs(ctx).edit().putString("parent_password_verifier", verifier).remove("parent_master_password").remove("parent_share_verifier").apply()
+    }
+
+    fun verifyParentPassword(ctx: Context, candidate: String): Boolean {
+        val verifier = prefs(ctx).getString("parent_password_verifier", null)
+        return if (verifier != null) FamilySecurity.verifiesPassword(candidate.trim(), verifier)
+        else constantTimeEquals(candidate.trim(), prefs(ctx).getString("parent_master_password", "") ?: "") && candidate.isNotBlank()
+    }
+
+    private fun parentPasswordVerifier(ctx: Context): String = synchronized(pollLock) {
+        prefs(ctx).getString("parent_share_verifier", null)?.takeIf { FamilySecurity.isVerifier(it) }
+            ?: FamilySecurity.passwordVerifier(getPin(ctx)).also { prefs(ctx).edit().putString("parent_share_verifier", it).apply() }
+    }
+
+    private fun parentIdentity(ctx: Context): FamilySecurity.SigningIdentity {
+        check(isParentMode(ctx))
+        val privateKey = prefs(ctx).getString("parent_signing_private", "") ?: ""
+        val publicKey = prefs(ctx).getString("parent_signing_public", "") ?: ""
+        if (privateKey.isNotEmpty() && FamilySecurity.validPublicKey(publicKey)) return FamilySecurity.SigningIdentity(privateKey, publicKey)
+        return FamilySecurity.newSigningIdentity().also {
+            prefs(ctx).edit().putString("parent_signing_private", it.privateKey).putString("parent_signing_public", it.publicKey).apply()
         }
     }
 
@@ -491,29 +493,15 @@ object GuardEngine {
         prefs(ctx).edit().putLong("unlock_until_ms", until).apply()
     }
 
-    fun generate15MinUnlockCode(ctx: Context, bucketOffset: Long = 0L): String {
-        val alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
-        val token = getOrCreateFamilyToken(ctx)
-        val bucket = (System.currentTimeMillis() / 900_000L) + bucketOffset
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest("unlock15_v4.2:$token:$bucket".toByteArray(Charsets.UTF_8))
-        return (0 until 6).map { i ->
-            alphabet[(digest[i].toInt() and 0xFF) % alphabet.length]
-        }.joinToString("")
+    fun generate15MinUnlockCode(ctx: Context): String {
+        check(isParentMode(ctx))
+        return FamilySecurity.randomUnlockCode()
     }
 
     fun verify15MinUnlockCode(ctx: Context, inputCode: String): Boolean {
         val clean = inputCode.trim().uppercase(Locale.US)
-        if (clean.length != 6) return false
-        for (offset in -1L..1L) {
-            if (constantTimeEquals(clean, generate15MinUnlockCode(ctx, offset))) return true
-        }
-        val syncedCode = (prefs(ctx).getString("synced_15m_code", "") ?: "").uppercase(Locale.US)
-        val syncedExp = prefs(ctx).getLong("synced_15m_exp", 0L)
-        if (syncedCode.isNotEmpty() && System.currentTimeMillis() < syncedExp && constantTimeEquals(clean, syncedCode)) {
-            return true
-        }
-        return false
+        val code = prefs(ctx).getString("synced_15m_code", "") ?: ""
+        return FamilySecurity.validCode(clean) && System.currentTimeMillis() < prefs(ctx).getLong("synced_15m_exp", 0L) && constantTimeEquals(clean, code)
     }
 
     fun push15MinUnlockCodeFromParent(ctx: Context, code: String) {
@@ -536,27 +524,32 @@ object GuardEngine {
     }
 
     // ================= 4. REMOTE KEY ROTATION & REMOTE CHILD UNLOCK/RESET =================
-    fun rotateKeyAndNotifyChild(ctx: Context, resetChildToUnconfigured: Boolean): String {
-        val oldToken = getOrCreateFamilyToken(ctx)
-        val oldTopic = getChannelTopicForToken(oldToken)
-        val newToken = UUID.randomUUID().toString()
-        val newPin = getPin(ctx)
-        val now = System.currentTimeMillis()
-
-        val plain = JSONObject().apply {
-            put("type", if (resetChildToUnconfigured) "remote_reset_child" else "key_rotated")
-            put("new_token", newToken)
-            put("new_pin", newPin)
-            put("ts_ms", now)
-            put("time", nowDateTimeStr())
-        }.toString()
-
-        if (!resetChildToUnconfigured) {
-            setFamilyToken(ctx, newToken, preserveFamilyHistory = true)
-            ParentAlertService.reconnectActiveStream()
-        }
-
-        postEncryptedToChannel(ctx, oldTopic, oldToken, plain) { _, _ ->
+    fun rotateKeyAndNotifyChild(ctx: Context, resetChildToUnconfigured: Boolean, onComplete: ((Boolean) -> Unit)? = null): String {
+        val session = captureRelaySession(ctx)
+        check(session.first == "parent")
+        val pending = try { JSONObject(prefs(ctx).getString("pending_rotation_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        val retry = !resetChildToUnconfigured && session.second in listOf(pending.optString("old_token"), pending.optString("new_token"))
+        val oldToken = if (retry) pending.getString("old_token") else session.second
+        val newToken = if (retry) pending.getString("new_token") else UUID.randomUUID().toString()
+        if (!resetChildToUnconfigured) prefs(ctx).edit().putString("pending_rotation_json",
+            JSONObject().put("old_token", oldToken).put("new_token", newToken).toString()).apply()
+        val plain = JSONObject().put("type", if (resetChildToUnconfigured) "remote_reset_child" else "key_rotated")
+            .put("new_token", newToken).put("new_pin", parentPasswordVerifier(ctx))
+            .put("ts_ms", System.currentTimeMillis()).put("time", nowDateTimeStr()).toString()
+        postEncryptedToChannel(ctx, getChannelTopicForToken(oldToken), oldToken, plain) { success, _ ->
+            val accepted = synchronized(pollLock) {
+                if (!success || captureRelaySession(ctx) != session) false
+                else {
+                    if (!resetChildToUnconfigured) {
+                        setFamilyToken(ctx, newToken, preserveFamilyHistory = true)
+                        ParentAlertService.reconnectActiveStream()
+                    }
+                    true
+                }
+            }
+            // Retain a pending transition until a child report arrives on the new channel.
+            addCheckpointLog(ctx, "CP3-KEY", if (accepted) "Published parent command; waiting for child confirmation" else "Publish failed or session changed; original family retained")
+            onComplete?.invoke(accepted)
             ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
         }
         return newToken
@@ -591,6 +584,11 @@ object GuardEngine {
     }
 
     fun syncChildComponents(ctx: Context) {
+        if (isChildMode(ctx)) {
+            prefs(ctx).edit().remove("parent_signing_private").remove("parent_signing_public").apply()
+            val legacyPassword = prefs(ctx).getString("parent_master_password", null)
+            if (!legacyPassword.isNullOrBlank()) storeChildVerifier(ctx, FamilySecurity.passwordVerifier(legacyPassword))
+        }
         val state = if (isChildMode(ctx)) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             else PackageManager.COMPONENT_ENABLED_STATE_DISABLED
         for (service in listOf(IgNotificationListener::class.java, IgAccessibilityService::class.java)) {
@@ -623,12 +621,12 @@ object GuardEngine {
     fun isChildMode(ctx: Context): Boolean = getRole(ctx) == "child"
     fun isParentMode(ctx: Context): Boolean = getRole(ctx) == "parent"
 
-    fun getOrCreateFamilyToken(ctx: Context): String {
+    fun getOrCreateFamilyToken(ctx: Context): String = synchronized(pollLock) {
         val existing = prefs(ctx).getString("family_uuid_token", null)
-        if (!existing.isNullOrBlank()) return existing
+        if (!existing.isNullOrBlank()) return@synchronized existing
         val generated = UUID.randomUUID().toString()
         prefs(ctx).edit().putString("family_uuid_token", generated).apply()
-        return generated
+        generated
     }
 
     fun setFamilyToken(ctx: Context, token: String, preserveFamilyHistory: Boolean = false) = synchronized(pollLock) {
@@ -639,6 +637,11 @@ object GuardEngine {
             if (old != clean) {
                 relayGeneration++
                 if (!preserveFamilyHistory) {
+                    for (key in listOf("control_state_json", "last_control_ts_ms", "pending_rotation_json", "synced_15m_code", "synced_15m_exp", "unlock_until_ms",
+                        "parent_master_password", "parent_share_verifier", "parent_password_verifier", "parent_command_public_key", "trusted_csv", "flagged_offenders_csv",
+                        "child_self_handle", "pw_failed_count", "pw_lockout_until_ms", "sent_setup_ok", "next_heartbeat_at_ms", "checkpoint_logs")) editor.remove(key)
+                    pauseTamperUntilMs = 0L
+                    synchronized(this) { recentAlerts.clear(); recentChildSentTexts.clear(); seenNotifMsgTimestamps.clear() }
                     editor.remove("weekly_stats_json").remove("parent_alerts_json").remove("seen_msg_ids")
                         .remove("parent_last_child_hb_ms").remove("parent_last_child_hb_text").remove("parent_hb_missing_alerted")
                 }
@@ -670,53 +673,69 @@ object GuardEngine {
         }
     }
 
-    fun buildPairingInviteText(ctx: Context): String {
-        val token = getOrCreateFamilyToken(ctx)
-        val pin = getPin(ctx)
-        val emojis = getSafetyEmojis(ctx)
-        val pinB64 = Base64.encodeToString(pin.toByteArray(Charsets.UTF_8), Base64.NO_WRAP or Base64.URL_SAFE)
-        return buildString {
-            append("🛡️ 【IG Guard 家庭專屬加密配對邀請】\n")
-            append("核對圖案 (Safety Emojis): $emojis\n\n")
-            append("步驟 1：在子女手機複製此整段訊息，然後打開 IG Guard 即可一鍵完成配對！\n")
-            append("或直接點選專屬配對連結：\n")
-            append("igguard://pair?token=$token&pw=$pinB64\n\n")
-            append("[IGGUARD-PAIR-V42:$token:$pinB64]")
-        }
+    fun getSafetyCode(ctx: Context): String = synchronized(pollLock) {
+        val publicKey = if (isParentMode(ctx)) parentIdentity(ctx).publicKey else prefs(ctx).getString("parent_command_public_key", "") ?: ""
+        val verifier = if (isParentMode(ctx)) parentPasswordVerifier(ctx) else prefs(ctx).getString("parent_password_verifier", "") ?: ""
+        if (publicKey.isEmpty() || verifier.isEmpty()) "" else FamilySecurity.safetyCode(getOrCreateFamilyToken(ctx), verifier, publicKey)
     }
 
-    fun parsePairingString(raw: String): Pair<String, String>? {
-        val text = raw.trim()
-        val v42Match = PAIR_V42_REGEX.find(text)
-        if (v42Match != null) {
-            val token = v42Match.groupValues[1]
-            val pw = try {
-                String(Base64.decode(v42Match.groupValues[2], Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8)
-            } catch (_: Exception) {
-                "HkGuard2026"
-            }
-            return token to pw
-        }
-        val legacyMatch = PAIR_LEGACY_REGEX.find(text)
-        if (legacyMatch != null) {
-            return legacyMatch.groupValues[1] to legacyMatch.groupValues[2]
-        }
-        if (text.contains("token=")) {
-            val token = TOKEN_PARAM_REGEX.find(text)?.groupValues?.get(1)
-            val pwB64 = PW_PARAM_REGEX.find(text)?.groupValues?.get(1)
-            val pw = if (!pwB64.isNullOrEmpty()) {
-                try {
-                    String(Base64.decode(pwB64, Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8)
-                } catch (_: Exception) {
-                    "HkGuard2026"
-                }
-            } else {
-                PIN_PARAM_REGEX.find(text)?.groupValues?.get(1) ?: "HkGuard2026"
-            }
-            if (!token.isNullOrEmpty()) return token to pw
-        }
-        return null
+    fun buildPairingInviteText(ctx: Context): String {
+        val token = getOrCreateFamilyToken(ctx)
+        val verifier = FamilySecurity.encode(parentPasswordVerifier(ctx))
+        val publicKey = parentIdentity(ctx).publicKey
+        return "🛡️ 【IG Guard 家庭專屬加密配對邀請】\n核對圖案 (Safety Emojis): ${getSafetyEmojis(ctx)}\n安全代碼：${getSafetyCode(ctx)}\n\n" +
+            "請先將兩部手機更新至最新版本，再在子女手機開啟邀請並確認配對。請妥善保管邀請。\n" +
+            "igguard://pair?version=43&token=$token&pw=$verifier&parent=$publicKey\n\n[IGGUARD-PAIR-V43:$token:$verifier:$publicKey]"
     }
+
+    fun parsePairingString(raw: String): FamilySecurity.Invite? {
+        return try {
+        val text = raw.trim()
+        if (text.length > 16_384) null
+        else {
+            val v43 = Regex("IGGUARD-PAIR-V43:([a-zA-Z0-9-]{8,64}):([a-zA-Z0-9_=-]+):([a-zA-Z0-9_=-]+)").find(text)
+            val v42 = PAIR_V42_REGEX.find(text)
+            val legacy = PAIR_LEGACY_REGEX.find(text)
+            val link = Regex("igguard://pair\\?[^\\s]+", RegexOption.IGNORE_CASE).find(text)?.value
+            val uri = link?.let { Uri.parse(it) }
+            val token: String; val credential: String; val publicKey: String
+            when {
+                v43 != null -> { token = v43.groupValues[1]; credential = FamilySecurity.decode(v43.groupValues[2]); publicKey = v43.groupValues[3] }
+                v42 != null -> { token = v42.groupValues[1]; credential = FamilySecurity.decode(v42.groupValues[2]); publicKey = "" }
+                legacy != null -> { token = legacy.groupValues[1]; credential = legacy.groupValues[2]; publicKey = "" }
+                uri != null && uri.scheme.equals("igguard", true) && uri.host.equals("pair", true) -> {
+                    token = uri.getQueryParameter("token") ?: ""
+                    credential = uri.getQueryParameter("pw")?.let { FamilySecurity.decode(it) } ?: uri.getQueryParameter("pin") ?: ""
+                    publicKey = uri.getQueryParameter("parent") ?: ""
+                    if (uri.getQueryParameter("version") == "43" && publicKey.isEmpty()) return null
+                }
+                else -> return null
+            }
+            if (!FamilySecurity.validToken(token)) null
+            else if (publicKey.isNotEmpty()) {
+                if (FamilySecurity.validPublicKey(publicKey) && FamilySecurity.isVerifier(credential)) FamilySecurity.Invite(token, credential, publicKey) else null
+            } else if (isStrongPasswordValid(credential) && !FamilySecurity.isVerifier(credential))
+                FamilySecurity.Invite(token, FamilySecurity.passwordVerifier(credential), "")
+            else null
+        }
+        } catch (_: Exception) { null }
+    }
+
+    fun applyPairing(ctx: Context, invite: FamilySecurity.Invite): Boolean = synchronized(pollLock) {
+        if (!FamilySecurity.validToken(invite.token) || !FamilySecurity.isVerifier(invite.passwordVerifier) ||
+            (invite.parentPublicKey.isNotEmpty() && !FamilySecurity.validPublicKey(invite.parentPublicKey)) ||
+            (isChildMode(ctx) && !isTemporarilyUnlocked(ctx))) return@synchronized false
+        setFamilyToken(ctx, invite.token)
+        // Pairing is a fresh authorization, even if the same family invite is reused.
+        grantTemporaryUnlock(ctx, 0)
+        storeChildVerifier(ctx, invite.passwordVerifier)
+        prefs(ctx).edit().putString("parent_command_public_key", invite.parentPublicKey)
+            .remove("synced_15m_code").remove("synced_15m_exp").putBoolean("sent_setup_ok", false).apply()
+        setRole(ctx, "child"); scheduleNextRandomHeartbeat(ctx)
+        true
+    }
+
+    fun hasSecureParentCommands(ctx: Context): Boolean = FamilySecurity.validPublicKey(prefs(ctx).getString("parent_command_public_key", "") ?: "")
 
     // ================= 5. AUTO-DETECTED CHILD IG HANDLE + TRUSTED FRIENDS + FLAGGED OFFENDERS =================
     fun getChildSelfHandle(ctx: Context): String {
@@ -727,14 +746,10 @@ object GuardEngine {
         val clean = handle.trim().lowercase(Locale.US).removePrefix("@")
         if (clean.isEmpty() || clean in RESERVED_UI_HEADERS || !VALID_IG_HANDLE_REGEX.matches(clean)) return
         prefs(ctx).edit().putString("child_self_handle", clean).apply()
-        cachedTrustedRaw = ""
-        cachedOffendersRaw = ""
         val cleanedTrusted = getTrustedHandles(ctx).filter { it != clean }
         prefs(ctx).edit().putString("trusted_csv", cleanedTrusted.joinToString(",")).apply()
         val cleanedOffenders = getFlaggedOffenders(ctx).filter { it != clean }
         prefs(ctx).edit().putString("flagged_offenders_csv", cleanedOffenders.joinToString(",")).apply()
-        cachedTrustedRaw = ""
-        cachedOffendersRaw = ""
     }
 
     // Issue #1 Fix: Child phone automatically detects its own IG handle and syncs it to Parent phone!
@@ -766,19 +781,13 @@ object GuardEngine {
         return norm == selfHandle || norm.contains("(@$selfHandle)")
     }
 
-    fun getFlaggedOffenders(ctx: Context): Set<String> {
-        val selfHandle = getChildSelfHandle(ctx)
-        val raw = prefs(ctx).getString("flagged_offenders_csv", "") ?: ""
-        val key = "$selfHandle|$raw"
-        if (key == cachedOffendersRaw) return cachedOffendersSet
-        val parsed = raw.split(",")
-            .map { it.trim().lowercase(Locale.US).removePrefix("@") }
-            .filter { it.isNotEmpty() && it != selfHandle }
-            .toSet()
-        cachedOffendersRaw = key
-        cachedOffendersSet = parsed
-        return parsed
+    private fun storedHandles(ctx: Context, key: String): Set<String> {
+        val self = getChildSelfHandle(ctx)
+        return (prefs(ctx).getString(key, "") ?: "").split(",")
+            .map { it.trim().lowercase(Locale.US).removePrefix("@") }.filter { it.isNotEmpty() && it != self }.toSet()
     }
+
+    fun getFlaggedOffenders(ctx: Context): Set<String> = storedHandles(ctx, "flagged_offenders_csv")
 
     fun markSenderAsFlaggedOffender(ctx: Context, sender: String) {
         val clean = sender.trim().lowercase(Locale.US).removePrefix("@")
@@ -786,7 +795,6 @@ object GuardEngine {
         val next = getFlaggedOffenders(ctx).toMutableSet()
         if (next.add(clean)) {
             prefs(ctx).edit().putString("flagged_offenders_csv", next.joinToString(",")).apply()
-            cachedOffendersRaw = ""
         }
     }
 
@@ -801,19 +809,7 @@ object GuardEngine {
         return false
     }
 
-    fun getTrustedHandles(ctx: Context): Set<String> {
-        val selfHandle = getChildSelfHandle(ctx)
-        val raw = prefs(ctx).getString("trusted_csv", "") ?: ""
-        val key = "$selfHandle|$raw"
-        if (key == cachedTrustedRaw) return cachedTrustedSet
-        val parsed = raw.split(",")
-            .map { it.trim().lowercase(Locale.US).removePrefix("@") }
-            .filter { it.isNotEmpty() && it != selfHandle }
-            .toSet()
-        cachedTrustedRaw = key
-        cachedTrustedSet = parsed
-        return parsed
-    }
+    fun getTrustedHandles(ctx: Context): Set<String> = storedHandles(ctx, "trusted_csv")
 
     fun setTrustedHandles(ctx: Context, handles: Collection<String>) {
         val selfHandle = getChildSelfHandle(ctx)
@@ -822,10 +818,8 @@ object GuardEngine {
             .distinct()
             .sorted()
         prefs(ctx).edit().putString("trusted_csv", clean.joinToString(",")).apply()
-        cachedTrustedRaw = ""
         val remainingOffenders = getFlaggedOffenders(ctx) - clean.toSet()
         prefs(ctx).edit().putString("flagged_offenders_csv", remainingOffenders.joinToString(",")).apply()
-        cachedOffendersRaw = ""
     }
 
     @Synchronized
@@ -855,24 +849,8 @@ object GuardEngine {
         return true
     }
 
-    fun isTrustedSender(ctx: Context, rawTitle: String, rawText: String): Boolean {
-        val trustedSet = getTrustedHandles(ctx)
-        val titleNorm = rawTitle.trim().lowercase(Locale.US).removePrefix("@")
-        if (titleNorm.isEmpty() || titleNorm == "instagram") return false
-        if (titleNorm in trustedSet) return true
-        val bodyPrefix = rawText.substringBefore(":", "").trim().lowercase(Locale.US).removePrefix("@")
-        if (bodyPrefix.isNotEmpty() && bodyPrefix in trustedSet) return true
-
-        for (trusted in trustedSet) {
-            if (titleNorm.contains("(@$trusted)") ||
-                titleNorm.startsWith("$trusted ") ||
-                titleNorm.endsWith(" $trusted")
-            ) {
-                return true
-            }
-        }
-        return false
-    }
+    fun isTrustedSender(ctx: Context, rawTitle: String, @Suppress("UNUSED_PARAMETER") rawText: String): Boolean =
+        rawTitle.trim().lowercase(Locale.US).removePrefix("@") in getTrustedHandles(ctx)
 
     fun isNonMessageUiString(raw: String): Boolean {
         val clean = raw.trim()
@@ -965,10 +943,16 @@ object GuardEngine {
         plainJson: String,
         onComplete: ((Boolean, String) -> Unit)?
     ) {
+        val payload = JSONObject(plainJson)
+        val wireJson = if (payload.optString("type") in FamilySecurity.controlTypes) {
+            payload.put("scope", topic).put("command_id", UUID.randomUUID().toString())
+            FamilySecurity.signCommand(payload, parentIdentity(ctx).privateKey).toString()
+        } else plainJson
         thread {
+            var conn: HttpsURLConnection? = null
             try {
-                val encryptedBody = encryptPayload(token, plainJson)
-                val conn = (URL("https://ntfy.sh/$topic").openConnection() as HttpsURLConnection).apply {
+                val encryptedBody = encryptPayload(token, wireJson)
+                conn = (URL("https://ntfy.sh/$topic").openConnection() as HttpsURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 8000
                     readTimeout = 8000
@@ -994,6 +978,8 @@ object GuardEngine {
                 cpLastHttpStatus = "${nowTimeStr()} -> $err"
                 addCheckpointLog(ctx, "CP3-ERR", err)
                 onComplete?.invoke(false, err)
+            } finally {
+                try { conn?.disconnect() } catch (_: Exception) {}
             }
         }
     }
@@ -1052,7 +1038,14 @@ object GuardEngine {
 
         val innerStr = outer.optString("message")
         val token = getOrCreateFamilyToken(ctx)
-        val inner = decryptPayload(token, innerStr) ?: return
+        val decrypted = decryptPayload(token, innerStr) ?: return
+        val inner = if (decrypted.has("payload")) {
+            if (role != "child") return
+            FamilySecurity.readCommand(decrypted, prefs(ctx).getString("parent_command_public_key", "") ?: "", getChannelTopicForToken(token), System.currentTimeMillis()) ?: return
+        } else {
+            if (decrypted.optString("type") in FamilySecurity.controlTypes) return
+            decrypted
+        }
         val msgType = inner.optString("type")
         val msgTs = inner.optLong("ts_ms", 0L)
 
@@ -1065,10 +1058,14 @@ object GuardEngine {
         }
         prefs(ctx).edit().putStringSet("seen_msg_ids", persistedSet).apply()
 
-        if (msgType in setOf("sync_trusted", "key_rotated", "remote_reset_child") && msgTs > 0L) {
-            val lastControlTs = prefs(ctx).getLong("last_control_ts_ms", 0L)
-            if (msgTs < lastControlTs) return
-            prefs(ctx).edit().putLong("last_control_ts_ms", msgTs).apply()
+        if (msgType in FamilySecurity.controlTypes) {
+            val state = try { JSONObject(prefs(ctx).getString("control_state_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+            val ids = state.optJSONObject("ids") ?: JSONObject().also { state.put("ids", it) }
+            val id = inner.getString("command_id")
+            if (ids.has(id) || msgTs < state.optLong(msgType)) return
+            for (key in ids.keys().asSequence().toList()) if (ids.optLong(key) < System.currentTimeMillis() - 24 * 60 * 60_000L) ids.remove(key)
+            ids.put(id, msgTs); state.put(msgType, msgTs)
+            prefs(ctx).edit().putString("control_state_json", state.toString()).apply()
         }
 
         when (msgType) {
@@ -1105,14 +1102,13 @@ object GuardEngine {
                 val newPin = inner.optString("new_pin")
                 if (newToken.isNotEmpty()) {
                     setFamilyToken(ctx, newToken, preserveFamilyHistory = true)
-                    if (newPin.length >= 8) setPin(ctx, newPin)
+                    storeChildVerifier(ctx, newPin)
                     addCheckpointLog(ctx, "CP4-KEY", "Auto-updated to new Parent Family Key ✅")
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
             }
             "remote_reset_child" -> {
-                val freshEnough = msgTs == 0L || (System.currentTimeMillis() - msgTs) <= 20 * 60_000L
-                if (role == "child" && freshEnough) {
+                if (role == "child") {
                     grantTemporaryUnlock(ctx, 10 * 60_000L)
                     setRole(ctx, "unconfigured")
                     addCheckpointLog(ctx, "CP4-RESET", "Parent remotely unlocked & reset Child Phone")
@@ -1127,9 +1123,11 @@ object GuardEngine {
                     }
                     if (!recordParentAlert(ctx, inner, "relay:$msgId")) return
                     val reason = inner.optString("reason")
-                    if (reason == "heartbeat_ok") {
-                        recordChildHeartbeatOnParent(ctx, inner.optString("text"))
+                    if (reason in setOf("heartbeat_ok", "pairing_verified", "tamper_attempt")) {
+                        recordChildHeartbeatOnParent(ctx, inner.optString("text"), msgTs)
                     }
+                    val pending = try { JSONObject(prefs(ctx).getString("pending_rotation_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+                    if (token == pending.optString("new_token")) prefs(ctx).edit().remove("pending_rotation_json").apply()
                     addCheckpointLog(ctx, "CP4-RECV", "Decrypted $reason from ${inner.optString("sender")}")
                     onNewAlertForParent?.invoke(inner)
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
@@ -1338,32 +1336,6 @@ class IgNotificationListener : NotificationListenerService() {
 
         if (resolvedMessage.isEmpty()) {
             resolvedMessage = fallbackBody
-        }
-
-        if (resolvedMessage.contains(": ")) {
-            val possibleSender = resolvedMessage.substringBefore(": ").trim()
-            val possibleMsg = resolvedMessage.substringAfter(": ").trim()
-            if (possibleSender.isNotEmpty() && !possibleSender.contains(" ") && possibleMsg.isNotEmpty()) {
-                // Issue #2 Fix: If the prefix before ": " is the child's own handle, ignore it immediately!
-                if (GuardEngine.isSelfSenderLabel(this, possibleSender) ||
-                    (selfDisplayName.isNotEmpty() && possibleSender.equals(selfDisplayName, ignoreCase = true))
-                ) {
-                    return
-                }
-                resolvedSender = possibleSender
-                resolvedMessage = possibleMsg
-            }
-        } else if (fallbackBody.contains(": ")) {
-            val possibleSender = fallbackBody.substringBefore(": ").trim()
-            val possibleMsg = fallbackBody.substringAfter(": ").trim()
-            if (possibleSender.isNotEmpty() && !possibleSender.contains(" ") && possibleMsg == resolvedMessage) {
-                if (GuardEngine.isSelfSenderLabel(this, possibleSender) ||
-                    (selfDisplayName.isNotEmpty() && possibleSender.equals(selfDisplayName, ignoreCase = true))
-                ) {
-                    return
-                }
-                resolvedSender = possibleSender
-            }
         }
 
         if (resolvedSender.isEmpty()) {
@@ -1808,19 +1780,7 @@ class ParentAlertService : Service() {
             thread {
                 while (running && GuardEngine.isParentMode(applicationContext)) {
                     val myGen = streamGeneration.get()
-                    if (GuardEngine.shouldFireHeartbeatMissingAlert(applicationContext)) {
-                        val missingAlert = JSONObject().apply {
-                            put("reason", "tamper_attempt")
-                            put("ts_ms", System.currentTimeMillis())
-                            put("sender", "🚨 子女手機離線/解除安裝警告")
-                            put("text", "已超過 100 分鐘未收到子女手機嘅定時心跳回報！子女可能已熄機、斷網或解除安裝 IG Guard。")
-                            put("time", GuardEngine.nowDateTimeStr())
-                        }
-                        if (GuardEngine.recordParentAlert(applicationContext, missingAlert, "offline:${missingAlert.optLong("ts_ms")}")) {
-                            fireNativeParentNotification(missingAlert)
-                            sendBroadcast(Intent(GuardEngine.ACTION_UI_REFRESH).setPackage(packageName))
-                        }
-                    }
+                    checkHeartbeatMissing()
 
                     val relaySession = GuardEngine.captureRelaySession(applicationContext)
                     val topic = GuardEngine.getChannelTopicForToken(relaySession.second)
@@ -1844,14 +1804,7 @@ class ParentAlertService : Service() {
                                     GuardEngine.isParentMode(applicationContext) &&
                                     reader.readLine().also { line = it } != null
                                 ) {
-                                    GuardEngine.processIncomingRelayLine(
-                                        applicationContext,
-                                        line!!,
-                                        "parent",
-                                        { alert -> fireNativeParentNotification(alert) },
-                                        relaySession.second,
-                                        relaySession.third
-                                    )
+                                    handleStreamLine(line!!, relaySession)
                                 }
                             }
                         } else {
@@ -1876,6 +1829,28 @@ class ParentAlertService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    private fun handleStreamLine(line: String, session: Triple<String, String, Int>) {
+        if (GuardEngine.captureRelaySession(applicationContext) != session) return
+        GuardEngine.processIncomingRelayLine(applicationContext, line, "parent", { fireNativeParentNotification(it) }, session.second, session.third)
+        checkHeartbeatMissing()
+    }
+    private fun checkHeartbeatMissing() {
+        if (!GuardEngine.isParentMode(applicationContext)) return
+        if (GuardEngine.shouldFireHeartbeatMissingAlert(applicationContext)) {
+            val missingAlert = JSONObject().apply {
+                put("reason", "tamper_attempt")
+                put("ts_ms", System.currentTimeMillis())
+                put("sender", "🚨 子女手機離線/解除安裝警告")
+                put("text", "已超過 100 分鐘未收到子女手機嘅定時心跳回報！子女可能已熄機、斷網或解除安裝 IG Guard。")
+                put("time", GuardEngine.nowDateTimeStr())
+            }
+            if (GuardEngine.recordParentAlert(applicationContext, missingAlert, "offline:${missingAlert.optLong("ts_ms")}")) {
+                fireNativeParentNotification(missingAlert)
+                sendBroadcast(Intent(GuardEngine.ACTION_UI_REFRESH).setPackage(packageName))
+            }
+        }
     }
 
     private fun ensureChannels() {
@@ -2061,7 +2036,9 @@ class MainActivity : Activity() {
         chartMode = savedInstanceState?.getString("chart_mode") ?: "trend"
         alertFilter = savedInstanceState?.getString("alert_filter") ?: "all"
         displayed15MinCode = savedInstanceState?.getString("unlock_code") ?: ""
-        savedInstanceState?.getBundle("drafts")?.let { b -> for (key in b.keySet()) inputDrafts[key] = b.getString(key) ?: "" }
+        if (savedInstanceState?.getString("draft_family") == GuardEngine.getChannelTopic(this) && renderedRole == GuardEngine.getRole(this)) {
+            savedInstanceState.getBundle("drafts")?.let { b -> for (key in b.keySet()) inputDrafts[key] = b.getString(key) ?: "" }
+        }
         screenShell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fixedHeader = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(4), dp(16), 0) }
         contentFrame = FrameLayout(this)
@@ -2079,6 +2056,7 @@ class MainActivity : Activity() {
         outState.putString("section", section); outState.putString("rendered_role", renderedRole)
         outState.putString("entry_role", selectedEntryRole); outState.putString("chart_mode", chartMode)
         outState.putString("alert_filter", alertFilter); outState.putString("unlock_code", displayed15MinCode)
+        outState.putString("draft_family", GuardEngine.getChannelTopic(this))
         outState.putBundle("drafts", Bundle().apply { for ((key, value) in inputDrafts) putString(key, value) })
         super.onSaveInstanceState(outState)
     }
@@ -2092,22 +2070,44 @@ class MainActivity : Activity() {
         }
     }
     override fun onNewIntent(intent: Intent?) { super.onNewIntent(intent); handleDeepLinkIntent(intent) }
-    private fun handleDeepLinkIntent(intent: Intent?) {
-        val parsed = GuardEngine.parsePairingString(intent?.dataString ?: return) ?: return
+    private fun handleDeepLinkIntent(incoming: Intent?) {
+        val data = incoming?.data ?: return
+        setIntent(Intent(incoming).apply { this.data = null })
+        if (incoming.action != Intent.ACTION_VIEW || !data.scheme.equals("igguard", true) || !data.host.equals("pair", true)) return
+        val parsed = GuardEngine.parsePairingString(data.toString()) ?: return
         if (GuardEngine.isChildMode(this) && !GuardEngine.isTemporarilyUnlocked(this)) {
-            GuardEngine.sendAlertFromChild(this, "tamper_attempt", "Deep-Link Guard", "Blocked unauthorized attempt to overwrite family pairing via igguard:// link while locked.", bypassDedupe = true)
+            GuardEngine.sendAlertFromChild(this, "tamper_attempt", "Deep-Link Guard", "Blocked unauthorized attempt to replace locked family pairing.")
             Toast.makeText(this, "子女保護鎖定中，請先由家長解鎖。", Toast.LENGTH_LONG).show(); return
         }
+        confirmPairing(parsed)
+    }
+    private fun confirmPairing(parsed: FamilySecurity.Invite, onAccepted: () -> Unit = {}) {
         dismissUiDialogs()
-        GuardEngine.setFamilyToken(this, parsed.first); GuardEngine.setPin(this, parsed.second)
-        GuardEngine.setRole(this, "child"); GuardEngine.markInitialSetupConfirmationSent(this, false)
-        GuardEngine.scheduleNextRandomHeartbeat(this); section = "permissions"
+        val t = currentTheme()
+        showSheet("確認家庭配對") { _ ->
+            addView(label("只接受由家長傳送的邀請。確認後，此手機會切換為子女模式，並更換目前的家庭配對。請在兩部手機核對安全圖案。", 14f, t.textSecondary, bottomPad = 18))
+            if (parsed.parentPublicKey.isNotEmpty()) {
+                addView(label(FamilySecurity.safetyCode(parsed.token, parsed.passwordVerifier, parsed.parentPublicKey), 19f, t.textPrimary, true, bottomPad = 12))
+                addView(label("請由家長在家長手機查看並核對相同安全代碼，再確認配對。", 14f, t.textSecondary, bottomPad = 18))
+            }
+            addView(actionButton("確認配對並切換為子女手機", t.btnPrimaryBg, t.btnPrimaryText) { if (acceptPairing(parsed)) onAccepted() })
+        }
+    }
+    private fun acceptPairing(invite: FamilySecurity.Invite): Boolean {
+        if (!GuardEngine.applyPairing(this, invite)) {
+            Toast.makeText(this, "保護已上鎖，請先由家長解鎖再配對。", Toast.LENGTH_LONG).show(); return false
+        }
+        dismissUiDialogs(); section = "permissions"
+        if (activityVisible) syncRoleServices()
+        renderUi(animate = true)
         Toast.makeText(this, "已完成家庭配對。", Toast.LENGTH_LONG).show()
+        return true
     }
     override fun onResume() {
         super.onResume(); activityVisible = true
         val filter = IntentFilter(GuardEngine.ACTION_UI_REFRESH)
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(refreshReceiver, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(refreshReceiver, filter)
+        // The flag protects Android 13+; the signature permission protects earlier releases.
+        registerReceiver(refreshReceiver, filter, "$packageName.INTERNAL", null, Context.RECEIVER_NOT_EXPORTED)
         if (GuardEngine.isChildMode(this) && GuardEngine.isNotificationListenerEnabledStatic(this)) {
             try { NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java)) } catch (_: Exception) {}
         }
@@ -2156,7 +2156,7 @@ class MainActivity : Activity() {
             addView(actionButton("驗證並繼續", t.btnPrimaryBg, t.btnPrimaryText) {
                 val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
                 if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒，或由家長手機遠端救援。"; return@actionButton }
-                val ok = GuardEngine.constantTimeEquals(password.text.toString().trim(), GuardEngine.getPin(this@MainActivity))
+                val ok = GuardEngine.verifyParentPassword(this@MainActivity, password.text.toString())
                 GuardEngine.recordPasswordAttempt(this@MainActivity, ok)
                 if (ok) { inputDrafts.remove("家長主密碼"); dialog.dismiss(); onSuccess() }
                 else { error.text = "家長主密碼不正確。"; password.error = "請重新輸入" }
@@ -2321,7 +2321,7 @@ class MainActivity : Activity() {
         rootContainer.addView(actionButton("建立家庭", t.btnPrimaryBg, t.btnPrimaryText) {
             val candidate = password.text.toString().trim()
             if (!GuardEngine.isStrongPasswordValid(candidate)) { error.text = "請輸入最少 8 位字元，並同時包含字母及數字。"; password.error = "密碼長度或格式不正確"; return@actionButton }
-            GuardEngine.setPin(this, candidate); GuardEngine.getOrCreateFamilyToken(this); GuardEngine.setRole(this, "parent")
+            GuardEngine.setFamilyToken(this, UUID.randomUUID().toString()); GuardEngine.setPin(this, candidate); GuardEngine.setRole(this, "parent")
             section = "overview"; syncRoleServices(); renderUi(animate = true)
         })
         rootContainer.addView(label("主密碼用於保護角色切換及解鎖設定，請妥善保管。", 13f, t.textSecondary, topPad = 16))
@@ -2334,16 +2334,14 @@ class MainActivity : Activity() {
         fun pair(raw: String) {
             val parsed = GuardEngine.parsePairingString(raw)
             if (parsed == null) { error.text = "未找到有效邀請，請貼上家長發出的完整配對訊息。"; return }
-            GuardEngine.setFamilyToken(this, parsed.first); GuardEngine.setPin(this, parsed.second); GuardEngine.setRole(this, "child")
-            GuardEngine.markInitialSetupConfirmationSent(this, false); GuardEngine.scheduleNextRandomHeartbeat(this)
-            section = "permissions"; syncRoleServices(); renderUi(animate = true); openDirectNotificationToggle()
+            confirmPairing(parsed) { openDirectNotificationToggle() }
         }
         rootContainer.addView(actionButton("連結家庭", t.btnPrimaryBg, t.btnPrimaryText) { pair(invite.text.toString()) })
         rootContainer.addView(actionButton("從剪貼簿貼上並配對", t.btnSecondaryBg, t.btnSecondaryText) {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             pair(cm?.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: "")
         })
-        rootContainer.addView(label("配對後，請與家長核對兩部手機上的 4 個安全圖案。", 13f, t.textSecondary, topPad = 18))
+        rootContainer.addView(label("配對前，請與家長核對兩部手機上的完整安全代碼及 4 個安全圖案。", 13f, t.textSecondary, topPad = 18))
     }
 
     private fun renderParentOverview(t: ThemeColors) {
@@ -2447,7 +2445,7 @@ class MainActivity : Activity() {
             showSheet("給孩子，15 分鐘的空間。") { dialog ->
                 addView(label("把這個臨時碼告訴子女。", 14f, t.textSecondary))
                 addView(label(displayed15MinCode, 32f, t.textPrimary, true, topPad = 22, bottomPad = 22).apply { gravity = Gravity.CENTER; setTextIsSelectable(true) })
-                addView(label("解鎖碼已透過現有加密通道同步，有效時間依既有規則處理。", 13f, t.textSecondary, bottomPad = 18))
+                addView(label("正在透過加密通道傳送。子女手機收到後才能使用；有效期為產生後 15 分鐘。", 13f, t.textSecondary, bottomPad = 18))
                 addView(actionButton("複製解鎖碼", t.btnPrimaryBg, t.btnPrimaryText) { copyText("IGGuardUnlock", displayed15MinCode); dialog.dismiss() })
             }
         })
@@ -2475,6 +2473,8 @@ class MainActivity : Activity() {
         showSheet("讓家人，加入這份守護。") { dialog ->
             addView(label("將家庭專屬邀請傳送到子女手機，並核對兩部手機上的安全圖案。", 14f, t.textSecondary, bottomPad = 20))
             addView(label(GuardEngine.getSafetyEmojis(this@MainActivity), 30f, t.textPrimary, bottomPad = 22).apply { gravity = Gravity.CENTER })
+            addView(label("安全代碼：${GuardEngine.getSafetyCode(this@MainActivity)}", 16f, t.textPrimary, true, bottomPad = 12))
+            addView(label("請在家長手機查看並與子女手機核對完整安全代碼；代碼同時驗證家長金鑰及密碼設定。", 13f, t.textSecondary, bottomPad = 18))
             addView(actionButton("傳送配對邀請", t.btnPrimaryBg, t.btnPrimaryText) {
                 val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, GuardEngine.buildPairingInviteText(this@MainActivity)) }
                 startActivity(Intent.createChooser(intent, "傳送配對邀請"))
@@ -2559,13 +2559,14 @@ class MainActivity : Activity() {
             showSheet("裝置及家庭詳情") { dialog ->
                 val handle = GuardEngine.getChildSelfHandle(this@MainActivity)
                 val offenders = GuardEngine.getFlaggedOffenders(this@MainActivity)
-                addView(label("家庭核對圖案：${GuardEngine.getSafetyEmojis(this@MainActivity)}\n\nInstagram 帳號：${if (handle.isEmpty()) "等待自動識別" else "@$handle"}\n\n高危帳號：${if (offenders.isEmpty()) "暫無記錄" else offenders.joinToString(", ") { "@$it" }}", 14f, t.textPrimary, bottomPad = 20))
+                addView(label("家庭核對圖案：${GuardEngine.getSafetyEmojis(this@MainActivity)}\n安全代碼：${GuardEngine.getSafetyCode(this@MainActivity).ifEmpty { "需要更新家庭配對" }}\n\nInstagram 帳號：${if (handle.isEmpty()) "等待自動識別" else "@$handle"}\n\n高危帳號：${if (offenders.isEmpty()) "暫無記錄" else offenders.joinToString(", ") { "@$it" }}", 14f, t.textPrimary, bottomPad = 20))
                 addView(actionButton("關閉", t.btnPrimaryBg, t.btnPrimaryText) { dialog.dismiss() })
             }
         })
     }
     private fun renderChildPermissions(t: ThemeColors) {
         heading("每個設定，都說清楚。", "了解每項權限的用途，再前往 Android 設定確認。", t)
+        if (!GuardEngine.hasSecureParentCommands(this)) rootContainer.addView(label("需要更新家庭配對：現有監察仍會運作。新版家長指令與臨時碼需要家長傳送新邀請；請先更新兩部手機，並以新主密碼重新建立家庭。", 14f, t.warmHoney, bottomPad = 20))
         val notification = GuardEngine.isNotificationListenerEnabledStatic(this)
         val screen = GuardEngine.isAccessibilityEnabledStatic(this)
         rootContainer.addView(row("bell-simple", "Instagram 通知", if (notification) { if (GuardEngine.cpNotifConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取 IG 通知並加密傳送警報。", t) { openDirectNotificationToggle() })
@@ -2596,7 +2597,7 @@ class MainActivity : Activity() {
                     GuardEngine.sendAlertFromChild(this, "unlock_used", "@${GuardEngine.getChildSelfHandle(this).ifEmpty { "child" }}", "子女手機已使用 6 位臨時解鎖碼解鎖 15 分鐘", bypassDedupe = true)
                     renderUi()
                 }
-                GuardEngine.constantTimeEquals(entered, GuardEngine.getPin(this)) -> {
+                GuardEngine.verifyParentPassword(this, entered) -> {
                     GuardEngine.recordPasswordAttempt(this, true); GuardEngine.grantTemporaryUnlock(this, 3 * 60_000L)
                     input.setText(""); renderUi()
                 }
@@ -2650,14 +2651,12 @@ class MainActivity : Activity() {
                     alert().setTitle("家長主密碼").setMessage(GuardEngine.getPin(this@MainActivity)).setPositiveButton("關閉", null).show()
                 })
                 addView(actionButton("更新家庭金鑰並同步子女手機", t.btnSecondaryBg, t.btnSecondaryText) {
-                    GuardEngine.rotateKeyAndNotifyChild(this@MainActivity, resetChildToUnconfigured = false); syncRoleServices()
-                    Toast.makeText(this@MainActivity, "已更新金鑰並發送同步指令。", Toast.LENGTH_LONG).show(); dialog.dismiss(); renderUi()
+                    sendParentCommand(resetChild = false); dialog.dismiss()
                 })
                 addView(actionButton("遠端解除子女保護並重設身份", t.btnSecondaryBg, t.btnSecondaryText) {
                     alert().setTitle("遠端重設子女手機？").setMessage("發送加密救援指令，暫時解除子女手機保護並返回身份設定。")
                         .setNegativeButton("取消", null).setPositiveButton("發送救援") { _, _ ->
-                            GuardEngine.rotateKeyAndNotifyChild(this@MainActivity, resetChildToUnconfigured = true)
-                            Toast.makeText(this@MainActivity, "已發送遠端救援指令。", Toast.LENGTH_LONG).show(); dialog.dismiss()
+                            sendParentCommand(resetChild = true); dialog.dismiss()
                         }.show()
                 })
             }
@@ -2668,6 +2667,16 @@ class MainActivity : Activity() {
             } else navigateTo("role")
         })
         if (requirePin) rootContainer.addView(label("忘記家長主密碼時，可由家長手機使用遠端救援。", 13f, t.textSecondary, topPad = 16))
+    }
+    private fun sendParentCommand(resetChild: Boolean) {
+        Toast.makeText(this, "正在傳送已簽署的家長指令。", Toast.LENGTH_SHORT).show()
+        GuardEngine.rotateKeyAndNotifyChild(this, resetChild) { success ->
+            uiHandler.post {
+                if (!activityVisible || !GuardEngine.isParentMode(this)) return@post
+                Toast.makeText(this, if (success) "指令已發送，請等待子女手機確認。" else "未能發送，保留目前配對。請查看診斷後重試。", Toast.LENGTH_LONG).show()
+                renderUi()
+            }
+        }
     }
     private var activeSheet: Dialog? = null
     private val uiDialogs = mutableSetOf<Dialog>()

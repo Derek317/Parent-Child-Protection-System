@@ -72,6 +72,8 @@ class NativeDesignTest {
         val pin=Base64.encodeToString(GuardEngine.generateRandomStrongPassword().toByteArray(),Base64.NO_WRAP or Base64.URL_SAFE)
         val intent=Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?token=$token&pw=$pin"))
         MainActivity::class.java.getDeclaredMethod("onNewIntent",Intent::class.java).apply{isAccessible=true}.invoke(a,intent)
+        val confirmation=ShadowDialog.getLatestDialog()
+        all(confirmation.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="確認配對並切換為子女手機"}.performClick()
         MainActivity::class.java.getDeclaredMethod("renderUi",Boolean::class.javaPrimitiveType).apply{isAccessible=true}.invoke(a,false)
     }
     private fun openParentKeySheet(a:MainActivity):android.app.Dialog {

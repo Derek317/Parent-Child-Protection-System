@@ -29,7 +29,7 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Assemble Android project structure and persistent signing key
+      - name: Assemble Android project structure
         run: |
           set -euo pipefail
 
@@ -37,6 +37,7 @@ jobs:
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/values
           cp -R ui-res/. app/src/main/res/
+          cp FamilySecurity.kt app/src/main/java/app/family/igguard/
 
           if [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
             sed "s/^package .*/package app.family.igguard/" MainActivity.kt > app/src/main/java/app/family/igguard/MainActivity.kt
@@ -47,7 +48,6 @@ jobs:
             exit 1
           fi
 
-          echo "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" | base64 -d > app/ig_guard.keystore
 
           VER_CODE=$((100 + ${{ github.run_number }}))
 
@@ -100,21 +100,20 @@ jobs:
               }
 
               signingConfigs {
-                  persistentKey {
-                      storeFile file("ig_guard.keystore")
-                      storePassword "family2026"
-                      keyAlias "family_key"
-                      keyPassword "family2026"
+                  privateRelease {
+                      if (System.getenv('APK_KEYSTORE_PATH')) {
+                          storeFile file(System.getenv('APK_KEYSTORE_PATH'))
+                          storePassword System.getenv('APK_KEYSTORE_PASSWORD')
+                          keyAlias System.getenv('APK_KEY_ALIAS')
+                          keyPassword System.getenv('APK_KEY_PASSWORD')
+                      }
                   }
               }
 
               buildTypes {
-                  debug {
-                      signingConfig signingConfigs.persistentKey
-                  }
                   release {
                       minifyEnabled false
-                      signingConfig signingConfigs.persistentKey
+                      if (System.getenv('APK_KEYSTORE_PATH')) signingConfig signingConfigs.privateRelease
                   }
               }
 
@@ -148,12 +147,18 @@ jobs:
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <permission android:name="app.family.igguard.INTERNAL" android:protectionLevel="signature" />
+              <uses-permission android:name="app.family.igguard.INTERNAL" />
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
               <application
+                  android:allowBackup="false"
+                  android:fullBackupContent="false"
+                  android:dataExtractionRules="@xml/private_data_rules"
+                  android:usesCleartextTraffic="false"
                   android:label="@string/app_name"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
                   <meta-data android:name="isMonitoringTool" android:value="child_monitoring" />
@@ -207,7 +212,7 @@ jobs:
 
       - name: Run regression checks
         run: |
-          python3 tests/check_ui.py
+          python3 -m unittest discover -s tests -p 'check_*.py'
           mkdir -p app/src/test/java/app/family/igguard
           cp tests/*Test.kt app/src/test/java/app/family/igguard/
           cat >> app/build.gradle <<'EOF'
@@ -223,11 +228,39 @@ jobs:
           EOF
           gradle testDebugUnitTest --no-daemon
 
-      - name: Compile Signed APK
-        run: gradle assembleRelease --no-daemon
+      - name: Compile APK
+        id: package
+        env:
+          APK_KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
+          APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+          APK_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+          APK_KEY_PASSWORD: ${{ secrets.APK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          configured=0
+          for value in "$APK_KEYSTORE_BASE64" "$APK_KEYSTORE_PASSWORD" "$APK_KEY_ALIAS" "$APK_KEY_PASSWORD"; do
+            if [ -n "$value" ]; then configured=$((configured + 1)); fi
+          done
+          if [ "$configured" != 0 ] && [ "$configured" != 4 ]; then
+            echo "Configure all four APK signing secrets; partial signing configuration is rejected." >&2
+            exit 1
+          fi
+          unset APK_KEYSTORE_PATH
+          if [ "$configured" = 4 ]; then
+            umask 077
+            export APK_KEYSTORE_PATH="$(mktemp "$RUNNER_TEMP/ig-guard-key.XXXXXX")"
+            trap 'rm -f "$APK_KEYSTORE_PATH"' EXIT
+            printf '%s' "$APK_KEYSTORE_BASE64" | base64 --decode > "$APK_KEYSTORE_PATH"
+            artifact_name=ig-guard-signed-apk
+          else
+            artifact_name=ig-guard-unsigned-apk
+            echo "Signing secrets are not configured. This unsigned APK requires private signing before installation. See docs/signing.md." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          gradle assembleRelease --no-daemon
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ig-guard-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: app/build/outputs/apk/release/*.apk
