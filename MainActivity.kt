@@ -172,6 +172,8 @@ object GuardEngine {
     // State transactions only. Never hold this lock during network I/O.
     private val pollLock = Any()
     private val pollInFlight = AtomicBoolean(false)
+    private val deliveryInFlight = AtomicBoolean(false)
+    private val deliveryCallbacks = java.util.concurrent.ConcurrentHashMap<Pair<String,String>, (Boolean,String)->Unit>()
     private var relayGeneration = 0
 
     fun captureRelaySession(ctx: Context): Triple<String, String, Int> = synchronized(pollLock) {
@@ -621,7 +623,21 @@ object GuardEngine {
     fun isChildMode(ctx: Context): Boolean = getRole(ctx) == "child"
     fun isParentMode(ctx: Context): Boolean = getRole(ctx) == "parent"
 
+    private fun recoverEvidenceTransition(ctx: Context) {
+        val raw=prefs(ctx).getString("evidence_transition_json",null) ?: return
+        val transition=JSONObject(raw)
+        val old=transition.getString("old_token");val next=transition.getString("new_token")
+        require(FamilySecurity.validToken(old) && FamilySecurity.validToken(next) && old!=next)
+        FamilyEvidence(ctx).use { db ->
+            db.rotate(getChannelTopicForToken(old),getChannelTopicForToken(next)) { wire ->
+                encryptPayload(next,(decryptPayload(old,wire) ?: error("Queued ciphertext requires recovery")).toString())
+            }
+        }
+        check(prefs(ctx).edit().putString("family_uuid_token",next).remove("evidence_transition_json").commit())
+        relayGeneration++
+    }
     fun getOrCreateFamilyToken(ctx: Context): String = synchronized(pollLock) {
+        recoverEvidenceTransition(ctx)
         val existing = prefs(ctx).getString("family_uuid_token", null)
         if (!existing.isNullOrBlank()) return@synchronized existing
         val generated = UUID.randomUUID().toString()
@@ -630,11 +646,25 @@ object GuardEngine {
     }
 
     fun setFamilyToken(ctx: Context, token: String, preserveFamilyHistory: Boolean = false) = synchronized(pollLock) {
+        recoverEvidenceTransition(ctx)
         val clean = token.trim().lowercase(Locale.US)
         if (clean.isNotEmpty()) {
-            val old = prefs(ctx).getString("family_uuid_token", "")
+            val old = prefs(ctx).getString("family_uuid_token", "") ?: ""
             val editor = prefs(ctx).edit()
             if (old != clean) {
+                if (old.isNotEmpty()) FamilyEvidence(ctx).use { db ->
+                    if (isParentMode(ctx)) migrateEvidence(ctx)
+                    if (preserveFamilyHistory) {
+                        val journal=JSONObject().put("old_token",old).put("new_token",clean)
+                        check(prefs(ctx).edit().putString("evidence_transition_json",journal.toString()).commit())
+                        db.rotate(getChannelTopicForToken(old), getChannelTopicForToken(clean)) { wire ->
+                            encryptPayload(clean, (decryptPayload(old, wire) ?: error("Invalid queued ciphertext")).toString())
+                        }
+                    } else db.discardPending(getChannelTopicForToken(old))
+                }
+                val manager = ctx.getSystemService(NotificationManager::class.java)
+                manager?.activeNotifications?.filter { it.tag?.startsWith(getChannelTopicForToken(old) + ":") == true }
+                    ?.forEach { manager.cancel(it.tag, it.id) }
                 relayGeneration++
                 if (!preserveFamilyHistory) {
                     for (key in listOf("control_state_json", "last_control_ts_ms", "pending_rotation_json", "synced_15m_code", "synced_15m_exp", "unlock_until_ms",
@@ -647,7 +677,7 @@ object GuardEngine {
                 }
             }
             // Token and family-scoped history change in the same state transaction.
-            editor.putString("family_uuid_token", clean).apply()
+            check(editor.putString("family_uuid_token", clean).remove("evidence_transition_json").commit())
         }
     }
 
@@ -890,8 +920,8 @@ object GuardEngine {
         fromNotification: Boolean = false,
         onComplete: ((Boolean, String) -> Unit)? = null
     ) {
-        val cleanSender = sender.trim().ifEmpty { "unknown" }.take(80)
-        val cleanText = text.trim().take(280)
+        val cleanSender = sender.trim().ifEmpty { "unknown" }
+        val cleanText = text
         val dedupeKey = "${reason.lowercase(Locale.US)}|${cleanSender.lowercase(Locale.US).removePrefix("@")}|${cleanText.lowercase(Locale.US)}"
         val windowMs = if (fromNotification) NOTIF_BURST_DEDUPE_MS else SCREEN_DEDUPE_MS
 
@@ -901,17 +931,19 @@ object GuardEngine {
                 bypassDedupe = bypassDedupe || reason == "test_alert" || reason == "heartbeat_ok"
             )
         ) {
-            addCheckpointLog(ctx, "CP2-DEDUPE", "Skipped duplicate: @$cleanSender (${cleanText.take(30)})")
+            addCheckpointLog(ctx, "CP2-DEDUPE", "Skipped duplicate alert")
             onComplete?.invoke(false, "Duplicate suppressed")
             return
         }
 
-        addCheckpointLog(ctx, "CP2-MATCH", "[$reason] @$cleanSender: ${cleanText.take(40)}")
+        addCheckpointLog(ctx, "CP2-MATCH", "[$reason] Captured alert; message content omitted from diagnostics")
 
         val token = getOrCreateFamilyToken(ctx)
         val topic = getChannelTopicForToken(token)
         val plain = JSONObject().apply {
             put("type", "alert")
+            put("event_id", UUID.randomUUID().toString())
+            put("capture_source", if (fromNotification) "notification" else "app_or_visible_screen")
             put("reason", reason)
             put("sender", cleanSender)
             put("text", cleanText)
@@ -944,6 +976,30 @@ object GuardEngine {
         onComplete: ((Boolean, String) -> Unit)?
     ) {
         val payload = JSONObject(plainJson)
+        if (payload.optString("type") == "alert") {
+            try {
+                val receiptRequested = hasSecureParentCommands(ctx)
+                payload.put("receipt_requested",receiptRequested)
+                val frames = AlertFrames.split(payload)
+                val queuedSession = captureRelaySession(ctx)
+                val wires = frames.mapIndexed { index,frame -> "${payload.getString("event_id")}:$index" to encryptPayload(token,frame.toString()) }
+                val queued=synchronized(pollLock) {
+                    if (!isChildMode(ctx) || getOrCreateFamilyToken(ctx) != token) false
+                    else { FamilyEvidence(ctx).use { it.enqueueBatch(topic,wires,waitForReceipt=receiptRequested) };true }
+                }
+                if(!queued){completeAlertCallback(onComplete,false,"家庭配對已變更，原傳送已停止");return}
+                if(onComplete!=null)deliveryCallbacks[topic to payload.getString("event_id")] = { success,message ->
+                    val same=captureRelaySession(ctx)==queuedSession
+                    completeAlertCallback(onComplete,same && success,if(same)message else "家庭配對已變更，原傳送已停止")
+                }
+                cpLastHttpStatus = "已加密儲存，等待中繼站接收"
+                retryPendingAlerts(ctx)
+            } catch (e: Exception) {
+                cpLastHttpStatus = "未能儲存或傳送 · ${e.javaClass.simpleName}"
+                completeAlertCallback(onComplete,false,cpLastHttpStatus)
+            }
+            return
+        }
         val wireJson = if (payload.optString("type") in FamilySecurity.controlTypes) {
             payload.put("scope", topic).put("command_id", UUID.randomUUID().toString())
             FamilySecurity.signCommand(payload, parentIdentity(ctx).privateKey).toString()
@@ -984,7 +1040,73 @@ object GuardEngine {
         }
     }
 
-    fun pollChannelOnce(ctx: Context, since: String = "30m", onNewAlertForParent: ((JSONObject) -> Unit)? = null) {
+    fun pendingDeliveryCount(ctx: Context): Int = FamilyEvidence(ctx).use { it.pendingCount(getChannelTopic(ctx)) }
+
+    private fun completeAlertCallback(callback: ((Boolean,String)->Unit)?,success: Boolean,message: String) {
+        try { callback?.invoke(success,message) } catch (_: Exception) {}
+    }
+    private fun finishDeliveryCallbacks(ctx: Context,session: Triple<String,String,Int>) {
+        val scope=getChannelTopicForToken(session.second)
+        for((key,callback) in deliveryCallbacks.entries.toList()) {
+            if(key.first!=scope)continue
+            val active=captureRelaySession(ctx)==session
+            var accepted=false;var due=false
+            try { FamilyEvidence(ctx).use { db -> accepted=db.unacceptedEventCount(scope,key.second)==0;due=db.eventDue(scope,key.second,System.currentTimeMillis()) } }
+            catch (_: Exception) {}
+            if(!active || accepted || !due) {
+                if(deliveryCallbacks.remove(key,callback))completeAlertCallback(callback,active && accepted,
+                    if(!active)"家庭配對已變更，原傳送已停止" else if(accepted)cpLastHttpStatus else "未送達：已加密保留，稍後重試")
+            }
+        }
+    }
+    fun retryPendingAlerts(ctx: Context, force: Boolean = false) {
+        if (!isChildMode(ctx)) return
+        if (force) FamilyEvidence(ctx).use { it.retryNow(getChannelTopic(ctx)) }
+        if (!deliveryInFlight.compareAndSet(false, true)) return
+        val app = ctx.applicationContext
+        val session = captureRelaySession(app)
+        thread {
+            try {
+                deliveryLoop@ while (captureRelaySession(app) == session && isChildMode(app)) {
+                    val scope = getChannelTopicForToken(session.second)
+                    val batch = FamilyEvidence(app).use { it.due(scope, System.currentTimeMillis()) }
+                    if (batch.isEmpty()) break
+                    for (frame in batch) {
+                        if (captureRelaySession(app) != session) return@thread
+                        var conn: HttpsURLConnection? = null
+                        try {
+                            conn = (URL("https://ntfy.sh/$scope").openConnection() as HttpsURLConnection).apply {
+                                requestMethod = "POST";connectTimeout = 8000;readTimeout = 8000;doOutput = true
+                                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                            }
+                            conn.outputStream.use { it.write(frame.wire.toByteArray(Charsets.UTF_8)) }
+                            val code = conn.responseCode
+                            FamilyEvidence(app).use { db ->
+                                if (code in 200..299) {
+                                    if(frame.waitForReceipt)db.relayAccepted(scope,frame.id,System.currentTimeMillis()) else db.acknowledge(scope, frame.id)
+                                } else db.failed(scope, frame.id, System.currentTimeMillis())
+                            }
+                            if (captureRelaySession(app) == session) cpLastHttpStatus = if (code in 200..299)
+                                (if(frame.waitForReceipt)"中繼站已接收 · 等待家長手機確認" else "中繼站已接收 · 此配對尚未啟用送達確認") else "HTTPS $code · 已保留，稍後重試"
+                            if (code !in 200..299) break@deliveryLoop
+                        } catch (_: Exception) {
+                            FamilyEvidence(app).use { it.failed(scope, frame.id, System.currentTimeMillis()) }
+                            if (captureRelaySession(app) == session) cpLastHttpStatus = "連線失敗 · 已保留，稍後重試"
+                            break@deliveryLoop
+                        } finally { try { conn?.disconnect() } catch (_: Exception) {} }
+                    }
+                }
+            } finally {
+                deliveryInFlight.set(false)
+                finishDeliveryCallbacks(app,session)
+                app.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(app.packageName))
+                // Close the enqueue-vs-worker-exit race without spinning on failed/backed-off frames.
+                if (isChildMode(app) && FamilyEvidence(app).use { it.due(getChannelTopic(app), System.currentTimeMillis()).isNotEmpty() }) retryPendingAlerts(app)
+            }
+        }
+    }
+
+    fun pollChannelOnce(ctx: Context, since: String = "all", onNewAlertForParent: ((JSONObject) -> Unit)? = null) {
         // Coalesce overlapping polls instead of queuing network threads behind the UI state lock.
         if (!pollInFlight.compareAndSet(false, true)) return
         var conn: HttpsURLConnection? = null
@@ -1038,7 +1160,17 @@ object GuardEngine {
 
         val innerStr = outer.optString("message")
         val token = getOrCreateFamilyToken(ctx)
-        val decrypted = decryptPayload(token, innerStr) ?: return
+        val decoded = decryptPayload(token, innerStr) ?: return
+        val decrypted = if (decoded.optString("type") == "alert_fragment") {
+            if (role != "parent") return
+            val completed = FamilyEvidence(ctx).use { it.fragment(getChannelTopicForToken(token), decoded) }
+            if (completed == null) {
+                if(FamilyEvidence(ctx).use { it.hasSeen(getChannelTopicForToken(token),decoded.optString("event_id")) })
+                    sendDeliveryReceipt(ctx,decoded.optString("event_id"),decoded.optBoolean("receipt_requested"))
+                return
+            }
+            completed
+        } else decoded
         val inner = if (decrypted.has("payload")) {
             if (role != "child") return
             FamilySecurity.readCommand(decrypted, prefs(ctx).getString("parent_command_public_key", "") ?: "", getChannelTopicForToken(token), System.currentTimeMillis()) ?: return
@@ -1049,26 +1181,22 @@ object GuardEngine {
         val msgType = inner.optString("type")
         val msgTs = inner.optLong("ts_ms", 0L)
 
-        val updatedIds = HashSet<String>(existingSet)
-        updatedIds.add(msgId)
-        val persistedSet = if (updatedIds.size > 300) {
-            HashSet(updatedIds.toList().takeLast(300))
-        } else {
-            updatedIds
-        }
-        prefs(ctx).edit().putStringSet("seen_msg_ids", persistedSet).apply()
-
         if (msgType in FamilySecurity.controlTypes) {
             val state = try { JSONObject(prefs(ctx).getString("control_state_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
             val ids = state.optJSONObject("ids") ?: JSONObject().also { state.put("ids", it) }
             val id = inner.getString("command_id")
-            if (ids.has(id) || msgTs < state.optLong(msgType)) return
+            if (ids.has(id) || (msgType != "alert_receipt" && msgTs < state.optLong(msgType))) return
             for (key in ids.keys().asSequence().toList()) if (ids.optLong(key) < System.currentTimeMillis() - 24 * 60 * 60_000L) ids.remove(key)
             ids.put(id, msgTs); state.put(msgType, msgTs)
             prefs(ctx).edit().putString("control_state_json", state.toString()).apply()
         }
 
         when (msgType) {
+            "alert_receipt" -> {
+                FamilyEvidence(ctx).use{it.acknowledgeEvent(getChannelTopic(ctx),inner.getString("event_id"))}
+                cpLastHttpStatus = if(inner.optString("outcome")=="discarded") "家長已刪除此記錄 · 停止重試" else "家長手機已確認接收 · 不代表已閱讀"
+                ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
+            }
             "sync_trusted" -> {
                 val csv = inner.optString("trusted_csv")
                 val list = csv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
@@ -1121,7 +1249,9 @@ object GuardEngine {
                     if (childSelf.isNotEmpty()) {
                         setChildSelfHandle(ctx, childSelf)
                     }
-                    if (!recordParentAlert(ctx, inner, "relay:$msgId")) return
+                    val inserted = recordParentAlert(ctx, inner, "relay:$msgId")
+                    sendDeliveryReceipt(ctx,inner.optString("event_id"),inner.optBoolean("receipt_requested"))
+                    if (!inserted) return
                     val reason = inner.optString("reason")
                     if (reason in setOf("heartbeat_ok", "pairing_verified", "tamper_attempt")) {
                         recordChildHeartbeatOnParent(ctx, inner.optString("text"), msgTs)
@@ -1134,6 +1264,24 @@ object GuardEngine {
                 }
             }
         }
+        val updatedIds = HashSet<String>(existingSet)
+        updatedIds.add(msgId)
+        val persistedSet = if (updatedIds.size > 300) {
+            HashSet(updatedIds.toList().takeLast(300))
+        } else {
+            updatedIds
+        }
+        prefs(ctx).edit().putStringSet("seen_msg_ids", persistedSet).apply()
+
+    }
+
+    private fun sendDeliveryReceipt(ctx: Context,eventId: String,requested: Boolean) {
+        if(!requested || !isParentMode(ctx) || !eventId.matches(Regex("[A-Za-z0-9:_-]{1,160}")))return
+        val token=getOrCreateFamilyToken(ctx);val topic=getChannelTopicForToken(token)
+        if(!shouldSendAlert("receipt:$topic:$eventId",30_000L))return
+        val outcome = FamilyEvidence(ctx).use{if(it.find(topic,eventId)==null) "discarded" else "stored"}
+        val receipt=JSONObject().put("type","alert_receipt").put("outcome",outcome).put("event_id",eventId).put("ts_ms",System.currentTimeMillis())
+        postEncryptedToChannel(ctx,topic,token,receipt.toString(),null)
     }
 
     private fun loadParentStatistics(ctx: Context): AlertStatistics {
@@ -1159,34 +1307,64 @@ object GuardEngine {
         prefs(ctx).edit().putString("weekly_stats_json", stats.state.toString()).apply()
     }
 
+    private fun legacyEvidenceId(alert: JSONObject): String {
+        val canonical = JSONArray().put(alert.optString("reason")).put(alert.optString("sender"))
+            .put(alert.optString("text")).put(alert.optLong("ts_ms")).toString()
+        return "legacy:" + AlertFrames.digest(canonical.toByteArray(Charsets.UTF_8))
+    }
+    private fun migrateEvidence(ctx: Context) {
+        val legacy = prefs(ctx).getString("parent_alerts_json", null) ?: return
+        val entries = try {
+            val rows=JSONArray(legacy)
+            (0 until rows.length()).map { index -> rows.getJSONObject(index).also { require(it.opt("text") is String) } }
+        } catch (_: Exception) {
+            listOf(JSONObject().put("type","archive_recovery").put("reason","archive_recovery")
+                .put("sender","舊版本資料待復原").put("text",legacy).put("ts_ms",0L).put("time","舊格式資料備份"))
+        }
+        val state = try { JSONObject(prefs(ctx).getString("weekly_stats_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        val seen = state.optJSONObject("seen") ?: JSONObject().also { state.put("seen",it) }
+        FamilyEvidence(ctx).use { db ->
+            for(entry in entries) {
+                val id=entry.optString("event_id").takeIf{it.matches(Regex("[A-Za-z0-9:_-]{1,160}"))} ?: legacyEvidenceId(entry)
+                db.append(getChannelTopic(ctx),id,entry,legacy=true)
+                if(state.optBoolean("initialized"))seen.put(id,System.currentTimeMillis())
+            }
+        }
+        val editor=prefs(ctx).edit().remove("parent_alerts_json")
+        if(state.optBoolean("initialized"))editor.putString("weekly_stats_json",state.toString())
+        editor.commit()
+    }
+    fun prepareParentArchive(ctx: Context) = synchronized(pollLock) { if(isParentMode(ctx))migrateEvidence(ctx) }
+    fun hasUnmigratedEvidence(ctx: Context): Boolean = prefs(ctx).contains("parent_alerts_json")
     fun recordParentAlert(ctx: Context, alertObj: JSONObject, eventId: String): Boolean = synchronized(pollLock) {
         if (!isParentMode(ctx)) return false
-        val stats = loadParentStatistics(ctx)
-        val accepted = stats.record(eventId, alertObj)
-        val editor = prefs(ctx).edit().putString("weekly_stats_json", stats.state.toString())
-        if (accepted) {
-            val next = JSONArray().put(alertObj)
-            for (old in getParentAlerts(ctx).take(59)) next.put(old)
-            editor.putString("parent_alerts_json", next.toString())
+        migrateEvidence(ctx)
+        val id = alertObj.optString("event_id").takeIf { it.matches(Regex("[A-Za-z0-9:_-]{1,160}")) }
+            ?: if (eventId.startsWith("relay:")) legacyEvidenceId(alertObj) else eventId
+        val scope = getChannelTopic(ctx)
+        FamilyEvidence(ctx).use { db ->
+            if (db.hasSeen(scope, id) && db.find(scope, id) == null) return false
+            val stats = loadParentStatistics(ctx)
+            val inserted = db.append(scope, id, alertObj)
+            alertObj.put("_id", id)
+            // Replaying a committed archive row can finish a statistics write interrupted by process death.
+            stats.record(id, alertObj)
+            prefs(ctx).edit().putString("weekly_stats_json", stats.state.toString()).commit()
+            inserted
         }
-        editor.apply()
-        accepted
     }
-
-    fun getParentAlerts(ctx: Context): List<JSONObject> {
-        val rawArr = prefs(ctx).getString("parent_alerts_json", "[]") ?: "[]"
-        val arr = try { JSONArray(rawArr) } catch (_: Exception) { JSONArray() }
-        val out = ArrayList<JSONObject>(arr.length())
-        for (i in 0 until arr.length()) {
-            arr.optJSONObject(i)?.let { out.add(it) }
-        }
-        return out
+    fun getParentAlerts(ctx: Context): List<JSONObject> = synchronized(pollLock) {
+        if (!isParentMode(ctx)) return emptyList()
+        migrateEvidence(ctx)
+        FamilyEvidence(ctx).use { it.messages(getChannelTopic(ctx), EvidenceQuery(filter = "any"), limit = 60) }
     }
-
-    fun clearParentAlerts(ctx: Context) = synchronized(pollLock) {
-        // Seed statistics before clearing an upgraded installation's original history.
-        getParentStatistics(ctx)
-        prefs(ctx).edit().putString("parent_alerts_json", "[]").apply()
+    fun clearParentAlerts(ctx: Context): Unit = synchronized(pollLock) {
+        if (!isParentMode(ctx)) return
+        val statistics=loadParentStatistics(ctx)
+        check(prefs(ctx).edit().putString("weekly_stats_json",statistics.state.toString()).commit())
+        migrateEvidence(ctx)
+        FamilyEvidence(ctx).use { it.deleteArchive(getChannelTopic(ctx)) }
+        prefs(ctx).edit().remove("parent_alerts_json").commit()
     }
 
     fun isNotificationListenerEnabledStatic(ctx: Context): Boolean {
@@ -1216,7 +1394,8 @@ class IgNotificationListener : NotificationListenerService() {
         override fun run() {
             if (GuardEngine.isChildMode(this@IgNotificationListener)) {
                 GuardEngine.checkAndSendChildHeartbeatIfDue(this@IgNotificationListener)
-                thread { GuardEngine.pollChannelOnce(applicationContext, since = "30m") }
+                GuardEngine.retryPendingAlerts(applicationContext)
+                thread { GuardEngine.pollChannelOnce(applicationContext, since = "all") }
             }
             if (GuardEngine.isChildMode(this@IgNotificationListener)) heartbeatHandler.postDelayed(this, 60_000L)
         }
@@ -1229,6 +1408,7 @@ class IgNotificationListener : NotificationListenerService() {
             return
         }
         GuardEngine.cpNotifConnected = true
+        GuardEngine.retryPendingAlerts(applicationContext,force=true)
         GuardEngine.refreshMonitoringDisclosure(this)
         GuardEngine.addCheckpointLog(this, "CP1-NOTIF", "IG NotificationListener CONNECTED ✅")
         heartbeatHandler.removeCallbacks(periodicCheckRunnable)
@@ -1466,7 +1646,7 @@ class IgAccessibilityService : AccessibilityService() {
         GuardEngine.checkAndSendChildHeartbeatIfDue(this)
         if (now - lastRemoteSyncMs > 45_000L) {
             lastRemoteSyncMs = now
-            thread { GuardEngine.pollChannelOnce(applicationContext, since = "15m") }
+            thread { GuardEngine.pollChannelOnce(applicationContext, since = "all") }
         }
 
         val root = rootInActiveWindow ?: return
@@ -1749,7 +1929,6 @@ class ParentAlertService : Service() {
     }
 
     @Volatile private var running = false
-    private var notifSeq = 100
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!GuardEngine.isParentMode(this)) {
@@ -1787,7 +1966,7 @@ class ParentAlertService : Service() {
                     var conn: HttpsURLConnection? = null
                     try {
                         GuardEngine.cpParentStreamState = "Connecting TLS stream..."
-                        val url = URL("https://ntfy.sh/$topic/json?since=2h")
+                        val url = URL("https://ntfy.sh/$topic/json?since=all")
                         conn = (url.openConnection() as HttpsURLConnection).apply {
                             requestMethod = "GET"
                             connectTimeout = 10_000
@@ -1874,33 +2053,20 @@ class ParentAlertService : Service() {
     private fun fireNativeParentNotification(alert: JSONObject) {
         val nm = getSystemService(NotificationManager::class.java) ?: return
         val reason = alert.optString("reason", "alert")
-        val sender = alert.optString("sender", "unknown")
-        val text = alert.optString("text", "")
-
-        val title = when (reason) {
-            "sexual_or_grooming_content" -> "🚨 IG 色情/誘導訊息警告: @$sender"
-            "tamper_attempt" -> "⚠️ 防篡改/離線警告: $sender"
-            "stranger_message" -> "💬 IG 陌生人私訊/留言回覆: @$sender"
-            "heartbeat_ok" -> "💓 子女手機定時連線回報 (30–95m)"
-            "pairing_verified" -> "✅ 子女手機已成功配對並啟動保護"
-            else -> "🔔 IG Guard 通知: $sender"
-        }
-
-        val openIntent = PendingIntent.getActivity(
-            this, 1, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
+        val scope = GuardEngine.getChannelTopic(this)
+        val eventId = alert.optString("_id").ifEmpty { alert.optString("event_id") }
+        val open = Intent(this, MainActivity::class.java).setAction("app.family.igguard.OPEN_EVIDENCE")
+            .setData(Uri.Builder().scheme("igguard").authority("evidence").appendPath(scope).appendPath(eventId).build())
+        val openIntent = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val generic = if(reason == "sexual_or_grooming_content") "偵測到需留意的關鍵字。開啟查看記錄及尋求協助建議。" else "有新的家庭提醒，請開啟 App 查看。"
+        val publicNotice = Notification.Builder(this, "ig_guard_alerts")
+            .setContentTitle("IG Guard 家庭提醒").setContentText("解鎖後開啟 App 查看。")
+            .setSmallIcon(android.R.drawable.stat_sys_warning).build()
         val notif = Notification.Builder(this, "ig_guard_alerts")
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(Notification.BigTextStyle().bigText("來源帳號: $sender\n訊息內容: $text"))
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
-            .setContentIntent(openIntent)
-            .setAutoCancel(true)
-            .build()
-
-        nm.notify(notifSeq++, notif)
+            .setContentTitle(if(reason == "sexual_or_grooming_content") "有一則需要留意的對話" else "IG Guard 家庭提醒")
+            .setContentText(generic).setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(publicNotice)
+            .setSmallIcon(android.R.drawable.stat_sys_warning).setContentIntent(openIntent).setAutoCancel(true).build()
+        nm.notify("$scope:$eventId", 100, notif)
     }
 
     override fun onDestroy() {
@@ -1927,6 +2093,12 @@ class MainActivity : Activity() {
     private var selectedEntryRole = ""
     private var chartMode = "trend"
     private var alertFilter = "all"
+    private var evidenceSearch = ""
+    private var evidenceSender: String? = null
+    private var evidencePage = 0
+    private var evidenceDays = 0
+    private var evidenceSaved = false
+    private var pendingEvidenceId: String? = null
     private val inputDrafts = mutableMapOf<String, String>()
     private val uiHandler = Handler(Looper.getMainLooper())
     private var activityVisible = false
@@ -1941,6 +2113,7 @@ class MainActivity : Activity() {
         override fun run() {
             if (!activityVisible) return
             updateStatus()
+            maybeShowSafetyAdvice()
             if (section == "overview" && GuardEngine.isParentMode(this@MainActivity) &&
                 Instant.now().atZone(chartZone).toLocalDate().toString() != displayedChartDate) renderUi()
             uiHandler.postDelayed(this, 5_000L)
@@ -2023,6 +2196,7 @@ class MainActivity : Activity() {
                 if (changed) syncRoleServices()
                 updateStatus()
                 if (changed || (currentFocus !is EditText && section in setOf("overview", "alerts"))) renderUi()
+                maybeShowSafetyAdvice()
             }
         }
     }
@@ -2037,6 +2211,11 @@ class MainActivity : Activity() {
         alertFilter = savedInstanceState?.getString("alert_filter") ?: "all"
         displayed15MinCode = savedInstanceState?.getString("unlock_code") ?: ""
         if (savedInstanceState?.getString("draft_family") == GuardEngine.getChannelTopic(this) && renderedRole == GuardEngine.getRole(this)) {
+            evidenceSearch = savedInstanceState.getString("evidence_search") ?: ""
+            evidenceSender = savedInstanceState.getString("evidence_sender")
+            evidencePage = savedInstanceState.getInt("evidence_page").coerceAtLeast(0)
+            evidenceDays = savedInstanceState.getInt("evidence_days")
+            evidenceSaved = savedInstanceState.getBoolean("evidence_saved")
             savedInstanceState.getBundle("drafts")?.let { b -> for (key in b.keySet()) inputDrafts[key] = b.getString(key) ?: "" }
         }
         screenShell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -2056,6 +2235,8 @@ class MainActivity : Activity() {
         outState.putString("section", section); outState.putString("rendered_role", renderedRole)
         outState.putString("entry_role", selectedEntryRole); outState.putString("chart_mode", chartMode)
         outState.putString("alert_filter", alertFilter); outState.putString("unlock_code", displayed15MinCode)
+        outState.putString("evidence_search", evidenceSearch); outState.putString("evidence_sender", evidenceSender)
+        outState.putInt("evidence_page", evidencePage); outState.putInt("evidence_days", evidenceDays); outState.putBoolean("evidence_saved", evidenceSaved)
         outState.putString("draft_family", GuardEngine.getChannelTopic(this))
         outState.putBundle("drafts", Bundle().apply { for ((key, value) in inputDrafts) putString(key, value) })
         super.onSaveInstanceState(outState)
@@ -2063,6 +2244,7 @@ class MainActivity : Activity() {
     @Deprecated("Activity back navigation")
     override fun onBackPressed() {
         when {
+            section == "alerts" && evidenceSender != null -> { evidenceSender = null; evidencePage = 0; renderUi(animate = true) }
             section.endsWith("_setup") -> navigateTo("role")
             section == "role" -> super.onBackPressed()
             section != "overview" -> navigateTo("overview")
@@ -2071,6 +2253,7 @@ class MainActivity : Activity() {
     }
     override fun onNewIntent(intent: Intent?) { super.onNewIntent(intent); handleDeepLinkIntent(intent) }
     private fun handleDeepLinkIntent(incoming: Intent?) {
+        if (incoming?.action == "app.family.igguard.OPEN_EVIDENCE") { handleEvidenceNotification(incoming); return }
         val data = incoming?.data ?: return
         setIntent(Intent(incoming).apply { this.data = null })
         if (incoming.action != Intent.ACTION_VIEW || !data.scheme.equals("igguard", true) || !data.host.equals("pair", true)) return
@@ -2112,6 +2295,12 @@ class MainActivity : Activity() {
             try { NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java)) } catch (_: Exception) {}
         }
         syncRoleServices(); checkInitialPairingConfirmation(); renderUi()
+        if (GuardEngine.isChildMode(this)) {
+            GuardEngine.retryPendingAlerts(this,force=true)
+            if (GuardEngine.isNotificationListenerEnabledStatic(this) && !GuardEngine.cpNotifConnected)
+                try { NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java)) } catch (_: Exception) {}
+        }
+        openPendingEvidence(); maybeShowSafetyAdvice()
         uiHandler.removeCallbacks(statusTicker); uiHandler.post(statusTicker)
     }
     override fun onPause() {
@@ -2169,6 +2358,7 @@ class MainActivity : Activity() {
         val session = GuardEngine.captureRelaySession(this)
         if (renderedSession != null && renderedSession != session) {
             dismissUiDialogs(); inputDrafts.clear(); displayed15MinCode = ""
+            evidenceSearch = ""; evidenceSender = null; evidencePage = 0; evidenceDays = 0; evidenceSaved = false; pendingEvidenceId = null
         }
         renderedSession = session
         if (renderedRole != role) {
@@ -2270,7 +2460,7 @@ class MainActivity : Activity() {
             "child" -> {
                 val notification = if (!GuardEngine.isNotificationListenerEnabledStatic(this)) "通知未授權" else if (GuardEngine.cpNotifConnected) "通知已連接" else "通知等待連接"
                 val screen = if (!GuardEngine.isAccessibilityEnabledStatic(this)) "畫面未授權" else if (GuardEngine.cpAccConnected) "畫面已連接" else "畫面等待連接"
-                "$notification · $screen" + if (GuardEngine.isTemporarilyUnlocked(this)) " · 暫時解鎖中" else ""
+                "$notification · $screen" + GuardEngine.pendingDeliveryCount(this).let { if (it > 0) " · 待確認 $it" else "" } + if (GuardEngine.isTemporarilyUnlocked(this)) " · 暫時解鎖中" else ""
             }
             else -> "選擇這部手機的身份"
         }
@@ -2357,7 +2547,8 @@ class MainActivity : Activity() {
             rootContainer.addView(textAction("尚未授權系統通知 · 前往設定") { navigateTo("settings") })
         }
         renderWeeklyCharts(t)
-        val latest = GuardEngine.getParentAlerts(this).firstOrNull { it.optString("reason") !in setOf("heartbeat_ok", "pairing_verified", "test_alert") }
+        GuardEngine.prepareParentArchive(this)
+        val latest = FamilyEvidence(this).use{it.messages(GuardEngine.getChannelTopic(this),EvidenceQuery(),limit=1).firstOrNull()}
         if (latest != null) {
             sectionTitle("最新提醒", t)
             rootContainer.addView(row("bell-simple", alertTitle(latest.optString("reason")), latest.optString("time"), t) { showAlertDetails(latest, t) })
@@ -2496,53 +2687,188 @@ class MainActivity : Activity() {
         "heartbeat_ok" -> "子女手機連線回報"
         "pairing_verified" -> "子女手機已成功配對"
         "unlock_used" -> "子女使用了臨時解鎖碼"
+        "archive_recovery" -> "待復原的舊格式資料"
         else -> "家庭守護通知"
     }
+    private fun evidenceTime(stamp: Long): String = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.TRADITIONAL_CHINESE).format(Date(stamp))
     private fun renderParentAlerts(t: ThemeColors) {
-        heading("每一則提醒，都有脈絡。", "先了解，再與孩子好好聊聊。", t)
+        GuardEngine.prepareParentArchive(this)
+        heading(evidenceSender ?: "提醒與證據", "按聯絡對象整理；記錄保留至你刪除為止。", t)
+        if(GuardEngine.hasUnmigratedEvidence(this))rootContainer.addView(label("部分舊記錄尚未成功轉移，原始資料仍保留。請先保留本機資料並尋求協助。",13f,t.warmHoney,bottomPad=14))
+        if (evidenceSender != null) rootContainer.addView(textAction("返回聯絡對象") { evidenceSender = null; evidencePage = 0; scrollView.scrollTo(0,0); renderUi() })
+        val search = inputBox(t, "搜尋帳號或訊息", evidenceSearch, remember = false).apply { tag = "evidence_search"; maxLines = 1 }
+        val searchUpdate = Runnable { evidencePage = 0; renderUi() }
+        search.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                evidenceSearch = s?.toString() ?: ""; uiHandler.removeCallbacks(searchUpdate); uiHandler.postDelayed(searchUpdate, 300)
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
+        rootContainer.addView(search)
         val filters = LinearLayout(this)
-        for ((key, title) in listOf("all" to "全部", "high" to "高危", "stranger" to "陌生人", "device" to "裝置")) {
+        for ((key,title) in listOf("all" to "全部", "high" to "需留意", "stranger" to "未信任", "device" to "裝置")) {
             filters.addView(Button(this).apply {
-                text = title; textSize = 12f; typeface = font(alertFilter == key); isAllCaps = false; minimumHeight = dp(48)
-                setTextColor(color(if (alertFilter == key) t.btnPrimaryText else t.textSecondary))
-                background = ripple(if (alertFilter == key) t.btnPrimaryBg else t.bgCanvas, 7)
-                isSelected = alertFilter == key; setOnClickListener { alertFilter = key; renderUi() }
-            }, LinearLayout.LayoutParams(0, -2, 1f))
+                text = title; textSize = 12f; isAllCaps = false; minimumHeight = dp(48); typeface = font(alertFilter == key)
+                setTextColor(color(if(alertFilter == key)t.btnPrimaryText else t.textSecondary))
+                background = ripple(if(alertFilter == key)t.btnPrimaryBg else t.bgCanvas,7)
+                isSelected = alertFilter == key
+                setOnClickListener { alertFilter = key; evidencePage = 0; renderUi() }
+            },LinearLayout.LayoutParams(0,-2,1f))
         }
         rootContainer.addView(filters)
-        val alerts = GuardEngine.getParentAlerts(this).filter { alert -> when (alertFilter) {
-            "high" -> alert.optString("reason") == "sexual_or_grooming_content"
-            "stranger" -> alert.optString("reason") == "stranger_message"
-            "device" -> alert.optString("reason") in setOf("tamper_attempt", "heartbeat_ok", "pairing_verified", "unlock_used")
-            else -> true
-        } }
-        if (alerts.isEmpty()) rootContainer.addView(label("暫時沒有提醒。\n需要你留意的訊息，會出現在這裡。", 15f, t.textSecondary, topPad = 28, bottomPad = 24))
-        for (alert in alerts) {
-            val reason = alert.optString("reason")
-            val tint = if (reason == "sexual_or_grooming_content") t.warmCoral else if (reason == "tamper_attempt") t.warmHoney else t.textPrimary
-            rootContainer.addView(label(alert.optString("time"), 12f, t.textMuted, topPad = 18, bottomPad = 7))
-            rootContainer.addView(row(if (reason == "sexual_or_grooming_content") "shield-warning" else "chat-circle", alertTitle(reason), alert.optString("sender", "未識別來源"), t, tint) { showAlertDetails(alert, t) })
+        val tools = LinearLayout(this)
+        tools.addView(textAction(if(evidenceDays == 0)"全部日期" else "最近 $evidenceDays 日") {
+            alert().setTitle("篩選日期").setItems(arrayOf("全部日期","最近 7 日","最近 30 日","最近 90 日")) { _,index ->
+                evidenceDays = listOf(0,7,30,90)[index]; evidencePage = 0; renderUi()
+            }.show()
+        },LinearLayout.LayoutParams(0,-2,1f))
+        tools.addView(textAction(if(evidenceSaved)"已儲存 ✓" else "只看已儲存") { evidenceSaved = !evidenceSaved; evidencePage = 0; renderUi() },LinearLayout.LayoutParams(0,-2,1f))
+        rootContainer.addView(tools)
+        val scope = GuardEngine.getChannelTopic(this)
+        val query = EvidenceQuery(evidenceSearch,alertFilter,evidenceSender,evidenceSaved,
+            if(evidenceDays == 0)0 else System.currentTimeMillis()-evidenceDays*86_400_000L,evidencePage)
+        val container = rootContainer
+        val results = LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+        container.addView(results)
+        results.addView(label("正在搜尋本機記錄…",13f,t.textMuted).apply{tag="evidence_loading"})
+        val session = GuardEngine.captureRelaySession(this)
+        val contactsView = evidenceSender == null
+        thread {
+            try {
+                val contacts: List<EvidenceContact>
+                val messages: List<JSONObject>
+                val incomplete: Int
+                FamilyEvidence(applicationContext).use { db ->
+                    contacts=if(contactsView)db.contacts(scope,query) else emptyList()
+                    messages=if(contactsView)emptyList() else db.messages(scope,query)
+                    incomplete=db.incompleteCount(scope)
+                }
+                uiHandler.post {
+                    if(isDestroyed || rootContainer !== container || query.text != evidenceSearch || GuardEngine.captureRelaySession(this) != session)return@post
+                    results.removeAllViews()
+                    var more = false
+                    if(contactsView) {
+                more = contacts.size > 30
+                for(contact in contacts.take(30)) results.addView(row("chat-circle",contact.sender,
+                    "${contact.count} 則 · 需留意 ${contact.important} 則 · ${evidenceTime(contact.latest)}",t) {
+                    evidenceSender = contact.sender; evidencePage = 0; scrollView.scrollTo(0,0); renderUi(animate = true)
+                }.apply { getChildAt(0).tag = "evidence_contact_${contact.sender}" })
+                if(contacts.isEmpty())results.addView(label("沒有符合條件的記錄。",15f,t.textSecondary,topPad=24,bottomPad=20))
+            } else {
+                more = messages.size > 30
+                var day = ""
+                for(message in messages.take(30)) {
+                    val stamp = message.optLong("ts_ms").takeIf { it>0 } ?: message.optLong("received_at_ms")
+                    val date = evidenceTime(stamp).substringBefore(" ")
+                    if(day != date){day = date; results.addView(label(day,12f,t.textMuted,topPad=18,bottomPad=8))}
+                    val text = message.optString("text").replace('\n',' ')
+                    val end = text.offsetByCodePoints(0,minOf(96,text.codePointCount(0,text.length)))
+                    val preview = text.substring(0,end)+(if(end<text.length)"…" else "")
+                    results.addView(row(if(message.optBoolean("_saved"))"shield-check" else "chat-circle",
+                        (if(message.optBoolean("_saved"))"已儲存 · " else "")+alertTitle(message.optString("reason")),
+                        "${evidenceTime(stamp).substringAfter(" ")} · $preview",t,
+                        if(message.optString("reason")=="sexual_or_grooming_content")t.warmCoral else t.textPrimary) {
+                        showAlertDetails(message,t)
+                    }.apply {
+                        val clickable=getChildAt(0) as LinearLayout
+                        clickable.tag="evidence_${message.optString("_id")}"
+                        ((clickable.getChildAt(1) as LinearLayout).getChildAt(1) as TextView).apply {
+                            maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END
+                        }
+                    })
+                }
+                if(messages.isEmpty())results.addView(label("沒有符合條件的訊息。",15f,t.textSecondary,topPad=24,bottomPad=20))
+            }
+                    if(incomplete>0)results.addView(label("另有 $incomplete 則訊息尚未完整接收，可能缺少內容。請保持兩部手機連線後重試同步。",13f,t.warmHoney,topPad=16))
+                    val paging = LinearLayout(this)
+                    if(evidencePage>0)paging.addView(textAction("上一頁") { evidencePage--;scrollView.scrollTo(0,0);renderUi() },LinearLayout.LayoutParams(0,-2,1f))
+                    paging.addView(label("第 ${evidencePage+1} 頁",13f,t.textMuted).apply{gravity=Gravity.CENTER},LinearLayout.LayoutParams(0,dp(48),1f))
+                    if(more)paging.addView(textAction("下一頁") { evidencePage++;scrollView.scrollTo(0,0);renderUi() },LinearLayout.LayoutParams(0,-2,1f))
+                    results.addView(paging)
+                }
+            } catch(_:Exception) {
+                uiHandler.post {
+                    if(!isDestroyed && rootContainer === container && GuardEngine.captureRelaySession(this)==session){
+                        results.removeAllViews();results.addView(label("未能讀取本機記錄，請保留資料並重試。",14f,t.warmCoral))
+                    }
+                }
+            }
         }
-        rootContainer.addView(textAction("立即刷新最新提醒") { thread { GuardEngine.pollChannelOnce(applicationContext, since = "6h") }; Toast.makeText(this, "正在同步加密提醒。", Toast.LENGTH_SHORT).show() })
-        if (GuardEngine.getParentAlerts(this).isNotEmpty()) rootContainer.addView(textAction("清除收件匣記錄") {
-            alert().setTitle("清除收件匣？").setMessage("圖表統計及去重記錄會保留。")
-                .setNegativeButton("取消", null).setPositiveButton("清除") { _, _ -> GuardEngine.clearParentAlerts(this); renderUi() }.show()
+        rootContainer.addView(textAction("重新同步可用記錄") { thread { GuardEngine.pollChannelOnce(applicationContext,since="all") };Toast.makeText(this,"正在同步；中繼站已過期或未擷取的內容無法復原。",Toast.LENGTH_LONG).show() })
+        rootContainer.addView(textAction("刪除此家庭的全部證據") {
+            alert().setTitle("永久刪除證據？").setMessage("將刪除此家庭已儲存在本機的訊息及收藏。圖表統計會保留；此操作無法復原。")
+                .setNegativeButton("取消",null).setPositiveButton("永久刪除") { _,_ ->
+                    GuardEngine.clearParentAlerts(this);evidencePage=0;renderUi()
+                }.show()
         })
     }
-    private fun showAlertDetails(alert: JSONObject, t: ThemeColors) {
-        showSheet(alertTitle(alert.optString("reason"))) { dialog ->
-            val reason = alert.optString("reason"); val sender = alert.optString("sender", "未識別來源")
-            addView(label("$sender · ${alert.optString("time")}", 13f, t.textSecondary, bottomPad = 18))
-            addView(label(alert.optString("text"), 16f, t.textPrimary, bottomPad = 22).apply { setTextIsSelectable(true) })
+    private fun showAlertDetails(alert: JSONObject,t: ThemeColors) {
+        if(!GuardEngine.isParentMode(this))return
+        val scope = GuardEngine.getChannelTopic(this)
+        val id = alert.optString("_id")
+        val stored = FamilyEvidence(this).use { it.find(scope,id) } ?: return
+        showSheet(alertTitle(stored.optString("reason"))) { dialog ->
+            val reason = stored.optString("reason");val sender = stored.optString("sender","未識別來源")
+            addView(label("$sender · ${evidenceTime(stored.optLong("ts_ms").takeIf{it>0}?:stored.optLong("received_at_ms"))}",13f,t.textSecondary,bottomPad=16))
+            addView(label(if(reason=="archive_recovery")"原始舊資料未能自動解析，完整原始內容保留於此，可複製後尋求復原協助。" else if(stored.optBoolean("_legacy_partial"))"舊版本記錄，內容可能已截短，無法復原未保留的部分。" else "保留 App 實際擷取的文字，未必涵蓋 Instagram 原始對話的全部內容。",12f,t.textMuted,bottomPad=14))
+            if(reason=="sexual_or_grooming_content")addView(actionButton("尋求協助建議",t.btnSecondaryBg,t.btnSecondaryText) { dialog.dismiss();showSafetyAdvice(stored,t) })
+            addView(actionButton(if(stored.optBoolean("_saved"))"取消儲存" else "儲存此訊息",t.btnSecondaryBg,t.btnSecondaryText) {
+                FamilyEvidence(this@MainActivity).use{it.save(scope,id,!stored.optBoolean("_saved"))};dialog.dismiss();renderUi()
+            })
+            addView(actionButton("複製完整記錄",t.btnSecondaryBg,t.btnSecondaryText) { copyText("IG Guard 證據","來源：$sender\n時間：${stored.optString("time")}\n\n${stored.optString("text")}") })
+            addView(label(stored.optString("text"),16f,t.textPrimary,bottomPad=20).apply{setTextIsSelectable(true)})
             val handle = sender.substringBefore(" ").trim().lowercase(Locale.US).removePrefix("@")
-            if (reason in setOf("stranger_message", "sexual_or_grooming_content") && !sender.startsWith("子女留言") &&
-                handle !in GuardEngine.getTrustedHandles(this@MainActivity) && !GuardEngine.isChildSelfHandle(this@MainActivity, handle) && !handle.contains(" ") && !handle.contains("instagram")) {
-                addView(actionButton("加入信任好友並解除封鎖", t.btnSecondaryBg, t.btnSecondaryText) {
-                    addTrustedSender(handle); GuardEngine.syncTrustedFromParent(this@MainActivity); dialog.dismiss()
-                })
+            if(reason in setOf("stranger_message","sexual_or_grooming_content") && !sender.startsWith("子女留言") &&
+                handle !in GuardEngine.getTrustedHandles(this@MainActivity) && !GuardEngine.isChildSelfHandle(this@MainActivity,handle) && !handle.contains(" ") && !handle.contains("instagram")) {
+                addView(actionButton("加入信任好友並解除封鎖",t.btnSecondaryBg,t.btnSecondaryText) { addTrustedSender(handle);GuardEngine.syncTrustedFromParent(this@MainActivity);dialog.dismiss() })
             }
-            addView(actionButton("關閉", t.btnPrimaryBg, t.btnPrimaryText) { dialog.dismiss() })
+            addView(textAction("刪除此記錄") {
+                alert().setTitle("永久刪除此記錄？").setMessage("此操作會移除本機文字及收藏，無法復原。")
+                    .setNegativeButton("取消",null).setPositiveButton("刪除") { _,_ ->
+                        FamilyEvidence(this@MainActivity).use{it.deleteMessage(scope,id)};dialog.dismiss();renderUi()
+                    }.show()
+            })
+            addView(actionButton("關閉",t.btnPrimaryBg,t.btnPrimaryText){dialog.dismiss()})
         }
+    }
+    private fun maybeShowSafetyAdvice() {
+        if(!activityVisible || !GuardEngine.isParentMode(this) || section=="role" || activeSheet?.isShowing==true)return
+        val alert = FamilyEvidence(this).use{it.nextAdvice(GuardEngine.getChannelTopic(this))} ?: return
+        showSafetyAdvice(alert,currentTheme())
+    }
+    private fun showSafetyAdvice(alert: JSONObject,t: ThemeColors) {
+        if(!GuardEngine.isParentMode(this))return
+        val scope = GuardEngine.getChannelTopic(this)
+        showSheet("先了解，再尋求合適協助。") { dialog ->
+            addView(label("偵測到需留意的關鍵字，不代表已確認誘導或侵害。請先冷靜了解情況，避免責備孩子。",15f,t.textPrimary,bottomPad=18))
+            addView(label("保留相關記錄，與孩子確認是否感到不安、被威脅或被要求保密。若有疑慮，請向學校社工、合資格兒童保障或心理專業人士尋求協助。",14f,t.textSecondary,bottomPad=18))
+            addView(label("如在香港遇到即時人身危險，請致電 999；其他地區請使用當地緊急求助號碼。App 不能代替專業評估或緊急支援。",14f,t.warmCoral,bottomPad=18))
+            addView(actionButton("查看相關記錄",t.btnSecondaryBg,t.btnSecondaryText) {
+                dialog.dismiss();section="alerts";evidenceSender=alert.optString("sender").trim().removePrefix("@").lowercase(Locale.ROOT);evidenceSearch="";evidencePage=0;renderUi()
+                showAlertDetails(alert,t)
+            })
+            addView(actionButton("我明白",t.btnPrimaryBg,t.btnPrimaryText){dialog.dismiss()})
+        }
+        // One sheet covers the current burst; individual records keep an advice action for later review.
+        FamilyEvidence(this).use{it.acknowledgeAdvice(scope)}
+    }
+    private fun handleEvidenceNotification(incoming: Intent) {
+        if(!GuardEngine.isParentMode(this))return
+        val uri=incoming.data ?: return
+        if(uri.scheme!="igguard" || uri.host!="evidence" || uri.pathSegments.size!=2)return
+        if(uri.pathSegments[0]!=GuardEngine.getChannelTopic(this))return
+        val id=uri.pathSegments[1]
+        if(FamilyEvidence(this).use{it.find(GuardEngine.getChannelTopic(this),id)}==null)return
+        pendingEvidenceId=id;section="alerts"
+        if(activityVisible){renderUi();openPendingEvidence()}
+    }
+    private fun openPendingEvidence() {
+        val id=pendingEvidenceId ?: return;pendingEvidenceId=null
+        if(intent?.action=="app.family.igguard.OPEN_EVIDENCE")setIntent(Intent(intent).apply{action=Intent.ACTION_MAIN;data=null})
+        if(!GuardEngine.isParentMode(this))return
+        val alert=FamilyEvidence(this).use{it.find(GuardEngine.getChannelTopic(this),id)} ?: return
+        if(alert.optString("reason")=="sexual_or_grooming_content")showSafetyAdvice(alert,currentTheme()) else showAlertDetails(alert,currentTheme())
     }
     private fun renderChildOverview(t: ThemeColors) {
         rootContainer.addView(icon("plant", t.accentSeafoam, 42))
@@ -2631,6 +2957,16 @@ class MainActivity : Activity() {
                 if (id != 0) addView(label(resources.openRawResource(id).bufferedReader().use { it.readText() }, 12f, t.textSecondary))
             }
         })
+        if(GuardEngine.isParentMode(this)) {
+            val scope=GuardEngine.getChannelTopic(this)
+            val other=FamilyEvidence(this).use{it.otherArchiveCount(scope)}
+            if(other>0)rootContainer.addView(row("shield-check","其他家庭的本機封存","$other 項記錄，與目前家庭分開保存",t) {
+                alert().setTitle("刪除其他家庭的封存？").setMessage("只刪除其他家庭在此手機上的封存文字和片段。目前家庭的證據不受影響；此操作無法復原。")
+                    .setNegativeButton("取消",null).setPositiveButton("永久刪除") { _,_ ->
+                        FamilyEvidence(this).use{it.deleteOtherArchives(scope)};renderUi()
+                    }.show()
+            })
+        }
         renderCollapsibleDiagnostics(t)
         renderRoleSwitchFooter(t, GuardEngine.isChildMode(this))
     }
@@ -2638,6 +2974,13 @@ class MainActivity : Activity() {
         rootContainer.addView(row("pulse", "連接與診斷", "查看最新裝置連接狀態", t) {
             showSheet("連接與診斷") { dialog ->
                 addView(label("加密通道：${GuardEngine.cpParentStreamState}\n\n最新傳送：${GuardEngine.cpLastHttpStatus}", 14f, t.textPrimary, bottomPad = 18))
+                if (GuardEngine.isChildMode(this@MainActivity)) {
+                    addView(label("待確認片段：${GuardEngine.pendingDeliveryCount(this@MainActivity)}\n啟用安全配對後，訊息保留至家長手機確認接收；確認接收不代表已閱讀。斷網後會保留並重試。", 13f, t.textSecondary, bottomPad = 16))
+                    addView(actionButton("立即重試傳送", t.btnSecondaryBg, t.btnSecondaryText) { GuardEngine.retryPendingAlerts(this@MainActivity, force = true); dialog.dismiss() })
+                    addView(actionButton("檢查系統背景電池限制", t.btnSecondaryBg, t.btnSecondaryText) {
+                        launchSettings(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    })
+                }
                 addView(label(GuardEngine.getCheckpointLogs(this@MainActivity), 12f, t.textSecondary, bottomPad = 18))
                 addView(actionButton("清除診斷記錄", t.btnSecondaryBg, t.btnSecondaryText) { GuardEngine.clearCheckpointLogs(this@MainActivity); dialog.dismiss() })
             }
