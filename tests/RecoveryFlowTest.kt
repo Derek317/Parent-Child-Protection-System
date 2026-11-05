@@ -85,7 +85,7 @@ class RecoveryFlowTest {
     @Test fun structuredIncomingSenderCannotBeReplacedByBodyPrefix() {
         GuardEngine.setRole(ctx,"child")
         val original=ProxySelector.getDefault()
-        val selected=CountDownLatch(2)
+        val selected=CountDownLatch(1)
         ProxySelector.setDefault(object:ProxySelector(){
             override fun select(uri:URI):List<Proxy> {
                 if(uri.host=="ntfy.sh") { selected.countDown();return listOf(Proxy(Proxy.Type.HTTP,InetSocketAddress("127.0.0.1",9))) }

@@ -18,6 +18,7 @@ s=s.replace('${{ github.run_number }}','1')
 (out/'generate.sh').write_text(s)
 shutil.copyfile(repo/'MainActivity.kt',out/'MainActivity.kt')
 shutil.copyfile(repo/'FamilySecurity.kt',out/'FamilySecurity.kt')
+shutil.copyfile(repo/'FamilyEvidence.kt',out/'FamilyEvidence.kt')
 shutil.copytree(repo/'ui-res',out/'ui-res',dirs_exist_ok=True)
 PY
 cd "$build_dir"
