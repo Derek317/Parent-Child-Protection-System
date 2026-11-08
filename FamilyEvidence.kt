@@ -13,12 +13,15 @@ import java.security.MessageDigest
 import java.util.Locale
 
 data class EvidenceQuery(val text: String = "", val filter: String = "all", val sender: String? = null,
-    val savedOnly: Boolean = false, val since: Long = 0, val page: Int = 0)
+    val savedOnly: Boolean = false, val since: Long = 0, val page: Int = 0,
+    val conversationKey:String?=null,val section:String="all",val review:String="all",val direction:String="all",val before:EvidenceCursor?=null)
+data class EvidenceCursor(val stamp:Long,val order:Long,val id:String)
 data class EvidenceContact(val sender: String, val count: Int, val important: Int, val latest: Long)
+data class ConversationSummary(val key:String,val label:String,val account:String,val count:Int,val unreviewed:Int,val latest:Long,val preview:String,val categories:List<String> = emptyList(),val kind:String="unknown")
 data class PendingEvidence(val id: String, val wire: String, val waitForReceipt: Boolean)
 
 /** App-private, backup-excluded storage. Paging limits the view, never the retained evidence. */
-class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 1), java.io.Closeable {
+class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 2), java.io.Closeable {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE evidence(scope TEXT NOT NULL,id TEXT NOT NULL,sender TEXT NOT NULL,reason TEXT NOT NULL,stamp INTEGER NOT NULL,body TEXT NOT NULL,payload TEXT NOT NULL,saved INTEGER NOT NULL DEFAULT 0,help_seen INTEGER NOT NULL DEFAULT 0,legacy INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id))")
         db.execSQL("CREATE INDEX evidence_time ON evidence(scope,stamp DESC,id DESC)")
@@ -29,21 +32,43 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("CREATE TABLE seen(scope TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(scope,id))")
         db.execSQL("CREATE TABLE outbox(scope TEXT NOT NULL,id TEXT NOT NULL,event_id TEXT NOT NULL,wire TEXT NOT NULL,receipt INTEGER NOT NULL DEFAULT 0,accepted INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,retry_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id))")
         db.execSQL("CREATE TABLE fragments(scope TEXT NOT NULL,id TEXT NOT NULL,part INTEGER NOT NULL,parts INTEGER NOT NULL,digest TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(scope,id,part))")
+        upgradeConversationSchema(db)
     }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion<2)upgradeConversationSchema(db) }
+    private fun upgradeConversationSchema(db:SQLiteDatabase) {
+        for((column,definition) in listOf("conversation_key" to "TEXT NOT NULL DEFAULT ''","conversation_label" to "TEXT NOT NULL DEFAULT ''",
+            "account_label" to "TEXT NOT NULL DEFAULT ''","direction" to "TEXT NOT NULL DEFAULT 'unknown'",
+            "review_state" to "TEXT NOT NULL DEFAULT 'new'","kind" to "TEXT NOT NULL DEFAULT 'device'","actionable" to "INTEGER NOT NULL DEFAULT 1","capture_order" to "INTEGER NOT NULL DEFAULT 0"))
+            db.execSQL("ALTER TABLE evidence ADD COLUMN $column $definition")
+        db.execSQL("UPDATE evidence SET conversation_key='legacy:'||sender,conversation_label=sender,kind=CASE WHEN reason IN ('stranger_message','sexual_or_grooming_content') THEN 'message' ELSE 'device' END,actionable=CASE WHEN reason IN ('heartbeat_ok','pairing_verified','test_alert','archive_recovery') THEN 0 ELSE 1 END")
+        db.execSQL("CREATE INDEX evidence_conversation ON evidence(scope,conversation_key,stamp DESC,capture_order DESC,id DESC)")
+        db.execSQL("CREATE INDEX evidence_review ON evidence(scope,kind,actionable,review_state,stamp DESC)")
+        db.execSQL("ALTER TABLE outbox ADD COLUMN priority INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("CREATE TABLE capture_seen(scope TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(scope,id))")
+        db.execSQL("CREATE TABLE capture_windows(scope TEXT NOT NULL,thread TEXT NOT NULL,tokens TEXT NOT NULL,updated INTEGER NOT NULL,PRIMARY KEY(scope,thread))")
+    }
 
     fun hasSeen(scope: String, id: String): Boolean = readableDatabase.rawQuery(
         "SELECT 1 FROM seen WHERE scope=? AND id=?", arrayOf(scope,id)).use { it.moveToFirst() }
 
     fun append(scope: String, id: String, alert: JSONObject, legacy: Boolean = false): Boolean {
+        require(alert.optString("type")!="captured_message" || ConversationCapture.valid(alert))
         val db = writableDatabase
         db.beginTransaction()
         try {
             val key = ContentValues().apply { put("scope",scope);put("id",id) }
             if (db.insertWithOnConflict("seen",null,key,SQLiteDatabase.CONFLICT_IGNORE) == -1L) return false
             val payload = JSONObject(alert.toString()).put("received_at_ms",System.currentTimeMillis())
+            val captured=alert.optString("type")=="captured_message"
+            val label=if(captured)alert.optString("conversation_label") else alert.optString("sender","未識別來源")
             val row = ContentValues(key).apply {
-                put("sender",alert.optString("sender","未識別來源").trim().removePrefix("@").lowercase(Locale.ROOT))
+                put("sender",label.trim().removePrefix("@").lowercase(Locale.ROOT))
+                put("conversation_key",if(captured)alert.getString("conversation_key") else "legacy:"+label.trim().removePrefix("@").lowercase(Locale.ROOT))
+                put("conversation_label",label);put("account_label",alert.optString("account_label"))
+                put("direction",if(captured)alert.optString("direction","unknown") else "unknown")
+                put("kind",if(captured || alert.optString("reason") in setOf("stranger_message","sexual_or_grooming_content"))"message" else "device")
+                put("actionable",if(ConversationCapture.actionable(alert))1 else 0)
+                put("capture_order",if(captured)alert.optLong("capture_order") else 0)
                 put("reason",alert.optString("reason","other"))
                 put("stamp",alert.optLong("ts_ms").takeIf { it > 0 } ?: System.currentTimeMillis())
                 put("body",alert.optString("text"));put("payload",payload.toString());put("legacy",if(legacy)1 else 0);put("help_seen",if(legacy)1 else 0)
@@ -58,6 +83,12 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         .put("_id",c.getString(c.getColumnIndexOrThrow("id")))
         .put("_saved",c.getInt(c.getColumnIndexOrThrow("saved"))==1)
         .put("_legacy_partial",c.getInt(c.getColumnIndexOrThrow("legacy"))==1)
+        .put("_conversation_key",c.getString(c.getColumnIndexOrThrow("conversation_key")))
+        .put("_conversation_label",c.getString(c.getColumnIndexOrThrow("conversation_label")))
+        .put("_review_state",c.getString(c.getColumnIndexOrThrow("review_state")))
+        .put("direction",c.getString(c.getColumnIndexOrThrow("direction")))
+        .put("_sort_stamp",c.getLong(c.getColumnIndexOrThrow("stamp")))
+        .put("_sort_order",c.getLong(c.getColumnIndexOrThrow("capture_order")))
 
     fun find(scope: String,id: String): JSONObject? = readableDatabase.rawQuery(
         "SELECT * FROM evidence WHERE scope=? AND id=?",arrayOf(scope,id)).use { if(it.moveToFirst())decode(it) else null }
@@ -65,12 +96,25 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     private fun where(scope: String,q: EvidenceQuery): Pair<String,Array<String>> {
         val clauses = mutableListOf("scope=?");val args=mutableListOf(scope)
         if(q.sender!=null){clauses.add("sender=?");args.add(q.sender)}
+        if(q.conversationKey!=null){clauses.add("conversation_key=?");args.add(q.conversationKey)}
+        q.before?.let { cursor ->
+            clauses.add("(stamp<? OR (stamp=? AND (capture_order<? OR (capture_order=? AND id<?))))")
+            args.addAll(listOf(cursor.stamp.toString(),cursor.stamp.toString(),cursor.order.toString(),cursor.order.toString(),cursor.id))
+        }
+        when(q.section){
+            "conversations"->clauses.add("kind='message'")
+            "review"->clauses.add("kind='message' AND actionable=1")
+            "device"->clauses.add("kind='device'")
+        }
+        if(q.review in setOf("new","follow_up","reviewed")){clauses.add("review_state=?");args.add(q.review)}
+        if(q.direction in ConversationCapture.directions){clauses.add("direction=?");args.add(q.direction)}
         if(q.savedOnly)clauses.add("saved=1")
         if(q.since>0){clauses.add("stamp>=?");args.add(q.since.toString())}
         when(q.filter){
             "all" -> clauses.add("reason NOT IN ('heartbeat_ok','pairing_verified','test_alert')")
             "high" -> clauses.add("reason='sexual_or_grooming_content'")
             "stranger" -> clauses.add("reason='stranger_message'")
+            "followup" -> clauses.add("reason='flagged_contact_follow_up'")
             "device" -> clauses.add("reason IN ('tamper_attempt','heartbeat_ok','pairing_verified','unlock_used','test_alert')")
         }
         if(q.text.isNotBlank()){
@@ -82,7 +126,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     }
     fun messages(scope: String,q: EvidenceQuery,limit: Int=31): List<JSONObject> {
         val (where,args)=where(scope,q)
-        return readableDatabase.rawQuery("SELECT * FROM evidence WHERE $where ORDER BY stamp DESC,id DESC LIMIT ? OFFSET ?",
+        return readableDatabase.rawQuery("SELECT * FROM evidence WHERE $where ORDER BY stamp DESC,capture_order DESC,id DESC LIMIT ? OFFSET ?",
             args+arrayOf(limit.coerceIn(1,61).toString(),(q.page.coerceAtLeast(0)*30L).toString())).use { c ->
             buildList { while(c.moveToNext())add(decode(c)) }
         }
@@ -93,6 +137,24 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             args+arrayOf((q.page.coerceAtLeast(0)*30L).toString())).use { c ->
             buildList { while(c.moveToNext())add(EvidenceContact(c.getString(0),c.getInt(1),c.getInt(2),c.getLong(3))) }
         }
+    }
+    fun conversations(scope:String,q:EvidenceQuery):List<ConversationSummary> {
+        val (where,args)=where(scope,q)
+        val priority=if(q.section=="review")"MAX(CASE WHEN reason='sexual_or_grooming_content' THEN 2 ELSE 1 END) DESC," else ""
+        return readableDatabase.rawQuery("SELECT conversation_key,conversation_label,account_label,COUNT(*),SUM(CASE WHEN actionable=1 AND review_state<>'reviewed' THEN 1 ELSE 0 END),MAX(stamp) AS latest,GROUP_CONCAT(DISTINCT CASE WHEN actionable=1 THEN reason END) FROM evidence WHERE $where GROUP BY conversation_key ORDER BY ${priority}latest DESC,conversation_key LIMIT 31 OFFSET ?",args+arrayOf((q.page.coerceAtLeast(0)*30L).toString())).use { c ->
+            buildList { while(c.moveToNext()) {
+                val key=c.getString(0)
+                val last=readableDatabase.rawQuery("SELECT body,payload FROM evidence WHERE $where AND conversation_key=? ORDER BY stamp DESC,capture_order DESC,id DESC LIMIT 1",args+arrayOf(key)).use {
+                    if(it.moveToFirst())it.getString(0) to JSONObject(it.getString(1)).optString("conversation_kind","unknown") else "" to "unknown"
+                }
+                add(ConversationSummary(key,c.getString(1),c.getString(2),c.getInt(3),c.getInt(4),c.getLong(5),last.first,c.getString(6)?.split(",")?:emptyList(),last.second))
+            } }
+        }
+    }
+    fun timeline(scope:String,q:EvidenceQuery,limit:Int=31):List<JSONObject> = messages(scope,q,limit).asReversed()
+    fun review(scope:String,id:String,state:String) {
+        require(state in setOf("new","follow_up","reviewed"))
+        writableDatabase.update("evidence",ContentValues().apply{put("review_state",state)},"scope=? AND id=? AND actionable=1",arrayOf(scope,id))
     }
     fun save(scope: String,id: String,value: Boolean) { writableDatabase.update("evidence",ContentValues().apply{put("saved",if(value)1 else 0)},"scope=? AND id=?",arrayOf(scope,id)) }
     fun nextAdvice(scope: String): JSONObject? = readableDatabase.rawQuery(
@@ -134,10 +196,31 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         }
         finally { db.endTransaction() }
     }
+    fun enqueueCaptured(scope:String,id:String,frames:List<Pair<String,String>>,waitForReceipt:Boolean,priority:Int):Boolean {
+        val db=writableDatabase;db.beginTransaction()
+        try {
+            val inserted=db.insertWithOnConflict("capture_seen",null,ContentValues().apply{put("scope",scope);put("id",id)},SQLiteDatabase.CONFLICT_IGNORE)
+            if(inserted == -1L){db.setTransactionSuccessful();return false}
+            enqueueBatch(scope,frames,waitForReceipt)
+            db.execSQL("UPDATE outbox SET priority=? WHERE scope=? AND event_id=?",arrayOf(priority.coerceIn(0,3),scope,id))
+            db.setTransactionSuccessful();return true
+        } finally {db.endTransaction()}
+    }
+    fun captureWindow(scope:String,thread:String):List<String> = readableDatabase.rawQuery("SELECT tokens FROM capture_windows WHERE scope=? AND thread=?",arrayOf(scope,thread)).use {
+        if(!it.moveToFirst())emptyList() else org.json.JSONArray(it.getString(0)).let{a->(0 until a.length()).map{n->a.getString(n)}}
+    }
+    fun setCaptureWindow(scope:String,thread:String,tokens:List<String>) {
+        require(tokens.size<=128)
+        writableDatabase.insertWithOnConflict("capture_windows",null,ContentValues().apply{put("scope",scope);put("thread",thread);put("tokens",org.json.JSONArray(tokens).toString());put("updated",System.currentTimeMillis())},SQLiteDatabase.CONFLICT_REPLACE)
+        writableDatabase.execSQL("DELETE FROM capture_windows WHERE scope=? AND thread NOT IN (SELECT thread FROM capture_windows WHERE scope=? ORDER BY updated DESC,thread LIMIT 32)",arrayOf(scope,scope))
+    }
     fun unacceptedEventCount(scope: String,id: String): Int = readableDatabase.rawQuery(
         "SELECT COUNT(*) FROM outbox WHERE scope=? AND event_id=? AND accepted=0",arrayOf(scope,id)).use{it.moveToFirst();it.getInt(0)}
-    fun due(scope: String,now: Long): List<PendingEvidence> = readableDatabase.rawQuery(
-        "SELECT id,wire,receipt FROM outbox WHERE scope=? AND retry_at<=? ORDER BY rowid LIMIT 32",arrayOf(scope,now.toString())).use { c -> buildList { while(c.moveToNext())add(PendingEvidence(c.getString(0),c.getString(1),c.getInt(2)==1)) } }
+    fun due(scope: String,now: Long): List<PendingEvidence> {
+        fun rows(condition:String,limit:Int)=readableDatabase.rawQuery("SELECT id,wire,receipt FROM outbox WHERE scope=? AND retry_at<=? AND $condition ORDER BY priority DESC,rowid LIMIT ?",arrayOf(scope,now.toString(),limit.toString())).use { c -> buildList { while(c.moveToNext())add(PendingEvidence(c.getString(0),c.getString(1),c.getInt(2)==1)) } }
+        val high=rows("priority>0",24);val context=rows("priority=0",32-high.size)
+        return if(context.isEmpty())rows("priority>0",32) else high+context
+    }
     fun pendingCount(scope: String): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM outbox WHERE scope=?",arrayOf(scope)).use{it.moveToFirst();it.getInt(0)}
     fun acknowledge(scope: String,id: String) { writableDatabase.delete("outbox","scope=? AND id=?",arrayOf(scope,id)) }
     fun relayAccepted(scope: String,id: String,now: Long) {
@@ -151,12 +234,12 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     fun rotate(old: String,new: String,rekey: (String)->String) {
         val db=writableDatabase;db.beginTransaction()
         try {
-            val pending=db.rawQuery("SELECT id,wire,attempts,retry_at,receipt,accepted,event_id FROM outbox WHERE scope=?",arrayOf(old)).use { c -> buildList {
-                while(c.moveToNext())add(ContentValues().apply{put("scope",new);put("id",c.getString(0));put("wire",rekey(c.getString(1)));put("attempts",c.getInt(2));put("retry_at",c.getLong(3));put("receipt",c.getInt(4));put("accepted",c.getInt(5));put("event_id",c.getString(6))})
+            val pending=db.rawQuery("SELECT id,wire,attempts,retry_at,receipt,accepted,event_id,priority FROM outbox WHERE scope=?",arrayOf(old)).use { c -> buildList {
+                while(c.moveToNext())add(ContentValues().apply{put("scope",new);put("id",c.getString(0));put("wire",rekey(c.getString(1)));put("attempts",c.getInt(2));put("retry_at",c.getLong(3));put("receipt",c.getInt(4));put("accepted",c.getInt(5));put("event_id",c.getString(6));put("priority",c.getInt(7))})
             } }
             for(row in pending)db.insertWithOnConflict("outbox",null,row,SQLiteDatabase.CONFLICT_IGNORE)
             db.delete("outbox","scope=?",arrayOf(old))
-            for(table in listOf("evidence","seen","fragments")){
+            for(table in listOf("evidence","seen","fragments","capture_seen","capture_windows")){
                 db.execSQL("UPDATE OR IGNORE $table SET scope=? WHERE scope=?",arrayOf(new,old))
                 db.delete(table,"scope=?",arrayOf(old))
             }
@@ -194,7 +277,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                     val all=out.toByteArray()
                     if(AlertFrames.digest(all)==digest) {
                         val json=try{JSONObject(Charsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(all)).toString())}catch(_:Exception){null}
-                        if(json?.optString("type")=="alert" && json.optString("event_id")==id)result=json
+                        if(json!=null && json.optString("type") in ConversationCapture.contentTypes && json.optString("event_id")==id &&
+                            (json.optString("type")!="captured_message" || ConversationCapture.valid(json)))result=json
                     }
                 }
             }
@@ -207,7 +291,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
 object AlertFrames {
     fun digest(bytes: ByteArray): String=MessageDigest.getInstance("SHA-256").digest(bytes).joinToString(""){"%02x".format(it.toInt() and 255)}
     fun split(alert: JSONObject): List<JSONObject> {
-        require(alert.optString("type")=="alert")
+        require(alert.optString("type") in ConversationCapture.contentTypes)
         val raw=alert.toString().toByteArray(Charsets.UTF_8)
         require(raw.size<=1024*1024){"Captured alert exceeds the 1 MiB transport safety bound"}
         if(raw.size<=1800)return listOf(alert)

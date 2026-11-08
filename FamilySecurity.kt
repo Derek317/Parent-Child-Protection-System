@@ -16,7 +16,7 @@ import javax.crypto.spec.PBEKeySpec
 
 /** Parent authority is separate from the encryption token shared with a child. */
 object FamilySecurity {
-    val controlTypes = setOf("sync_trusted", "unlock_code", "key_rotated", "remote_reset_child", "alert_receipt")
+    val controlTypes = setOf("sync_trusted", "unlock_code", "key_rotated", "remote_reset_child", "alert_receipt", "capture_policy")
     private const val ITERATIONS = 600_000
     private val encoder = Base64.getUrlEncoder()
     private val decoder = Base64.getUrlDecoder()
@@ -91,6 +91,8 @@ object FamilySecurity {
         val lifetime = if (type == "remote_reset_child") 20 * 60_000L else 24 * 60 * 60_000L
         if (timestamp <= 0 || timestamp > now + 120_000L || timestamp < now - lifetime) return false
         return when (type) {
+            "capture_policy" -> command.optInt("schema_version")==2 && command.optString("mode")=="full_visible_conversation" &&
+                try { UUID.fromString(command.getString("policy_id")).toString()==command.getString("policy_id") } catch(_:Exception){false}
             "unlock_code" -> validCode(command.optString("code")) && command.optLong("exp") in (now + 1)..(timestamp + 15 * 60_000L)
             "alert_receipt" -> command.optString("event_id").matches(Regex("[A-Za-z0-9:_-]{1,160}")) && command.optString("outcome") in setOf("stored","discarded")
             "key_rotated" -> validToken(command.optString("new_token")) && isVerifier(command.optString("new_pin"))

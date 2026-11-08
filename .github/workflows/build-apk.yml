@@ -10,6 +10,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    outputs:
+      artifact_name: ${{ steps.package.outputs.artifact_name }}
+      signed_verified: ${{ steps.verify.outputs.signed_verified }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -37,7 +40,7 @@ jobs:
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/values
           cp -R ui-res/. app/src/main/res/
-          cp FamilySecurity.kt FamilyEvidence.kt app/src/main/java/app/family/igguard/
+          cp FamilySecurity.kt FamilyEvidence.kt ConversationCapture.kt app/src/main/java/app/family/igguard/
 
           if [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
             sed "s/^package .*/package app.family.igguard/" MainActivity.kt > app/src/main/java/app/family/igguard/MainActivity.kt
@@ -96,7 +99,7 @@ jobs:
                   minSdk 26
                   targetSdk 34
                   versionCode $VER_CODE
-                  versionName "4.6"
+                  versionName "4.7"
               }
 
               signingConfigs {
@@ -275,8 +278,48 @@ jobs:
           gradle assembleRelease --no-daemon
           echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
 
+      - name: Verify signed APK
+        id: verify
+        if: steps.package.outputs.artifact_name == 'ig-guard-signed-apk'
+        run: |
+          set -euo pipefail
+          for apk in app/build/outputs/apk/release/*.apk; do
+            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify "$apk"
+          done
+          echo "signed_verified=true" >> "$GITHUB_OUTPUT"
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package.outputs.artifact_name }}
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          overwrite: true
+
+  release:
+    needs: build
+    if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/') && github.event.deleted != true }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tagged source and release notes
+        uses: actions/checkout@v5
+
+      - name: Download verified signed APK
+        id: download
+        if: needs.build.result == 'success' && needs.build.outputs.artifact_name == 'ig-guard-signed-apk' && needs.build.outputs.signed_verified == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ig-guard-signed-apk
+          path: release-artifacts
+
+      - name: Publish release or notes-only fallback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          ARTIFACT_NAME: ${{ needs.build.outputs.artifact_name }}
+          APK_VERIFIED: ${{ needs.build.outputs.signed_verified }}
+          DOWNLOAD_RESULT: ${{ steps.download.outcome }}
+        run: bash scripts/publish-release.sh
