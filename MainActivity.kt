@@ -38,6 +38,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.Parcelable
+import android.os.SystemClock
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -183,6 +184,7 @@ object GuardEngine {
     @Volatile var cpLastNotifTime: String = "Never"
     @Volatile var cpAccConnected: Boolean = false
     @Volatile var cpLastAccTime: String = "Never"
+    @Volatile var cpLastCaptureStatus: String = "尚未讀取 Instagram 對話畫面"
     @Volatile var cpLastHttpStatus: String = "Ready (TLS + AES-256-GCM)"
     @Volatile var cpLastPollStatus: String = "尚未同步"
     @Volatile var cpParentStreamState: String = "Idle"
@@ -1697,26 +1699,40 @@ class IgNotificationListener : NotificationListenerService() {
     }
 
     private fun captureFullNotification(sbn:StatusBarNotification,extras:Bundle,observationSession:Triple<String,String,Int>) {
-        val self=extras.getCharSequence(Notification.EXTRA_SELF_DISPLAY_NAME)?.toString()?.trim().orEmpty()
+        @Suppress("DEPRECATION")
+        val self=extras.getCharSequence(Notification.EXTRA_SELF_DISPLAY_NAME)?.toString()?.trim().orEmpty().ifEmpty {
+            if(Build.VERSION.SDK_INT>=28)(extras.getParcelable<Parcelable>(Notification.EXTRA_MESSAGING_PERSON) as? Person)?.name?.toString()?.trim().orEmpty() else ""
+        }
         val rawTitle=extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val title=if(rawTitle.startsWith("[") && rawTitle.contains("]"))rawTitle.substringAfter("]").trim() else rawTitle
-        val conversation=extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim().orEmpty().ifEmpty{title}
         val account=GuardEngine.notificationRecipient(rawTitle)
         val conversationKind=if(extras.containsKey(Notification.EXTRA_IS_GROUP_CONVERSATION)) {
             if(extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION))"group" else "direct"
         } else "unknown"
-        if(conversation.isBlank() || conversationKind!="group" && GuardEngine.isSelfSenderLabel(this,conversation))return
+        fun own(label:String)=GuardEngine.isSelfSenderLabel(this,label) || self.isNotEmpty() && label.equals(self,true) || account.isNotEmpty() && label.removePrefix("@").equals(account,true)
+        fun authorOf(b:Bundle):String {
+            @Suppress("DEPRECATION")
+            val person=if(Build.VERSION.SDK_INT>=28)(b.getParcelable<Parcelable>("sender_person") as? Person)?.name?.toString()?.trim().orEmpty() else ""
+            return person.ifEmpty{b.getCharSequence("sender")?.toString()?.trim().orEmpty()}
+        }
+        val bundles=getParcelableArrayCompat(extras,Notification.EXTRA_MESSAGES)
+        val header=extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim().orEmpty()
+        val conversation=if(conversationKind=="group")header.ifEmpty{title} else {
+            val peers=bundles.orEmpty().mapNotNull{it as? Bundle}.map(::authorOf).filter{it.isNotBlank() && !own(it)}.distinctBy{it.lowercase(Locale.ROOT)}
+            // MessagingStyle can format EXTRA_TITLE as "account: sender"; it is presentation, not a thread identity.
+            header.takeIf{it.isNotBlank() && !it.equals("Instagram",true) && !own(it)} ?:
+                peers.singleOrNull() ?: if(peers.isEmpty())title.takeIf{it.isNotBlank() && !it.equals("Instagram",true) && !own(it) &&
+                    it.split(':','：').none{part->own(part.trim())}}.orEmpty() else ""
+        }
+        if(conversation.isBlank())return
         val observed=mutableListOf<CapturedText>()
         val occurrences=mutableMapOf<String,Int>()
-        val bundles=getParcelableArrayCompat(extras,Notification.EXTRA_MESSAGES)
         for(bundle in bundles.orEmpty()) {
             val b=bundle as? Bundle ?: continue
             val text=b.getCharSequence("text")?.toString().orEmpty()
             if(text.isBlank())continue
-            @Suppress("DEPRECATION")
-            val personName=if(Build.VERSION.SDK_INT>=28)(b.getParcelable<Parcelable>("sender_person") as? Person)?.name?.toString()?.trim().orEmpty() else ""
-            val author=personName.ifEmpty{b.getCharSequence("sender")?.toString()?.trim().orEmpty()}
-            val outgoing=author.isEmpty() || GuardEngine.isSelfSenderLabel(this,author) || (self.isNotEmpty() && author.equals(self,true))
+            val author=authorOf(b)
+            val outgoing=author.isEmpty() || own(author)
             val direction=if(outgoing)"outgoing" else "incoming"
             val stamp=b.getLong("time",0)
             val identity=JSONArray().put(sbn.key).put(if(stamp>0)stamp else sbn.postTime).put(author).put(text).toString()
@@ -1726,7 +1742,7 @@ class IgNotificationListener : NotificationListenerService() {
         }
         if(bundles.isNullOrEmpty()) {
             val text=(extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?:extras.getCharSequence(Notification.EXTRA_TEXT))?.toString().orEmpty()
-            val direction=if(title.isNotBlank() && !title.equals("Instagram",true) && !GuardEngine.isSelfSenderLabel(this,title))"incoming" else "unknown"
+            val direction=if(title.isNotBlank() && !title.equals("Instagram",true) && !own(title))"incoming" else "unknown"
             if(text.isNotBlank() && !GuardEngine.NON_MESSAGE_UI_PATTERN.matches(text.trim()) && !GuardEngine.isNotificationSummary(text))observed.add(CapturedText(conversation,text,direction,if(direction=="incoming")title else "",account,
                 "notification",0,JSONArray().put(sbn.key).put(sbn.postTime).put(text).toString(),true,conversationKind))
         }
@@ -1752,6 +1768,7 @@ class IgAccessibilityService : AccessibilityService() {
     private var lastScanMs = 0L
     private var lastRemoteSyncMs = 0L
     private var lastCapturedBottomMsg = ""
+    private var pendingScan:Runnable? = null
 
     private val debounceHandler = Handler(Looper.getMainLooper())
     private var pendingReplyText: String = ""
@@ -1828,10 +1845,20 @@ class IgAccessibilityService : AccessibilityService() {
         if (pkg != GuardEngine.INSTAGRAM_PKG) return
 
         val now = System.currentTimeMillis()
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && now - lastScanMs < 450L) {
+        val scanNow=SystemClock.uptimeMillis()
+        if (event.eventType in setOf(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,AccessibilityEvent.TYPE_VIEW_SCROLLED) && scanNow-lastScanMs<450L) {
+            pendingScan?.let{debounceHandler.removeCallbacks(it)}
+            pendingScan=Runnable {
+                pendingScan=null
+                if(GuardEngine.captureRelaySession(this)==observationSession) {
+                    val retry=AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply{packageName=GuardEngine.INSTAGRAM_PKG}
+                    try{onAccessibilityEvent(retry)}finally{@Suppress("DEPRECATION") retry.recycle()}
+                }
+            }.also{debounceHandler.postDelayed(it,(450L-(scanNow-lastScanMs)).coerceAtLeast(1))}
             return
         }
-        lastScanMs = now
+        pendingScan?.let{debounceHandler.removeCallbacks(it)};pendingScan=null
+        lastScanMs = scanNow
         GuardEngine.cpAccConnected = true
         GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
 
@@ -1841,8 +1868,8 @@ class IgAccessibilityService : AccessibilityService() {
             thread { GuardEngine.pollChannelOnce(applicationContext, since = "all") }
         }
 
-        val root = rootInActiveWindow ?: return
-        if(root.packageName?.toString()?.let{it!=GuardEngine.INSTAGRAM_PKG}==true)return
+        val root = rootInActiveWindow ?: run{GuardEngine.cpLastCaptureStatus="Instagram 尚未提供可讀取的前景視窗";return}
+        if(root.packageName?.toString()?.let{it!=GuardEngine.INSTAGRAM_PKG}==true){GuardEngine.cpLastCaptureStatus="目前前景視窗不是 Instagram";return}
         val dmUnlocked = GuardEngine.isTemporarilyUnlocked(this)
 
         val metrics = resources.displayMetrics
@@ -1852,7 +1879,7 @@ class IgAccessibilityService : AccessibilityService() {
 
         val items = ArrayList<ScreenNodeItem>(90)
         collectScreenNodes(root,items,0,rootBounds,intArrayOf(0))
-        if (items.isEmpty()) return
+        if (items.isEmpty()){GuardEngine.cpLastCaptureStatus="Instagram 未提供可讀取的文字節點";return}
 
         val joined = items.joinToString(" ") { it.text }
 
@@ -1866,7 +1893,13 @@ class IgAccessibilityService : AccessibilityService() {
             joined.contains("Quiet mode", ignoreCase = true) ||
             joined.contains("靜音模式")
 
-        if (!dmUnlocked && isExplicitMuteScreen) {
+        // A named or semantic DM composer remains valid when a keyboard raises it above mid-screen.
+        val dmComposerNode = items.firstOrNull { item ->
+            item.top>=0 && (item.isEditable && (ConversationCapture.composerLabel(item.text) || ConversationCapture.composerLabel(item.hintText)) ||
+                ConversationCapture.composerRole(item.viewId) || !fullCapture && item.isEditable && item.top>=screenHeight*.72)
+        }
+
+        if (!dmUnlocked && dmComposerNode==null && isExplicitMuteScreen) {
             performGlobalAction(GLOBAL_ACTION_BACK)
             GuardEngine.sendAlertFromChild(
                 this,
@@ -1876,17 +1909,6 @@ class IgAccessibilityService : AccessibilityService() {
                 expectedSession=observationSession
             )
             return
-        }
-
-        // A named DM composer can move above the keyboard. Full capture requires explicit DM context.
-        val dmComposerNode = items.firstOrNull { item ->
-            fun named(value:String)=value.trim().trimEnd('.', '…', ' ').let {
-                it.equals("Message",true) || it in setOf("發送訊息","傳送訊息","輸入訊息")
-            }
-            item.top >= (screenHeight * 0.42).toInt() &&
-                (!fullCapture && item.isEditable && item.top >= (screenHeight * 0.72).toInt() ||
-                    item.isEditable && (named(item.text) || named(item.hintText)) ||
-                    item.viewId.substringAfterLast('/') in setOf("message_composer","row_thread_composer_edittext","message_input"))
         }
 
         // Profile controls quoted inside a DM are message text, not proof of the child's identity.
@@ -1913,8 +1935,7 @@ class IgAccessibilityService : AccessibilityService() {
             return
         }
 
-        val header=ConversationCapture.threadHeader(items.map{it.visible()},screenHeight)
-            ?.takeUnless{GuardEngine.isChildSelfHandle(this,it.text.trim().removePrefix("@"))}
+        val header=ConversationCapture.threadHeader(items.map{it.visible()}.filterNot{GuardEngine.isChildSelfHandle(this,it.text)},screenHeight)
         val topHeaderSender=header?.text?.trim()?.removePrefix("@").orEmpty()
 
         // Check if bottom navigation bar (Home/Search/Reels/Profile tabs) is visible -> If visible, user is on Feed/Reels/Explore/Profile, NOT inside a DM chat!
@@ -1960,8 +1981,9 @@ class IgAccessibilityService : AccessibilityService() {
         }
 
         // ================= CONTEXT 2: STRICTLY INSIDE A 1-ON-1 / GROUP DM CHAT THREAD =================
-        val isStrictlyInsideDmChat = !hasBottomNavTabs && dmComposerNode != null && topHeaderSender.isNotEmpty()
+        val isStrictlyInsideDmChat = !hasBottomNavTabs && dmComposerNode != null && topHeaderSender.isNotEmpty() && dmComposerNode.top>header!!.bottom
         if (!isStrictlyInsideDmChat) {
+            GuardEngine.cpLastCaptureStatus=when{hasBottomNavTabs->"目前是動態／導覽頁，沒有擷取對話";dmComposerNode==null->"未識別訊息輸入框 · 可讀節點 ${items.size}";topHeaderSender.isEmpty()->"未能確認對話對象 · 可讀節點 ${items.size}";else->"對話標題與輸入框位置不一致"}
             // Issue #4 Fix: User is scrolling Home Feed, Reels, Explore, Stories, or DM Inbox list -> DO NOT read middle-of-screen texts!
             return
         }
@@ -1975,10 +1997,13 @@ class IgAccessibilityService : AccessibilityService() {
             val snapshots=visible.map{CapturedText(topHeaderSender,it.text,it.direction,
                 if(it.direction=="outgoing")account.ifEmpty{"子女"} else "",account,"visible_dm",labelFromToolbar=true)}
             val accepted=GuardEngine.captureMessages(this,snapshots,ConversationCapture.key(account,topHeaderSender),expectedSession=observationSession)
+            GuardEngine.cpLastCaptureStatus="雙向模式 · 可見訊息 ${visible.size} 則 · 本輪保留 ${accepted.size} 則（重複內容不重存）"
             if(GuardEngine.captureRelaySession(this)!=observationSession)return
             if(!dmUnlocked && (GuardEngine.isFlaggedOffender(this,topHeaderSender) || accepted.any{it.optString("direction")=="incoming" && it.optString("reason")=="sexual_or_grooming_content"}))performGlobalAction(GLOBAL_ACTION_BACK)
             return
         }
+
+        GuardEngine.cpLastCaptureStatus="僅傳入警報模式 · 雙向範圍尚未確認"
 
         // Record anything the child is currently typing in the DM composer EditText so we never alert on the child's own sent messages!
         items.filter { it.isEditable && it.text.isNotEmpty() && it.text != it.hintText }.forEach { editNode ->
@@ -2069,9 +2094,9 @@ class IgAccessibilityService : AccessibilityService() {
             val id=node.viewIdResourceName.orEmpty()
             val ownDirection=ConversationCapture.semanticDirection(id).takeUnless{it=="unknown"}?:direction
             val ownBubble=if(ConversationCapture.messageRole(id) && node.childCount>0 && rect.width()>0 && rect.width()<origin.width())rect else bubble
-            val editable=editableAncestor || node.isEditable
+            val editable=editableAncestor || node.isEditable || ConversationCapture.composerRole(id)
             val ownIndex=out.size
-            if (rawText.isNotEmpty() || node.isEditable) {
+            if (rawText.isNotEmpty() || editable) {
                 out.add(
                     ScreenNodeItem(
                         text = rawText.trim(),
@@ -2115,6 +2140,7 @@ class IgAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         debounceHandler.removeCallbacksAndMessages(null)
+        pendingScan=null
         pendingReplyText = ""
         pendingReplySession=null
     }
@@ -3262,7 +3288,7 @@ class MainActivity : Activity() {
                 })
             addView(label("家長可收到 Instagram 實際擷取的傳入及傳出訊息，包括信任名單中的一般對話。這比舊版只轉傳部分傳入警報的範圍更廣。",15f,t.textPrimary,bottomPad=16))
             addView(label("DM 輸入框內尚未送出的草稿不會作為已傳出訊息收集。既有留言及限時動態回覆檢查可能擷取未送出的草稿，會另行標示。",14f,t.textSecondary,bottomPad=14))
-            addView(label("內容會先在此手機加密，經第三方 ntfy.sh 中繼服務傳送至配對家長手機。家長的本機記錄保留至刪除；本 App 沒有開發者訊息資料庫。中繼服務仍處理加密流量及連線資料。",14f,t.textSecondary,bottomPad=14))
+            addView(label("內容會先在此手機加密，經本 App 的 Cloudflare 中繼傳送至配對家長手機。離線內容可在雲端加密暫存最多七天；手機會保留未確認記錄並重試。家長的本機記錄保留至刪除。開發者及 Cloudflare 可處理密文及連線資料，中繼不會取得家庭解密金鑰。",14f,t.textSecondary,bottomPad=14))
             addView(label("只能保留通知及畫面實際提供的內容；未顯示、未擷取或已過期的內容無法復原。確認範圍不代表 App 已獲法律認證。",13f,t.textMuted,bottomPad=18))
             if(policy.isNotEmpty() && !GuardEngine.fullCaptureEnabled(this@MainActivity)) {
                 addView(actionButton("我已了解，啟用雙向擷取",t.btnPrimaryBg,t.btnPrimaryText) {
@@ -3370,6 +3396,7 @@ class MainActivity : Activity() {
             showSheet("連接與診斷") { dialog ->
                 addView(label("家長接收通道：${GuardEngine.cpParentStreamState}\n\n最新傳送：${GuardEngine.cpLastHttpStatus}\n\n最新同步：${GuardEngine.cpLastPollStatus}", 14f, t.textPrimary, bottomPad = 18))
                 if (GuardEngine.isChildMode(this@MainActivity)) {
+                    addView(label("畫面擷取：${GuardEngine.cpLastCaptureStatus}",13f,t.textSecondary,bottomPad=16))
                     addView(label("待確認片段：${GuardEngine.pendingDeliveryCount(this@MainActivity)}\n啟用安全配對後，訊息保留至家長手機確認接收；確認接收不代表已閱讀。斷網後會保留並重試。", 13f, t.textSecondary, bottomPad = 16))
                     addView(actionButton("立即重試傳送", t.btnSecondaryBg, t.btnSecondaryText) { GuardEngine.retryPendingAlerts(this@MainActivity, force = true); dialog.dismiss() })
                     addView(actionButton("檢查系統背景電池限制", t.btnSecondaryBg, t.btnSecondaryText) {
