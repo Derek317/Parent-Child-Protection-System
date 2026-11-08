@@ -37,7 +37,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 def probe(endpoint):
-    request=urllib.request.Request(endpoint+'/health',headers={'Accept':'application/json'})
+    request=urllib.request.Request(endpoint+'/health',headers={'Accept':'application/json','User-Agent':'IGGuard-Relay-Check/1.0'})
     with urllib.request.build_opener(NoRedirect).open(request,timeout=15) as response:
         body=response.read(4097)
         if len(body)>4096 or response.status!=200:
