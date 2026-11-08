@@ -61,6 +61,8 @@ def main():
             raise ValueError('Deploy the relay and set RELAY_BASE_URL or relay/endpoint.json before building a release.')
         if args.probe:
             stage='health'
+            if os.environ.get('GITHUB_ACTIONS')=='true':
+                print(f'::notice title=Relay endpoint::{endpoint} (from '+('RELAY_BASE_URL' if os.environ.get('RELAY_BASE_URL') else 'relay/endpoint.json')+')',flush=True)
             probe(endpoint)
         stage='configuration'
         if args.output:
@@ -76,6 +78,11 @@ def main():
         if stage=='health':
             if isinstance(error,urllib.error.HTTPError):
                 code=f'RELAY_HTTP_{error.code}';message='The configured endpoint rejected /health. Check Worker deployment, workers.dev access and any Access policy.'
+                try:
+                    provider_code=re.search(rb'error code:\s*(1[0-9]{3})',error.read(4096),re.IGNORECASE)
+                    if provider_code:message+=' Cloudflare error '+provider_code.group(1).decode('ascii')+'.'
+                except Exception:
+                    pass
             elif isinstance(error,(urllib.error.URLError,TimeoutError,OSError)):
                 code='RELAY_NETWORK';message='The runner could not reach the configured endpoint. Check DNS, TLS and network availability.'
             elif isinstance(error,json.JSONDecodeError):
