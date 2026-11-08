@@ -39,7 +39,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            npm run deploy
+            npm run deploy | tee "$RUNNER_TEMP/relay-deployment.txt"
+            python3 - "$RUNNER_TEMP/relay-deployment.txt" <<'PY'
+          from pathlib import Path
+          import re, sys
+          for endpoint in dict.fromkeys(re.findall(r'https://[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev',Path(sys.argv[1]).read_text())):
+              print('::notice title=Cloudflare deployed endpoint::'+endpoint)
+          PY
           else
             echo "::warning title=Cloudflare deploy skipped::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is missing. Checking the existing endpoint instead."
             echo "Cloudflare deployment credentials are not configured; checking the existing endpoint instead." >> "$GITHUB_STEP_SUMMARY"
