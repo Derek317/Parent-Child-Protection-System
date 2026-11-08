@@ -78,6 +78,9 @@ def main():
         if stage=='health':
             if isinstance(error,urllib.error.HTTPError):
                 code=f'RELAY_HTTP_{error.code}';message='The configured endpoint rejected /health. Check Worker deployment, workers.dev access and any Access policy.'
+                server=error.headers.get('Server','').lower()
+                if server in ('cloudflare','envoy','nginx'):message+=' Response server: '+server+'.'
+                if error.headers.get('CF-Mitigated','').lower()=='challenge':message+=' Cloudflare challenge blocks non-browser clients.'
                 try:
                     provider_code=re.search(rb'error code:\s*(1[0-9]{3})',error.read(4096),re.IGNORECASE)
                     if provider_code:message+=' Cloudflare error '+provider_code.group(1).decode('ascii')+'.'
