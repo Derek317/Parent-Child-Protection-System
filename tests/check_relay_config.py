@@ -59,4 +59,19 @@ class RelayConfiguration(unittest.TestCase):
                 self.assertIn('::error',report);self.assertIn(code,report)
                 self.assertNotIn('secret',report);self.assertNotIn('private.invalid',report)
 
+    def test_live_gate_checks_websockets_even_if_health_fails_and_requires_both(self):
+        source=(SCRIPT.parents[1]/'.github/workflows/build-apk.yml').read_text().split('      - name: Verify deployed relay and authenticated offline delivery\n',1)[1].split('\n  build:',1)[0]
+        script='\n'.join(line[10:] for line in source.split('        run: |\n',1)[1].splitlines())
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);(root/'relay').mkdir();(root/'bin').mkdir()
+            for command,label,status in [('python3','health','HEALTH_EXIT'),('npm','websocket','SMOKE_EXIT')]:
+                tool=root/'bin'/command
+                tool.write_text('#!/bin/sh\necho '+label+' >> "$CALLS"\nexit "$'+status+'"\n');tool.chmod(0o700)
+            for health,smoke in [(2,0),(0,1),(0,0)]:
+                calls=root/'calls';calls.unlink(missing_ok=True)
+                env={**os.environ,'PATH':str(root/'bin')+os.pathsep+os.environ['PATH'],'CALLS':str(calls),'HEALTH_EXIT':str(health),'SMOKE_EXIT':str(smoke)}
+                result=subprocess.run(['bash','-e','-c',script],cwd=root,env=env,capture_output=True,text=True)
+                self.assertEqual(['health','websocket'],calls.read_text().splitlines())
+                self.assertEqual(health==0 and smoke==0,result.returncode==0)
+
 if __name__=='__main__':unittest.main()

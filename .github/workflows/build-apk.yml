@@ -55,9 +55,15 @@ jobs:
         env:
           RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
         run: |
-          python3 scripts/relay-config.py --require --probe
-          cd relay
-          npm run smoke
+          set -euo pipefail
+          status=0
+          python3 scripts/relay-config.py --require --probe || status=1
+          if (cd relay && npm run smoke); then
+            echo "::notice title=Relay protocol::Authenticated WebSocket, offline delivery and signed receipt checks passed."
+          else
+            status=1
+          fi
+          exit "$status"
 
   build:
     needs: relay

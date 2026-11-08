@@ -40,11 +40,12 @@ async function connect(role,bad=false){
     const index=waiters.findIndex(w=>w.predicate(value));
     if(index<0)queue.push(value);else{const [w]=waiters.splice(index,1);clearTimeout(w.timer);w.resolve(value)}
   });
-  const failed=()=>{
-    failure=new Error('Relay connection or authentication failed');
+  const failed=status=>{
+    failure=new Error((Number.isInteger(status)?'[RELAY_SOCKET_HTTP_'+status+'] ':'')+'Relay connection or authentication failed');
     for(const w of waiters.splice(0)){clearTimeout(w.timer);w.reject(failure)}
   };
-  socket.on('error',failed);socket.on('close',()=>{if(waiters.length)failed()});
+  socket.on('error',()=>failed());socket.on('close',()=>{if(waiters.length)failed()});
+  socket.on('unexpected-response',(_,response)=>{failed(response.statusCode);response.resume();socket.terminate()});
   const next=predicate=>{
     const index=queue.findIndex(predicate);if(index>=0)return Promise.resolve(queue.splice(index,1)[0]);
     if(failure)return Promise.reject(failure);
@@ -76,6 +77,12 @@ try{
   requireValue(verify('sha256',Buffer.from(receipt.payload),keys.publicKey,Buffer.from(receipt.signature,'base64url')));
   requireValue(JSON.parse(receipt.payload).event_id===eventId);
   console.log('Live relay verified: owner authentication, wrong-capability rejection, offline ciphertext delivery, decryption and signed parent receipt.');
+}catch(error){
+  if(process.env.GITHUB_ACTIONS==='true'){
+    const code=/\[RELAY_SOCKET_HTTP_[1-5][0-9]{2}\]/.exec(error.message)?.[0] || '[RELAY_PROTOCOL_CHECK]';
+    console.error('::error title=Relay protocol::'+code+' Authenticated WebSocket or offline receipt verification failed.');
+  }
+  throw error;
 }finally{
   for(const socket of sockets)socket.terminate();
 }
