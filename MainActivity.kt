@@ -541,35 +541,31 @@ object GuardEngine {
     }
 
     // ================= 4. REMOTE KEY ROTATION & REMOTE CHILD UNLOCK/RESET =================
-    fun rotateKeyAndNotifyChild(ctx: Context, resetChildToUnconfigured: Boolean, onComplete: ((Boolean) -> Unit)? = null): String {
+    fun rotateKeyAndNotifyChild(ctx: Context, resetChildToUnconfigured: Boolean, onComplete: ((Boolean) -> Unit)? = null): String = synchronized(pollLock) {
         val session = captureRelaySession(ctx)
         check(session.first == "parent")
         val pending = try { JSONObject(prefs(ctx).getString("pending_rotation_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
         val retry = !resetChildToUnconfigured && session.second in listOf(pending.optString("old_token"), pending.optString("new_token"))
         val oldToken = if (retry) pending.getString("old_token") else session.second
         val newToken = if (retry) pending.getString("new_token") else UUID.randomUUID().toString()
-        if (!resetChildToUnconfigured) prefs(ctx).edit().putString("pending_rotation_json",
-            JSONObject().put("old_token", oldToken).put("new_token", newToken).toString()).apply()
-        val plain = JSONObject().put("type", if (resetChildToUnconfigured) "remote_reset_child" else "key_rotated")
+        val oldCommand=pending.optJSONObject("command")
+        val queued=retry && oldCommand!=null && FamilyEvidence(ctx).use{it.hasQueuedEvent(getChannelTopicForToken(oldToken),"control:"+oldCommand.optString("command_id"))}
+        val command = if(queued)JSONObject(oldCommand.toString()) else JSONObject().put("type", if (resetChildToUnconfigured) "remote_reset_child" else "key_rotated")
             .put("new_token", newToken).put("new_pin", parentPasswordVerifier(ctx))
-            .put("ts_ms", System.currentTimeMillis()).put("time", nowDateTimeStr()).toString()
-        postEncryptedToChannel(ctx, getChannelTopicForToken(oldToken), oldToken, plain,onComplete={ success, _ ->
+            .put("command_id",UUID.randomUUID().toString()).put("ts_ms", System.currentTimeMillis()).put("time", nowDateTimeStr())
+        if (!resetChildToUnconfigured) check(prefs(ctx).edit().putString("pending_rotation_json",
+            JSONObject().put("old_token", oldToken).put("new_token", newToken).put("command",command).toString()).commit())
+        postEncryptedToChannel(ctx, getChannelTopicForToken(oldToken), oldToken, command.toString(),onComplete={ success, _ ->
             val accepted = synchronized(pollLock) {
-                if (!success || captureRelaySession(ctx) != session) false
-                else {
-                    if (!resetChildToUnconfigured) {
-                        setFamilyToken(ctx, newToken, preserveFamilyHistory = true)
-                        ParentAlertService.reconnectActiveStream()
-                    }
-                    true
-                }
+                if(resetChildToUnconfigured)success && captureRelaySession(ctx)==session
+                else isParentMode(ctx) && getOrCreateFamilyToken(ctx)==newToken
             }
             // Retain a pending transition until a child report arrives on the new channel.
             addCheckpointLog(ctx, "CP3-KEY", if (accepted) "Published parent command; waiting for child confirmation" else "Publish failed or session changed; original family retained")
             onComplete?.invoke(accepted)
             ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
         })
-        return newToken
+        newToken
     }
 
     @Synchronized
@@ -1120,7 +1116,8 @@ object GuardEngine {
             require(topic==getChannelTopicForToken(token) && token in relayRouteTokens(ctx))
             val parentCommand=type in FamilySecurity.controlTypes
             check(if(parentCommand)isParentMode(ctx) else isChildMode(ctx) && type in setOf("capture_ack","sync_child_handle"))
-            val commandId=UUID.randomUUID().toString()
+            val commandId=payload.optString("command_id").ifEmpty{UUID.randomUUID().toString()}
+            require(UUID.fromString(commandId).toString()==commandId)
             payload.put("scope",topic).put("command_id",commandId)
             val envelope=if(parentCommand)FamilySecurity.signCommand(payload,parentIdentity(ctx).privateKey) else payload
             val eventId="control:$commandId"
@@ -1162,6 +1159,7 @@ object GuardEngine {
         }
     }
     fun prepareRelayOutbox(ctx:Context) = synchronized(pollLock) {
+        if(isParentMode(ctx)){completePendingRotation(ctx);return@synchronized}
         if(!isChildMode(ctx) || !hasSecureParentCommands(ctx))return@synchronized
         val token=getOrCreateFamilyToken(ctx)
         FamilyEvidence(ctx).use{db->db.migrateRelay(getChannelTopicForToken(token)){wire->
@@ -1170,6 +1168,27 @@ object GuardEngine {
             decoded.put("receipt_requested",true)
             encryptPayload(token,decoded.toString())
         }}
+    }
+    private fun pendingRotation(ctx:Context):JSONObject = try{JSONObject(prefs(ctx).getString("pending_rotation_json","{}").orEmpty())}catch(_:Exception){JSONObject()}
+    private fun rotationEvent(pending:JSONObject):String = pending.optJSONObject("command")?.optString("command_id")?.takeIf{it.isNotEmpty()}?.let{"control:$it"}.orEmpty()
+    private fun completePendingRotation(ctx:Context) {
+        if(!isParentMode(ctx))return
+        val pending=pendingRotation(ctx);val old=pending.optString("old_token");val next=pending.optString("new_token");val event=rotationEvent(pending)
+        if(!FamilySecurity.validToken(old) || !FamilySecurity.validToken(next) || event.isEmpty() || getOrCreateFamilyToken(ctx) !in listOf(old,next))return
+        val scope=getChannelTopicForToken(old)
+        if(!FamilyEvidence(ctx).use{it.eventAccepted(scope,event)})return
+        // Keep accepted controls until the journaled token/history transition has durably committed.
+        if(getOrCreateFamilyToken(ctx)==old){setFamilyToken(ctx,next,preserveFamilyHistory=true);ParentAlertService.reconnectActiveStream()}
+        FamilyEvidence(ctx).use{it.acknowledgeEvent(scope,event)}
+    }
+    internal fun recordRelayAcceptance(ctx:Context,scope:String,frame:PendingEvidence) = synchronized(pollLock) {
+        val pending=pendingRotation(ctx)
+        val rotation=isParentMode(ctx) && scope==getChannelTopicForToken(pending.optString("old_token")) &&
+            frame.id.substringBeforeLast(':')==rotationEvent(pending)
+        FamilyEvidence(ctx).use{db->
+            if(frame.waitForReceipt || rotation)db.relayAccepted(scope,frame.id,System.currentTimeMillis()) else db.acknowledge(scope,frame.id)
+        }
+        if(rotation)completePendingRotation(ctx)
     }
     fun retryPendingAlerts(ctx: Context, force: Boolean = false) {
         if (getRole(ctx)=="unconfigured") return
@@ -1196,11 +1215,8 @@ object GuardEngine {
                         val result=CloudRelay.publishBlocking(app,next.first,frame.id,frame.wire,frame.kind)
                         synchronized(pollLock) {
                         if(captureRelaySession(app)!=session)return@thread
-                        FamilyEvidence(app).use{db->
-                            if(result.accepted) {
-                                if(frame.waitForReceipt)db.relayAccepted(next.second,frame.id,System.currentTimeMillis()) else db.acknowledge(next.second,frame.id)
-                            } else db.failed(next.second,frame.id,System.currentTimeMillis(),session.first,if(result.contextFull)"data" else null)
-                        }
+                        if(result.accepted)recordRelayAcceptance(app,next.second,frame)
+                        else FamilyEvidence(app).use{it.failed(next.second,frame.id,System.currentTimeMillis(),session.first,if(result.contextFull)"data" else null)}
                         }
                         if(captureRelaySession(app)==session) {
                             // A signed receipt may have overtaken the publish acknowledgment.

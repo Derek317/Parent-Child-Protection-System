@@ -94,6 +94,18 @@ class RelayOutboxTest {
         assertTrue(done.await(2,java.util.concurrent.TimeUnit.SECONDS));assertFalse(accepted)
         FamilyEvidence(ctx).use{assertEquals(2,it.pendingCount(scope))}
     }
+    @Test fun newCapturedContextInheritsItsOwnMailboxCooldown() {
+        FamilyEvidence(ctx).use{db->
+            assertTrue(db.enqueueCaptured("f","context-old",listOf("context-old:0" to "cipher"),true,0))
+            db.failed("f","context-old:0",1000,kindOnly="data")
+            assertTrue(db.enqueueCaptured("f","context-new",listOf("context-new:0" to "cipher"),true,0))
+            db.retryNow("f")
+            assertTrue("New ordinary captures must retain the data-mailbox cooldown",db.due("f",1001).isEmpty())
+            assertTrue(db.enqueueCaptured("f","urgent-new",listOf("urgent-new:0" to "cipher"),true,1))
+            assertEquals(listOf("urgent-new:0"),db.due("f",1001).map{it.id})
+            assertEquals(3,db.pendingCount("f"))
+        }
+    }
     @Test fun contextBackpressureCannotDeferNewUrgentEvidence() {
         FamilyEvidence(ctx).use{db->
             db.enqueue("f","context:0","cipher",kind="data")

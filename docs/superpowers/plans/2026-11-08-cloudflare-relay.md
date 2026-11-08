@@ -76,7 +76,7 @@
 **Files:** Update `README.md`, `docs/privacy-data-flow.md`, `docs/releases/4.8.md`; create `docs/relay-migration-report.md` and update design status.
 
 - [x] Run realistic end-to-end clients, offline/throttle/restart/rotation/fragment tests and 100-family load; record actual operation counts and limits.
-- [ ] Run the full Android and backend suites, build/lint/workflow checks; request one independent whole-change review and fix important findings with regression tests.
+- [x] Run the full Android and backend suites, build/lint/workflow checks; request one independent whole-change review and fix important findings with regression tests.
 - [ ] Deploy to the user's free account when authorized account access is available; verify the public endpoint and both-device delivery. Do independent code/tests/docs work while access is pending.
 - [ ] Push verified source using existing Git authentication. Run the signed workflow with the real endpoint, download and verify package/version/certificate/checksum, then replace the existing 4.8 APK and release notes. If deployment/configuration remains unavailable, push a reviewable branch and report the exact release blocker; leave the published APK intact.
 

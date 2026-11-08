@@ -232,8 +232,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         try {
             val inserted=db.insertWithOnConflict("capture_seen",null,ContentValues().apply{put("scope",scope);put("id",id)},SQLiteDatabase.CONFLICT_IGNORE)
             if(inserted == -1L){db.setTransactionSuccessful();return false}
-            enqueueBatch(scope,frames,waitForReceipt)
-            db.execSQL("UPDATE outbox SET priority=?,relay_kind=? WHERE scope=? AND event_id=?",arrayOf(priority.coerceIn(0,3),if(priority>0)"urgent" else "data",scope,id))
+            enqueueBatch(scope,frames,waitForReceipt,kind=if(priority>0)"urgent" else "data")
+            db.execSQL("UPDATE outbox SET priority=? WHERE scope=? AND event_id=?",arrayOf(priority.coerceIn(0,3),scope,id))
             db.setTransactionSuccessful();return true
         } finally {db.endTransaction()}
     }
@@ -248,6 +248,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     }
     fun unacceptedEventCount(scope: String,id: String): Int = readableDatabase.rawQuery(
         "SELECT COUNT(*) FROM outbox WHERE scope=? AND event_id=? AND accepted=0",arrayOf(scope,id)).use{it.moveToFirst();it.getInt(0)}
+    fun eventAccepted(scope:String,id:String):Boolean = readableDatabase.rawQuery(
+        "SELECT COUNT(*),SUM(CASE WHEN accepted=0 THEN 1 ELSE 0 END) FROM outbox WHERE scope=? AND event_id=?",arrayOf(scope,id)).use{it.moveToFirst();it.getInt(0)>0 && it.getInt(1)==0}
+    fun hasQueuedEvent(scope:String,id:String):Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM outbox WHERE scope=? AND event_id=?",arrayOf(scope,id)).use{it.moveToFirst()}
     fun due(scope: String,now: Long,role:String="child"): List<PendingEvidence> {
         fun rows(condition:String,limit:Int)=readableDatabase.rawQuery("SELECT id,wire,receipt,relay_kind FROM outbox WHERE scope=? AND role=? AND retry_at<=? AND $condition ORDER BY accepted ASC,priority DESC,rowid LIMIT ?",arrayOf(scope,role,now.toString(),limit.toString())).use { c -> buildList { while(c.moveToNext())add(PendingEvidence(c.getString(0),c.getString(1),c.getInt(2)==1,c.getString(3))) } }
         val high=rows("priority>0",24);val context=rows("priority=0",32-high.size)
