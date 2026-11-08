@@ -17,11 +17,12 @@ data class EvidenceQuery(val text: String = "", val filter: String = "all", val 
     val conversationKey:String?=null,val section:String="all",val review:String="all",val direction:String="all",val before:EvidenceCursor?=null)
 data class EvidenceCursor(val stamp:Long,val order:Long,val id:String)
 data class EvidenceContact(val sender: String, val count: Int, val important: Int, val latest: Long)
-data class ConversationSummary(val key:String,val label:String,val account:String,val count:Int,val unreviewed:Int,val latest:Long,val preview:String,val categories:List<String> = emptyList(),val kind:String="unknown")
+data class ConversationSummary(val key:String,val label:String,val account:String,val count:Int,val unreviewed:Int,val latest:Long,val preview:String,val categories:List<String> = emptyList(),val kind:String="unknown",val unidentified:Boolean=false)
 data class PendingEvidence(val id: String, val wire: String, val waitForReceipt: Boolean)
+data class CaptureWindow(val tokens:List<String> = emptyList(),val anchor:Long=0,val start:Long=0)
 
 /** App-private, backup-excluded storage. Paging limits the view, never the retained evidence. */
-class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 2), java.io.Closeable {
+class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 3), java.io.Closeable {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE evidence(scope TEXT NOT NULL,id TEXT NOT NULL,sender TEXT NOT NULL,reason TEXT NOT NULL,stamp INTEGER NOT NULL,body TEXT NOT NULL,payload TEXT NOT NULL,saved INTEGER NOT NULL DEFAULT 0,help_seen INTEGER NOT NULL DEFAULT 0,legacy INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id))")
         db.execSQL("CREATE INDEX evidence_time ON evidence(scope,stamp DESC,id DESC)")
@@ -33,8 +34,20 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("CREATE TABLE outbox(scope TEXT NOT NULL,id TEXT NOT NULL,event_id TEXT NOT NULL,wire TEXT NOT NULL,receipt INTEGER NOT NULL DEFAULT 0,accepted INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,retry_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id))")
         db.execSQL("CREATE TABLE fragments(scope TEXT NOT NULL,id TEXT NOT NULL,part INTEGER NOT NULL,parts INTEGER NOT NULL,digest TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(scope,id,part))")
         upgradeConversationSchema(db)
+        upgradeScreenOrder(db)
     }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion<2)upgradeConversationSchema(db) }
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if(oldVersion<2)upgradeConversationSchema(db)
+        if(oldVersion<3)upgradeScreenOrder(db)
+    }
+    private fun upgradeScreenOrder(db:SQLiteDatabase) {
+        db.execSQL("ALTER TABLE evidence ADD COLUMN sort_stamp INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE evidence ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("UPDATE evidence SET sort_stamp=stamp,sort_order=capture_order")
+        db.execSQL("CREATE INDEX evidence_screen_order ON evidence(scope,conversation_key,sort_stamp DESC,sort_order DESC,id DESC)")
+        db.execSQL("ALTER TABLE capture_windows ADD COLUMN anchor INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE capture_windows ADD COLUMN start_order INTEGER NOT NULL DEFAULT 0")
+    }
     private fun upgradeConversationSchema(db:SQLiteDatabase) {
         for((column,definition) in listOf("conversation_key" to "TEXT NOT NULL DEFAULT ''","conversation_label" to "TEXT NOT NULL DEFAULT ''",
             "account_label" to "TEXT NOT NULL DEFAULT ''","direction" to "TEXT NOT NULL DEFAULT 'unknown'",
@@ -71,6 +84,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 put("capture_order",if(captured)alert.optLong("capture_order") else 0)
                 put("reason",alert.optString("reason","other"))
                 put("stamp",alert.optLong("ts_ms").takeIf { it > 0 } ?: System.currentTimeMillis())
+                put("sort_stamp",if(captured && alert.has("screen_anchor_ms"))alert.getLong("screen_anchor_ms") else getAsLong("stamp"))
+                put("sort_order",if(captured && alert.has("screen_order"))alert.getLong("screen_order") else getAsLong("capture_order"))
                 put("body",alert.optString("text"));put("payload",payload.toString());put("legacy",if(legacy)1 else 0);put("help_seen",if(legacy)1 else 0)
             }
             db.insertOrThrow("evidence",null,row)
@@ -79,7 +94,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             return true
         } finally { db.endTransaction() }
     }
-    private fun decode(c: Cursor): JSONObject = JSONObject(c.getString(c.getColumnIndexOrThrow("payload")))
+    private fun decode(c: Cursor,threadOrder:Boolean=false): JSONObject = JSONObject(c.getString(c.getColumnIndexOrThrow("payload")))
         .put("_id",c.getString(c.getColumnIndexOrThrow("id")))
         .put("_saved",c.getInt(c.getColumnIndexOrThrow("saved"))==1)
         .put("_legacy_partial",c.getInt(c.getColumnIndexOrThrow("legacy"))==1)
@@ -87,8 +102,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         .put("_conversation_label",c.getString(c.getColumnIndexOrThrow("conversation_label")))
         .put("_review_state",c.getString(c.getColumnIndexOrThrow("review_state")))
         .put("direction",c.getString(c.getColumnIndexOrThrow("direction")))
-        .put("_sort_stamp",c.getLong(c.getColumnIndexOrThrow("stamp")))
-        .put("_sort_order",c.getLong(c.getColumnIndexOrThrow("capture_order")))
+        .put("_sort_stamp",c.getLong(c.getColumnIndexOrThrow(if(threadOrder)"sort_stamp" else "stamp")))
+        .put("_sort_order",c.getLong(c.getColumnIndexOrThrow(if(threadOrder)"sort_order" else "capture_order")))
 
     fun find(scope: String,id: String): JSONObject? = readableDatabase.rawQuery(
         "SELECT * FROM evidence WHERE scope=? AND id=?",arrayOf(scope,id)).use { if(it.moveToFirst())decode(it) else null }
@@ -98,7 +113,9 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         if(q.sender!=null){clauses.add("sender=?");args.add(q.sender)}
         if(q.conversationKey!=null){clauses.add("conversation_key=?");args.add(q.conversationKey)}
         q.before?.let { cursor ->
-            clauses.add("(stamp<? OR (stamp=? AND (capture_order<? OR (capture_order=? AND id<?))))")
+            val stamp=if(q.conversationKey!=null)"sort_stamp" else "stamp"
+            val order=if(q.conversationKey!=null)"sort_order" else "capture_order"
+            clauses.add("($stamp<? OR ($stamp=? AND ($order<? OR ($order=? AND id<?))))")
             args.addAll(listOf(cursor.stamp.toString(),cursor.stamp.toString(),cursor.order.toString(),cursor.order.toString(),cursor.id))
         }
         when(q.section){
@@ -126,9 +143,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     }
     fun messages(scope: String,q: EvidenceQuery,limit: Int=31): List<JSONObject> {
         val (where,args)=where(scope,q)
-        return readableDatabase.rawQuery("SELECT * FROM evidence WHERE $where ORDER BY stamp DESC,capture_order DESC,id DESC LIMIT ? OFFSET ?",
+        val order=if(q.conversationKey!=null)"sort_stamp DESC,sort_order DESC,id DESC" else "stamp DESC,capture_order DESC,id DESC"
+        return readableDatabase.rawQuery("SELECT * FROM evidence WHERE $where ORDER BY $order LIMIT ? OFFSET ?",
             args+arrayOf(limit.coerceIn(1,61).toString(),(q.page.coerceAtLeast(0)*30L).toString())).use { c ->
-            buildList { while(c.moveToNext())add(decode(c)) }
+            buildList { while(c.moveToNext())add(decode(c,q.conversationKey!=null)) }
         }
     }
     fun contacts(scope: String,q: EvidenceQuery): List<EvidenceContact> {
@@ -144,10 +162,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         return readableDatabase.rawQuery("SELECT conversation_key,conversation_label,account_label,COUNT(*),SUM(CASE WHEN actionable=1 AND review_state<>'reviewed' THEN 1 ELSE 0 END),MAX(stamp) AS latest,GROUP_CONCAT(DISTINCT CASE WHEN actionable=1 THEN reason END) FROM evidence WHERE $where GROUP BY conversation_key ORDER BY ${priority}latest DESC,conversation_key LIMIT 31 OFFSET ?",args+arrayOf((q.page.coerceAtLeast(0)*30L).toString())).use { c ->
             buildList { while(c.moveToNext()) {
                 val key=c.getString(0)
-                val last=readableDatabase.rawQuery("SELECT body,payload FROM evidence WHERE $where AND conversation_key=? ORDER BY stamp DESC,capture_order DESC,id DESC LIMIT 1",args+arrayOf(key)).use {
-                    if(it.moveToFirst())it.getString(0) to JSONObject(it.getString(1)).optString("conversation_kind","unknown") else "" to "unknown"
+                val last=readableDatabase.rawQuery("SELECT body,payload FROM evidence WHERE $where AND conversation_key=? ORDER BY sort_stamp DESC,sort_order DESC,id DESC LIMIT 1",args+arrayOf(key)).use {
+                    if(it.moveToFirst())Triple(it.getString(0),JSONObject(it.getString(1)).optString("conversation_kind","unknown"),ConversationCapture.unidentifiedLegacyLabel(JSONObject(it.getString(1)))) else Triple("","unknown",false)
                 }
-                add(ConversationSummary(key,c.getString(1),c.getString(2),c.getInt(3),c.getInt(4),c.getLong(5),last.first,c.getString(6)?.split(",")?:emptyList(),last.second))
+                add(ConversationSummary(key,c.getString(1),c.getString(2),c.getInt(3),c.getInt(4),c.getLong(5),last.first,c.getString(6)?.split(",")?:emptyList(),last.second,last.third))
             } }
         }
     }
@@ -206,12 +224,13 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.setTransactionSuccessful();return true
         } finally {db.endTransaction()}
     }
-    fun captureWindow(scope:String,thread:String):List<String> = readableDatabase.rawQuery("SELECT tokens FROM capture_windows WHERE scope=? AND thread=?",arrayOf(scope,thread)).use {
-        if(!it.moveToFirst())emptyList() else org.json.JSONArray(it.getString(0)).let{a->(0 until a.length()).map{n->a.getString(n)}}
+    fun captureWindow(scope:String,thread:String):List<String> = captureWindowState(scope,thread).tokens
+    fun captureWindowState(scope:String,thread:String):CaptureWindow = readableDatabase.rawQuery("SELECT tokens,anchor,start_order FROM capture_windows WHERE scope=? AND thread=?",arrayOf(scope,thread)).use {
+        if(!it.moveToFirst())CaptureWindow() else CaptureWindow(org.json.JSONArray(it.getString(0)).let{a->(0 until a.length()).map{n->a.getString(n)}},it.getLong(1),it.getLong(2))
     }
-    fun setCaptureWindow(scope:String,thread:String,tokens:List<String>) {
+    fun setCaptureWindow(scope:String,thread:String,tokens:List<String>,anchor:Long=0,start:Long=0) {
         require(tokens.size<=128)
-        writableDatabase.insertWithOnConflict("capture_windows",null,ContentValues().apply{put("scope",scope);put("thread",thread);put("tokens",org.json.JSONArray(tokens).toString());put("updated",System.currentTimeMillis())},SQLiteDatabase.CONFLICT_REPLACE)
+        writableDatabase.insertWithOnConflict("capture_windows",null,ContentValues().apply{put("scope",scope);put("thread",thread);put("tokens",org.json.JSONArray(tokens).toString());put("updated",System.currentTimeMillis());put("anchor",anchor);put("start_order",start)},SQLiteDatabase.CONFLICT_REPLACE)
         writableDatabase.execSQL("DELETE FROM capture_windows WHERE scope=? AND thread NOT IN (SELECT thread FROM capture_windows WHERE scope=? ORDER BY updated DESC,thread LIMIT 32)",arrayOf(scope,scope))
     }
     fun unacceptedEventCount(scope: String,id: String): Int = readableDatabase.rawQuery(

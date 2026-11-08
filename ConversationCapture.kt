@@ -8,9 +8,11 @@ import java.util.UUID
 /** A displayed/notification observation, never a promise of a complete or delivered message. */
 data class CapturedText(val conversation:String,val text:String,val direction:String,
     val author:String="",val account:String="",val source:String="visible_dm",val messageTime:Long=0,
-    val sourceKey:String="",val possibleDuplicate:Boolean=false,val conversationKind:String="unknown")
+    val sourceKey:String="",val possibleDuplicate:Boolean=false,val conversationKind:String="unknown",val labelFromToolbar:Boolean=false)
 data class VisibleCaptureText(val text:String,val top:Int,val bottom:Int,val left:Int,val right:Int,
-    val editable:Boolean=false,val fromText:Boolean=true,val children:Int=0,val direction:String="unknown")
+    val editable:Boolean=false,val fromText:Boolean=true,val children:Int=0,val direction:String="unknown",
+    val viewId:String="",val button:Boolean=false,val heading:Boolean=false,
+    val bubbleLeft:Int=left,val bubbleRight:Int=right)
 
 object ConversationCapture {
     val contentTypes=setOf("alert","captured_message")
@@ -63,6 +65,7 @@ object ConversationCapture {
             .put("signals",JSONArray(signals.toList())).put("matches",matches)
             .put("possible_duplicate",c.possibleDuplicate).put("flag_partner",c.conversationKind!="group" && c.direction=="incoming" && c.source!="comment_story_draft" && c.author.isNotBlank() &&
                 c.author.trim().removePrefix("@").equals(conversation.removePrefix("@"),true) && signals.any{it in setOf("sexual_language","image_request","secrecy")})
+        if(c.labelFromToolbar)r.put("label_from_toolbar",true)
         require(valid(r));return r
     }
     fun valid(r:JSONObject):Boolean {
@@ -79,6 +82,10 @@ object ConversationCapture {
         val messageTime=r.optLong("message_time_ms");val capturedTime=r.optLong("captured_at_ms")
         if(messageTime>capturedTime+120_000L || r.optLong("ts_ms")!=(if(messageTime>0)messageTime else capturedTime))return false
         if(r.optLong("capture_order")<0)return false
+        if(r.has("screen_anchor_ms") || r.has("screen_order")) {
+            if(!r.has("screen_anchor_ms") || !r.has("screen_order") || r.optString("source_context")!="visible_dm" || messageTime!=0L ||
+                r.optLong("screen_anchor_ms") !in 1..capturedTime || r.optLong("screen_order") !in -1_000_000_000L..1_000_000_000L)return false
+        }
         val signals=r.optJSONArray("signals")?:return false;val matches=r.optJSONArray("matches")?:return false
         if(signals.length()>8 || matches.length()>40)return false
         val allowed=setOf("secrecy","image_request","sexual_language","unapproved_contact","flagged_follow_up")
@@ -95,25 +102,68 @@ object ConversationCapture {
         return r.toString().toByteArray(Charsets.UTF_8).size<=1024*1024
     }
     /** Longest bounded contiguous overlap; occurrences, rather than text alone, are retained. */
-    fun newIndices(previous:List<String>,current:List<String>):List<Int> {
+    fun overlap(previous:List<String>,current:List<String>):Triple<Int,Int,Int> {
         require(previous.size<=128 && current.size<=128)
-        var best=0;var start=0
+        var best=0;var previousStart=0;var start=0
         for(i in previous.indices)for(j in current.indices) {
             var n=0
             while(i+n<previous.size && j+n<current.size && previous[i+n]==current[j+n])n++
-            if(n>best){best=n;start=j}
+            if(n>best){best=n;previousStart=i;start=j}
         }
+        return Triple(previousStart,start,best)
+    }
+    fun newIndices(previous:List<String>,current:List<String>):List<Int> {
+        val (_,start,best)=overlap(previous,current)
         return current.indices.filter{best==0 || it !in start until start+best}
+    }
+    private val navigationLabels=setOf("back","go back","返回","上一頁","返回上一頁","navigate up","call","video call","audio call","通話","語音通話","視像通話","視訊通話","more options","更多選項")
+    fun navigationLabel(text:String)=text.trim().lowercase(Locale.ROOT) in navigationLabels
+    fun unidentifiedLegacyLabel(record:JSONObject):Boolean=record.optString("source_context")!="notification" && record.optString("capture_source")!="notification" && !record.optBoolean("label_from_toolbar") &&
+        navigationLabel(record.optString("conversation_label",record.optString("sender")))
+    fun displayLabel(label:String,unidentified:Boolean)=if(unidentified)"未識別對話（舊擷取：$label）" else label
+    fun messageRole(id:String):Boolean = id.lowercase(Locale.ROOT).let {
+        (it.contains("message") || it.contains("row_thread_text") || it.contains("bubble")) &&
+            listOf("composer","input","send_button","reaction","timestamp","status","seen","avatar","reply_button").none(it::contains)
+    }
+    fun semanticDirection(id:String):String {
+        val name=id.lowercase(Locale.ROOT)
+        if(!messageRole(name))return "unknown"
+        return when {
+            Regex("(^|_)(outgoing|sent)(_|$)").containsMatchIn(name.substringAfterLast('/'))->"outgoing"
+            Regex("(^|_)(incoming|received)(_|$)").containsMatchIn(name.substringAfterLast('/'))->"incoming"
+            else->"unknown"
+        }
+    }
+    /** A toolbar title, not the first readable label (which is often the Back button). */
+    fun threadHeader(items:List<VisibleCaptureText>,height:Int):VisibleCaptureText? {
+        fun title(item:VisibleCaptureText)=Regex("(action_bar_title|thread_title|toolbar_title|header_title|thread_name|recipient_name)").containsMatchIn(item.viewId.lowercase(Locale.ROOT))
+        val candidates=items.filter { !it.editable && !it.button && it.top>=0 && it.bottom<=height*.20 &&
+            it.text.trim().length in 1..128 && !it.text.trim().all(Char::isDigit) &&
+            (title(it) || !navigationLabel(it.text) && it.text.trim().lowercase(Locale.ROOT) !in GuardEngine.RESERVED_UI_HEADERS && !GuardEngine.isNonMessageUiString(it.text)) &&
+            (it.fromText || title(it) || it.heading) && (it.children==0 || title(it) || it.heading) }
+        val semantic=candidates.filter{title(it)}.distinctBy{it.text.trim()}
+        if(semantic.size==1)return semantic.single()
+        if(semantic.isNotEmpty())return null
+        val back=items.firstOrNull{it.button && navigationLabel(it.text) || it.viewId.contains("button_back")}?:return null
+        val row=candidates.filter{it.top<back.bottom && it.bottom>back.top && it.left>=back.right}
+        val headings=row.filter{it.heading}.distinctBy{it.text.trim()}
+        if(headings.isNotEmpty())return headings.singleOrNull()
+        return row.distinctBy{it.text.trim()}.singleOrNull()
     }
     fun visibleMessages(items:List<VisibleCaptureText>,width:Int,height:Int,threadTop:Int,composerTop:Int):List<VisibleCaptureText> {
         if(width<=0 || height<=0 || composerTop<=threadTop)return emptyList()
-        return items.asSequence().filter{!it.editable && it.fromText && it.children==0 && it.text.isNotBlank() &&
-            it.top>=threadTop && it.bottom<=minOf(composerTop,height) && it.left>=0 && it.right<=width &&
+        return items.asSequence().filter{!it.editable && !it.button && (it.fromText || messageRole(it.viewId)) && it.children==0 && it.text.isNotBlank() &&
+            it.bottom>threadTop && it.top<minOf(composerTop,height) && it.right>0 && it.left<width &&
             !GuardEngine.NON_MESSAGE_UI_PATTERN.matches(it.text.trim())}
             .distinctBy{listOf(it.text,it.top,it.bottom,it.left,it.right)}.sortedWith(compareBy({it.top},{it.left})).take(128).map {
-                val incoming=it.left<=width*.27 && it.right<=width*.85
-                val outgoing=it.right>=width*.73 && it.left>=width*.15
-                it.copy(direction=if(incoming && !outgoing)"incoming" else if(outgoing && !incoming)"outgoing" else "unknown")
+                val left=it.bubbleLeft.coerceAtLeast(0);val right=(width-it.bubbleRight).coerceAtLeast(0)
+                val direction=when {
+                    it.direction in setOf("incoming","outgoing")->it.direction
+                    right-left>width*.035->"incoming"
+                    left-right>width*.035->"outgoing"
+                    else->"unknown"
+                }
+                it.copy(direction=direction)
             }.toList()
     }
 }
