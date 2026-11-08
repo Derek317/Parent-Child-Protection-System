@@ -40,6 +40,31 @@ class ConversationProtocolTest {
     }
     private fun policy(id:String=UUID.randomUUID().toString())=JSONObject().put("type","capture_policy").put("schema_version",2).put("mode","full_visible_conversation").put("policy_id",id)
         .put("scope",GuardEngine.getChannelTopic(ctx)).put("command_id",UUID.randomUUID().toString()).put("ts_ms",System.currentTimeMillis())
+    @Test fun realQueuedPolicyAndChildAcknowledgmentCompleteTheTwoWayHandshake(){
+        GuardEngine.setRole(ctx,"parent")
+        val publicKey=GuardEngine.relayPublicKey(ctx)
+        val privateKey=prefs.getString("parent_signing_private","")!!
+        GuardEngine.requestFullCapture(ctx)
+        val id=GuardEngine.pendingCapturePolicy(ctx);val scope=GuardEngine.getChannelTopic(ctx)
+        val token=GuardEngine.getOrCreateFamilyToken(ctx)
+        val commands=FamilyEvidence(ctx).use{it.due(scope,Long.MAX_VALUE,"parent")}
+        assertTrue(commands.isNotEmpty())
+        GuardEngine.setRole(ctx,"child")
+        prefs.edit().putString("parent_command_public_key",publicKey).remove("capture_policy_id").commit()
+        fun deliver(frames:List<PendingEvidence>,role:String){for(frame in frames){
+            val line=JSONObject().put("event","message").put("id",UUID.randomUUID().toString()).put("message",frame.wire)
+            assertEquals(RelayConsumption.CONSUMED,GuardEngine.processIncomingRelayLine(ctx,line.toString(),role,null))
+        }}
+        deliver(commands,"child")
+        assertEquals(id,GuardEngine.pendingCapturePolicy(ctx));assertFalse(GuardEngine.fullCaptureEnabled(ctx))
+        assertTrue(GuardEngine.confirmFullCapture(ctx));assertTrue(GuardEngine.fullCaptureEnabled(ctx))
+        val acks=FamilyEvidence(ctx).use{it.due(scope,Long.MAX_VALUE,"child")}
+        assertTrue(acks.isNotEmpty())
+        GuardEngine.setRole(ctx,"parent")
+        prefs.edit().putString("parent_signing_public",publicKey).putString("parent_signing_private",privateKey).commit()
+        deliver(acks,"parent")
+        assertTrue(GuardEngine.parentFullCaptureConfirmed(ctx));assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
+    }
     @Test fun signedPolicyRequiresLocalAcknowledgmentAndNewFamilyClearsIt(){
         assertFalse(GuardEngine.fullCaptureEnabled(ctx));assertFalse(GuardEngine.confirmFullCapture(ctx))
         val p=policy();receive(p)

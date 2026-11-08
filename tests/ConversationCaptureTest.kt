@@ -19,6 +19,17 @@ class ConversationCaptureTest {
             VisibleCaptureText("hidden",1800,1850,20,400)),1000,2000,150,1700)
         assertEquals(listOf("partial top","partial bottom"),rows.map{it.text})
     }
+    @Test fun callCardIsNotABackAnchorForAnUnreadableConversationTitle(){
+        val actualBack=VisibleCaptureText("返回",70,140,16,80,button=true,viewId="action_bar_button_back")
+        val callCard=VisibleCaptureText("Call",350,400,20,80,button=true)
+        val cardText=VisibleCaptureText("Call again later",350,400,100,600,heading=true)
+        assertNull(ConversationCapture.threadHeader(listOf(actualBack,callCard,cardText),2000))
+    }
+    @Test fun semanticHeadingCanBeAClickablePeerName(){
+        val back=VisibleCaptureText("返回",70,140,16,80,button=true,viewId="action_bar_button_back")
+        val title=VisibleCaptureText("Alice",85,150,100,600,heading=true,button=true)
+        assertEquals("Alice",ConversationCapture.threadHeader(listOf(back,title),2000)?.text)
+    }
     @Test fun ambiguousToolbarIsSkippedWhileAnExplicitTitleCanLiterallyBeNamedBack(){
         val back=VisibleCaptureText("返回",70,140,16,80,button=true,viewId="action_bar_button_back")
         assertNull(ConversationCapture.threadHeader(listOf(back),2000))

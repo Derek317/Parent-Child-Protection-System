@@ -134,21 +134,26 @@ object ConversationCapture {
             else->"unknown"
         }
     }
+    fun composerRole(id:String):Boolean = id.substringAfterLast('/').lowercase(Locale.ROOT) in
+        setOf("message_composer","row_thread_composer_edittext","message_input","direct_text_input")
+    fun composerLabel(text:String):Boolean = text.trim().trimEnd('.', '…', '⋯', ' ').lowercase(Locale.ROOT) in
+        setOf("message","send message","訊息","消息","發送訊息","傳送訊息","輸入訊息","发送消息","发消息","输入消息")
     /** A toolbar title, not the first readable label (which is often the Back button). */
     fun threadHeader(items:List<VisibleCaptureText>,height:Int):VisibleCaptureText? {
         fun title(item:VisibleCaptureText)=Regex("(action_bar_title|thread_title|toolbar_title|header_title|thread_name|recipient_name)").containsMatchIn(item.viewId.lowercase(Locale.ROOT))
-        val candidates=items.filter { !it.editable && !it.button && it.top>=0 && it.bottom<=height*.20 &&
+        val candidates=items.filter { !it.editable && (!it.button || title(it) || it.heading) && it.top>=0 && it.bottom<=height*.30 &&
             it.text.trim().length in 1..128 && !it.text.trim().all(Char::isDigit) &&
             (title(it) || !navigationLabel(it.text) && it.text.trim().lowercase(Locale.ROOT) !in GuardEngine.RESERVED_UI_HEADERS && !GuardEngine.isNonMessageUiString(it.text)) &&
             (it.fromText || title(it) || it.heading) && (it.children==0 || title(it) || it.heading) }
-        val semantic=candidates.filter{title(it)}.distinctBy{it.text.trim()}
-        if(semantic.size==1)return semantic.single()
-        if(semantic.isNotEmpty())return null
-        val back=items.firstOrNull{it.button && navigationLabel(it.text) || it.viewId.contains("button_back")}?:return null
-        val row=candidates.filter{it.top<back.bottom && it.bottom>back.top && it.left>=back.right}
+        val backs=items.filter{it.viewId.contains("button_back") || it.button && it.text.trim().lowercase(Locale.ROOT) in
+            setOf("back","go back","返回","上一頁","返回上一頁","navigate up")}
+        val row=candidates.filter{item->backs.any{back->item.top<back.bottom && item.bottom>back.top && item.left>=back.right}}
+        val rowTitles=row.filter{title(it)}.distinctBy{it.text.trim()}
+        if(rowTitles.isNotEmpty())return rowTitles.singleOrNull()
         val headings=row.filter{it.heading}.distinctBy{it.text.trim()}
         if(headings.isNotEmpty())return headings.singleOrNull()
-        return row.distinctBy{it.text.trim()}.singleOrNull()
+        if(row.isNotEmpty())return row.distinctBy{it.text.trim()}.singleOrNull()
+        return candidates.filter{title(it)}.distinctBy{it.text.trim()}.singleOrNull()
     }
     fun visibleMessages(items:List<VisibleCaptureText>,width:Int,height:Int,threadTop:Int,composerTop:Int):List<VisibleCaptureText> {
         if(width<=0 || height<=0 || composerTop<=threadTop)return emptyList()

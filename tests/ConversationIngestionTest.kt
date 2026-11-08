@@ -36,6 +36,54 @@ class ConversationIngestionTest {
         })
     }
     @After fun cleanup(){ProxySelector.setDefault(original)}
+    @Test fun ownNotificationTitleUsesTheStructuredPeerAndRecognizesTheChildPerson(){
+        val me=Person.Builder().setName("Child Display Name").build()
+        for((index,peer) in listOf("Alice","Bob").withIndex()){
+            val style=Notification.MessagingStyle(me).setConversationTitle("Child Display Name").setGroupConversation(false)
+                .addMessage("incoming from $peer",1000L+index,Person.Builder().setName(peer).build())
+                .addMessage("reply to $peer",1100L+index,me)
+            val n=Notification.Builder(ctx,"test").setSmallIcon(android.R.drawable.ic_lock_idle_lock).setStyle(style).build()
+            n.extras.remove(Notification.EXTRA_SELF_DISPLAY_NAME)
+            val posted=StatusBarNotification("com.instagram.android","com.instagram.android",70+index,null,0,0,0,n,android.os.UserHandle.getUserHandleForUid(0),2000L+index)
+            val c=Robolectric.buildService(IgNotificationListener::class.java).create()
+            try{c.get().onNotificationPosted(posted)}finally{c.destroy()}
+        }
+        val rows=capturedRows()
+        assertEquals(setOf("Alice","Bob"),rows.map{it.getString("conversation_label")}.toSet())
+        assertEquals(4,rows.size)
+        assertTrue(rows.filter{it.getString("text").startsWith("reply")}.all{it.getString("direction")=="outgoing"})
+        assertTrue(rows.filter{it.getString("text").startsWith("incoming")}.all{it.getString("direction")=="incoming"})
+        assertEquals(2,rows.map{it.getString("conversation_key")}.toSet().size)
+    }
+    @Test fun explicitGroupKeepsItsTitleEvenWhenItMatchesTheChildName(){
+        val me=Person.Builder().setName("child").build()
+        val style=Notification.MessagingStyle(me).setConversationTitle("child").setGroupConversation(true)
+            .addMessage("group message",1000,Person.Builder().setName("Alice").build())
+        val n=Notification.Builder(ctx,"test").setSmallIcon(android.R.drawable.ic_lock_idle_lock).setStyle(style).build()
+        val c=Robolectric.buildService(IgNotificationListener::class.java).create()
+        try{c.get().onNotificationPosted(StatusBarNotification("com.instagram.android","com.instagram.android",76,null,0,0,0,n,android.os.UserHandle.getUserHandleForUid(0),2000))}finally{c.destroy()}
+        assertEquals("child",capturedRows().single().getString("conversation_label"))
+        assertEquals("group",capturedRows().single().getString("conversation_kind"))
+    }
+    @Test fun plainNotificationWithOwnTitleDoesNotInventIncomingAuthorship(){
+        val n=Notification.Builder(ctx,"test").setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setContentTitle("Child Display Name").setContentText("sender not exposed").build()
+        n.extras.putCharSequence(Notification.EXTRA_CONVERSATION_TITLE,"Alice")
+        n.extras.putParcelable(Notification.EXTRA_MESSAGING_PERSON,Person.Builder().setName("Child Display Name").build())
+        val c=Robolectric.buildService(IgNotificationListener::class.java).create()
+        try{c.get().onNotificationPosted(StatusBarNotification("com.instagram.android","com.instagram.android",77,null,0,0,0,n,android.os.UserHandle.getUserHandleForUid(0),2000))}finally{c.destroy()}
+        val row=capturedRows().single()
+        assertEquals("Alice",row.getString("conversation_label"));assertEquals("unknown",row.getString("direction"));assertEquals("",row.getString("author"))
+    }
+    @Test fun selfTitleWithSeveralUnknownPeersDoesNotInventOneDirectConversation(){
+        val me=Person.Builder().setName("child").build()
+        val style=Notification.MessagingStyle(me).setConversationTitle("child").setGroupConversation(false)
+            .addMessage("one",1000,Person.Builder().setName("Alice").build()).addMessage("two",1001,Person.Builder().setName("Bob").build())
+        val n=Notification.Builder(ctx,"test").setSmallIcon(android.R.drawable.ic_lock_idle_lock).setStyle(style).build()
+        val c=Robolectric.buildService(IgNotificationListener::class.java).create()
+        try{c.get().onNotificationPosted(StatusBarNotification("com.instagram.android","com.instagram.android",75,null,0,0,0,n,android.os.UserHandle.getUserHandleForUid(0),2000))}finally{c.destroy()}
+        assertTrue(capturedRows().isEmpty())
+    }
     @Test fun notificationBundleRetainsEarlierTrustedMessagesAndNullSenderOutgoing(){
         GuardEngine.setTrustedHandles(ctx,listOf("friend"));GuardEngine.setChildSelfHandle(ctx,"child")
         val me=Person.Builder().setName("child").build();val other=Person.Builder().setName("friend").build()

@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.app.Application
 import android.content.Context
 import android.graphics.Rect
+import android.os.Looper
+import java.util.concurrent.TimeUnit
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONObject
@@ -54,14 +56,14 @@ class ChatReaderRegressionTest {
         isEditable=editable;viewIdResourceName="com.instagram.android:id/$id"
         className=if(editable)"android.widget.EditText" else "android.widget.TextView"
     }
-    private fun screen(peer:String="Alice",hint:String="Message...",offset:Boolean=false,body:List<AccessibilityNodeInfo> = listOf(node("hello"))):AccessibilityNodeInfo {
+    private fun screen(peer:String="Alice",hint:String="Message...",offset:Boolean=false,body:List<AccessibilityNodeInfo> = listOf(node("hello")),composerY:Int=1700,composerId:String="message_composer",composerEditable:Boolean=true,headerButton:Boolean=false,draftChild:Boolean=false):AccessibilityNodeInfo {
         val root=node(x=0,y=0,r=1000,b=2000).apply{packageName="com.instagram.android"}
         fun add(n:AccessibilityNodeInfo){if(offset)funShift(n,100,200);shadowOf(root).addChild(n)}
         if(offset)root.setBoundsInScreen(Rect(100,200,1100,2200))
         add(node("返回",16,70,80,140,"action_bar_button_back").apply{className="android.widget.ImageButton";isClickable=true})
-        if(peer.isNotEmpty())add(node(peer,100,85,650,150,"action_bar_title"))
+        if(peer.isNotEmpty())add(node(peer,100,85,650,150,"action_bar_title").apply{if(headerButton)className="android.widget.Button"})
         body.forEach(::add)
-        add(node(x=30,y=1700,r=970,b=1820,id="message_composer",editable=true).apply{hintText=hint})
+        add(node(x=30,y=composerY,r=970,b=composerY+120,id=composerId,editable=composerEditable).apply{hintText=hint;if(draftChild)shadowOf(this).addChild(node("private unsent draft",y=composerY+20))})
         return root
     }
     private fun funShift(n:AccessibilityNodeInfo,dx:Int,dy:Int){
@@ -76,6 +78,83 @@ class ChatReaderRegressionTest {
     private fun rows():List<JSONObject> = FamilyEvidence(ctx).use { db->db.due(GuardEngine.getChannelTopic(ctx),Long.MAX_VALUE).mapNotNull {
         GuardEngine.decryptPayload(GuardEngine.getOrCreateFamilyToken(ctx),it.wire)?.takeIf{it.optString("type") in ConversationCapture.contentTypes}
     }}
+    @Test fun accountHeaderCannotReplaceThePeerInTheBackButtonRow(){
+        GuardEngine.setChildSelfHandle(ctx,"child_account")
+        val root=screen(peer="")
+        shadowOf(root).addChild(node("child_account",100,0,600,55,"action_bar_title"))
+        shadowOf(root).addChild(node("Alice",100,85,650,150,"peer_label").apply{isHeading=true})
+        scan(root)
+        assertEquals(listOf("Alice"),rows().map{it.optString("conversation_label")})
+    }
+    @Test fun accountHeaderAndUnknownSelfStillPreferTheActualChatToolbar(){
+        val root=screen("Alice")
+        shadowOf(root).addChild(node("child_account",100,0,600,55,"action_bar_title"))
+        scan(root)
+        assertEquals(listOf("Alice"),rows().map{it.optString("conversation_label")})
+    }
+    @Test fun clickablePeerTitleAndRaisedComposerStillCaptureBothDirections(){
+        val root=screen(body=listOf(node("incoming",y=220),node("outgoing",600,400,970,460,"outgoing_message")),composerY=600,headerButton=true,hint="發送訊息..")
+        scan(root)
+        assertEquals(listOf("incoming","outgoing"),rows().map{it.optString("direction")})
+    }
+    @Test fun traditionalChineseComposerWithoutAResourceIdIsRecognized(){
+        val root=screen(hint="訊息⋯",composerId="")
+        scan(root)
+        assertEquals(listOf("hello"),rows().map{it.optString("text")})
+    }
+    @Test fun semanticComposerWithoutEditableFlagDoesNotExposeItsDraftChildren(){
+        val root=screen(composerEditable=false,draftChild=true)
+        scan(root)
+        assertEquals(listOf("hello"),rows().map{it.optString("text")})
+    }
+    @Test fun coalescedContentChangeEventuallyCapturesTheNewLoadedMessage(){
+        RootShadow.root=screen(body=emptyList())
+        val c=Robolectric.buildService(IgAccessibilityService::class.java).create()
+        try{
+            fun event(type:Int)=c.get().onAccessibilityEvent(AccessibilityEvent.obtain(type).apply{packageName="com.instagram.android"})
+            event(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+            RootShadow.root=screen(body=listOf(node("last update in the burst")))
+            event(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+            shadowOf(Looper.getMainLooper()).idleFor(600,TimeUnit.MILLISECONDS)
+            assertEquals(listOf("last update in the burst"),rows().map{it.optString("text")})
+        }finally{c.destroy()}
+    }
+    @Test fun aScrollEventCapturesNewlyExposedMessagesAfterTheBurst(){
+        RootShadow.root=screen(body=listOf(node("newer",y=600)))
+        val c=Robolectric.buildService(IgAccessibilityService::class.java).create()
+        try{
+            fun event(type:Int)=c.get().onAccessibilityEvent(AccessibilityEvent.obtain(type).apply{packageName="com.instagram.android"})
+            event(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
+            RootShadow.root=screen(body=listOf(node("older",y=400),node("newer",y=600)))
+            event(AccessibilityEvent.TYPE_VIEW_SCROLLED)
+            shadowOf(Looper.getMainLooper()).idleFor(600,TimeUnit.MILLISECONDS)
+            val captured=rows();assertEquals(setOf("older","newer"),captured.map{it.optString("text")}.toSet())
+            FamilyEvidence(ctx).use{db->
+                for(row in captured)db.append("parent-test",row.getString("event_id"),row)
+                val key=captured.first().getString("conversation_key")
+                assertEquals(listOf("older","newer"),db.timeline("parent-test",EvidenceQuery(conversationKey=key)).map{it.getString("text")})
+            }
+        }finally{c.destroy()}
+    }
+    @Test fun delayedScreenScanCannotCrossIntoANewConsentingFamily(){
+        RootShadow.root=screen(body=emptyList())
+        val c=Robolectric.buildService(IgAccessibilityService::class.java).create()
+        try{
+            c.get().onAccessibilityEvent(AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply{packageName="com.instagram.android"})
+            RootShadow.root=screen(body=listOf(node("old family screen")))
+            c.get().onAccessibilityEvent(AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED).apply{packageName="com.instagram.android"})
+            GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString())
+            val id=UUID.randomUUID().toString()
+            ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey)
+                .putString("capture_policy_id",id).putString("capture_local_ack_id",id).commit()
+            shadowOf(Looper.getMainLooper()).idleFor(600,TimeUnit.MILLISECONDS)
+            assertTrue(rows().isEmpty())
+        }finally{c.destroy()}
+    }
+    @Test fun muteSettingWordsInAMessageDoNotCancelCapture(){
+        scan(screen(body=listOf(node("Please do not use Quiet mode tonight"))))
+        assertEquals(listOf("Please do not use Quiet mode tonight"),rows().map{it.optString("text")})
+    }
     @Test fun backControlNeverBecomesRoomNameAndRoomsStaySeparate(){
         scan(screen("Alice"));scan(screen("Bob"))
         assertEquals(setOf("Alice","Bob"),rows().map{it.optString("conversation_label")}.toSet())
