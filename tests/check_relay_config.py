@@ -43,6 +43,8 @@ class RelayConfiguration(unittest.TestCase):
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         cases=[(urllib.error.HTTPError('https://private.invalid/?token=secret',404,'private detail',{},None),'RELAY_HTTP_404'),
                (urllib.error.HTTPError('https://private.invalid/',403,'private detail',{},io.BytesIO(b'error code: 1027 password=secret')),'Cloudflare error 1027'),
+               (urllib.error.HTTPError('https://private.invalid/',403,'private detail',{'Server':'cloudflare','CF-Mitigated':'challenge'},io.BytesIO(b'password=secret')),'Cloudflare challenge'),
+               (urllib.error.HTTPError('https://private.invalid/',403,'private detail',{'Server':'envoy'},io.BytesIO(b'password=secret')),'Response server: envoy'),
                (urllib.error.URLError('password=secret'),'RELAY_NETWORK'),
                (ValueError('Relay protocol does not match this app.'),'RELAY_PROTOCOL'),
                (json.JSONDecodeError('private response','secret',0),'RELAY_RESPONSE')]
