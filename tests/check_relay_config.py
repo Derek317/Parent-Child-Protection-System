@@ -1,5 +1,9 @@
 """Exercise relay configuration and the external health-check boundary."""
 import importlib.util
+import io
+from contextlib import redirect_stdout, redirect_stderr
+from unittest.mock import patch
+import urllib.error
 import json
 import os
 from pathlib import Path
@@ -33,5 +37,23 @@ class RelayConfiguration(unittest.TestCase):
                 result,data=self.run_config(bad,'--require')
                 self.assertNotEqual(0,result.returncode);self.assertIsNone(data)
                 self.assertNotIn('password',result.stderr);self.assertNotIn('token=secret',result.stderr)
+
+    def test_health_failures_have_safe_actionable_ci_annotations(self):
+        spec=importlib.util.spec_from_file_location('relay_config',SCRIPT)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        cases=[(urllib.error.HTTPError('https://private.invalid/?token=secret',404,'private detail',{},None),'RELAY_HTTP_404'),
+               (urllib.error.URLError('password=secret'),'RELAY_NETWORK'),
+               (ValueError('Relay protocol does not match this app.'),'RELAY_PROTOCOL'),
+               (json.JSONDecodeError('private response','secret',0),'RELAY_RESPONSE')]
+        for error,code in cases:
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as temp:
+                out=io.StringIO();err=io.StringIO()
+                with patch.dict(os.environ,{'RELAY_BASE_URL':'https://relay.workers.dev','GITHUB_ACTIONS':'true'}), \
+                     patch('sys.argv',['relay-config','--config',str(Path(temp)/'absent'),'--require','--probe']), \
+                     patch.object(module,'probe',side_effect=error),redirect_stdout(out),redirect_stderr(err):
+                    self.assertEqual(2,module.main())
+                report=out.getvalue()+err.getvalue()
+                self.assertIn('::error',report);self.assertIn(code,report)
+                self.assertNotIn('secret',report);self.assertNotIn('private.invalid',report)
 
 if __name__=='__main__':unittest.main()

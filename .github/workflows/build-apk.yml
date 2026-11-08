@@ -41,6 +41,7 @@ jobs:
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
             npm run deploy
           else
+            echo "::warning title=Cloudflare deploy skipped::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is missing. Checking the existing endpoint instead."
             echo "Cloudflare deployment credentials are not configured; checking the existing endpoint instead." >> "$GITHUB_STEP_SUMMARY"
           fi
 
