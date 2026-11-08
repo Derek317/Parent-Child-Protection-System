@@ -22,4 +22,6 @@
 - [x] Verify actual queued signed policy exchange and local consent. User confirmed two-way mode already enabled, so preserve the existing setup algorithm; reinstall-policy recovery is outside this repair. Add notification self-person/peer-title regressions.
 - [x] Fix only reproduced defects and update Cloudflare disclosure.
 - [x] Run focused tests, full Android tests/build/lint and release checks. Request independent review; fix important findings with regressions.
-- [ ] Push source, run signed4.8-hotfix.N workflow, verify published checksum/certificate/version/endpoint and update repair report.
+- [x] Push source, run signed4.8-hotfix.N workflow, verify published checksum/certificate/version/endpoint and update repair report.
+
+Completed: source dfb95fc/tag4.8-hotfix.3, successful signed workflow42506645535, APK4.8/code161 independently verified. See [capture follow-up report](../../capture-4.8-followup-report.md). No physical Samsung/Instagram test is asserted.

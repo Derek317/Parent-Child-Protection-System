@@ -1,5 +1,7 @@
 # Cloudflare relay migration verification
 
+Historical verification of Cloudflare hotfix `4.8-hotfix.2` (code 159). Later capture repairs replace the downloadable APK in the same release; see the [current capture follow-up report](capture-4.8-followup-report.md) for the current artifact and checksum.
+
 Status: **published and independently verified**. The Cloudflare relay passed live health, authentication, offline ciphertext delivery and signed-receipt checks. The existing 4.8 release now provides the verified signed hotfix APK (version code 159).
 
 ## Root cause and repaired path
@@ -59,9 +61,9 @@ The implementation and reviewed recovery fixes were pushed to `main` at `fc17278
 
 The live health and protocol gates now run independently and both must pass. Regression checks prove an HTTP failure cannot mask the socket result or allow publication. The real-TLS smoke test also verifies safe diagnostics for a denied WebSocket handshake. Account credentials remain in GitHub Actions; selecting the Cloudflare connector did not expose deployment tools to this chat.
 
-## Published artifact verification
+## Published artifact verification (hotfix.2 historical snapshot)
 
-The [release workflow](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42502726914) completed successfully. The published [IG-Guard-4.8.apk](https://github.com/Derek317/Parent-Child-Protection-System/releases/download/4.8/IG-Guard-4.8.apk) was downloaded independently and verified with Android `apksigner`, `aapt`, SHA-256 and a DEX configuration check.
+The [release workflow](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42502726914) completed successfully. The APK published by that workflow was downloaded independently and verified with Android `apksigner`, `aapt`, SHA-256 and a DEX configuration check.
 
 | Check | Verified result |
 | --- | --- |
@@ -75,7 +77,7 @@ The [release workflow](https://github.com/Derek317/Parent-Child-Protection-Syste
 | Source | `640324f471557587dec13e9caca4e0e28cbd7bf0`, tag `4.8-hotfix.2` |
 | Original 4.8 tag | `ebb8f783f80531bb44ec16ecf7dc7e230c2512c1`; unchanged |
 
-The release's `SHA256SUMS` matches the downloaded APK. The release notes identify the hotfix source and successful workflow. The artifact differs from the previous APK; it was not merely a notes update.
+At that publication, the release's `SHA256SUMS` matched the downloaded APK. The release notes identify the hotfix source and successful workflow. The artifact differs from the previous APK; it was not merely a notes update.
 
 Update **both phones in place** with this APK, open the parent app first, then reconnect the child app. Keep the existing secure pairing, consent and app data. Do not uninstall or erase data to migrate. A legacy pairing without a pinned parent key still needs the normal authorized invitation upgrade.
 
