@@ -1,6 +1,6 @@
 # Cloudflare relay migration verification
 
-Status: implementation and local verification complete; independent review findings fixed and verified; Cloudflare deployment succeeded but live readiness and APK publication are blocked by HTTP 403. Production deployment and replacement of the 4.8 download require the workflow's live checks and signed artifact verification; no production success is asserted here yet.
+Status: **published and independently verified**. The Cloudflare relay passed live health, authentication, offline ciphertext delivery and signed-receipt checks. The existing 4.8 release now provides the verified signed hotfix APK (version code 159).
 
 ## Root cause and repaired path
 
@@ -15,7 +15,7 @@ Relevant fixes include durable parent-control attempts, role-scoped outboxes, ty
 - Android full suite: **205 tests, 26 classes, zero failures/errors/skips** including migration, rotation, context-mailbox pressure and persistent reconnect backoff. Both debug and unsigned release APK assembly and debug lint completed successfully. Lint reported zero errors and 60 warnings, including existing platform deprecations and intentional synchronous durability checks.
 - Backend: three crypto/vector tests, eight real Worker/SQLite/WebSocket integration tests, a 100-family workload and the live smoke command exercised over verified local TLS. Tests use Cloudflare's actual local runtime, not a substitute mailbox implementation.
 - Full load simulation: **100 independent families, 200 sockets, 50,000 encrypted records and 50,000 verified signed receipts**; 9,600 records were buffered during receiver-offline intervals. There were 100,400 publish attempts, including 400 queue-full refusals retained and retried by the source; no rate-throttle responses. Approximately 79.7 MB of encrypted bodies were published in 67.6 seconds. All simulated pending records reached zero and archive ordering was checked.
-- Python signing/configuration/release checks: **29 passing checks**. Actionlint and whitespace checks passed before the final review. Hotfix tests prove the original tag is retained and a failed/unverified hotfix does not mutate existing notes/assets.
+- Python signing/configuration/release checks: **30 passing checks**. Actionlint and whitespace checks passed before the final review. Hotfix tests prove the original tag is retained and a failed/unverified hotfix does not mutate existing notes/assets.
 
 The pinned local tooling uses compatible security overrides for sharp 0.35.5 and undici 7.30.2. The final npm audit reported zero known advisories across severities; the full backend suite passed after the update. This is dependency-audit evidence, not a security certification.
 
@@ -49,21 +49,36 @@ The developer's backend can hold ciphertext and metadata. It is not a claim of n
 
 ## Production workflow result
 
-The implementation and reviewed recovery fixes were pushed to `main` at `fc17278`. Subsequent CI-only diagnostics were pushed through `53d3bf8`; Android behavior is unchanged by those diagnostic commits.
+The implementation and reviewed recovery fixes were pushed to `main` at `fc17278`. Subsequent changes through `640324f` concern CI and live-verification diagnostics; Android behavior is unchanged by those commits.
 
-- [Initial run](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42500665435): backend tests and Cloudflare deployment completed successfully; the public health check failed, so APK build and release were skipped.
-- [Final diagnostic run](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42501288915): the deployed and configured URL both equal `https://parent-child-protection-system.dere2005317.workers.dev`. The public `/health` request returns **HTTP 403**, with **Server: cloudflare**. No challenge header or recognized numeric provider error was reported. The endpoint syntax and deployment credentials are therefore not the observed blocker; the precise Cloudflare access restriction still needs account-side/error-page evidence.
+- [Initial run](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42500665435): backend tests and deployment passed, but Cloudflare rejected the Python HTTP health request with 403. APK compilation/signing did not start, so this was not a signing-key failure.
+- The deployed and configured URL were confirmed identical. The user received the expected health JSON in both ordinary and private browser windows, without a required Cloudflare login.
+- [Separated boundary checks](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42502215214): the Python health request still received 403 while the actual authenticated WebSocket, offline ciphertext delivery, decryption and signed parent receipt all passed from CI.
+- [Verified build](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42502346523): adding the honest `IGGuard-Relay-Check/1.0` User-Agent to the health request resolved the rejection. Both health and live protocol checks passed, followed by Android regression checks, compilation, signing verification and artifact upload. No TLS, response validation, authentication or release checks were waived. Cloudflare's exact internal rule was not observable; the verified difference is explicit health-client identification.
+- [Release workflow](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42502726914): source tag `4.8-hotfix.2` targets `640324f471557587dec13e9caca4e0e28cbd7bf0`. The first hotfix tag failed safely before publication. The original `4.8` tag remains `ebb8f783f80531bb44ec16ecf7dc7e230c2512c1`.
 
-The reviewed Worker returns HTTP 200 for an ordinary GET `/health` before family authentication. The observed 403 prevents that intended health response; it is not an APK signing error. APK compilation/signing never started in these runs. Do not weaken the health/authentication checks or publish an APK pointing at a relay that has not passed them.
+The live health and protocol gates now run independently and both must pass. Regression checks prove an HTTP failure cannot mask the socket result or allow publication. The real-TLS smoke test also verifies safe diagnostics for a denied WebSocket handshake. Account credentials remain in GitHub Actions; selecting the Cloudflare connector did not expose deployment tools to this chat.
 
-The browser response from the account owner is needed to distinguish a Cloudflare route/account restriction, Access policy or other edge denial. Account/deployment tools from the selected Cloudflare connector are not exposed to this chat; deployment used the user's GitHub Actions credentials. The separate local cloud workspace also denies direct access through its egress proxy until the saved host allowlist draft is applied. That local proxy denial must not be confused with the workflow's Cloudflare 403.
+## Published artifact verification
 
-No `4.8-hotfix.N` tag was created and this work has not modified the existing 4.8 release notes or APK assets. After live verification succeeds, create an unused hotfix source tag at the verified runtime source commit, run the signed workflow and independently verify the published APK/checksum/certificate. Keep the original `4.8` source tag unchanged.
+The [release workflow](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42502726914) completed successfully. The published [IG-Guard-4.8.apk](https://github.com/Derek317/Parent-Child-Protection-System/releases/download/4.8/IG-Guard-4.8.apk) was downloaded independently and verified with Android `apksigner`, `aapt`, SHA-256 and a DEX configuration check.
 
-## Remaining release checks
+| Check | Verified result |
+| --- | --- |
+| Version | 4.8, version code **159** (previously 150) |
+| Package | `app.family.igguard` |
+| APK SHA-256 | `43f58b11edf3ea8cbc4304c859bd2923fed3c5b3150651d5dfd36110e3cb55fa` |
+| Signing certificate SHA-256 | `0eb6f30787c2d6dc23136a28cfd7a08a7956e5fe0565ba142f6711be38ca3f0e`; unchanged from the previous 4.8 APK |
+| Debuggable | No |
+| Embedded relay URL | `https://parent-child-protection-system.dere2005317.workers.dev` |
+| File size | 1,348,032 bytes |
+| Source | `640324f471557587dec13e9caca4e0e28cbd7bf0`, tag `4.8-hotfix.2` |
+| Original 4.8 tag | `ebb8f783f80531bb44ec16ecf7dc7e230c2512c1`; unchanged |
 
-The exact configured endpoint is `https://parent-child-protection-system.dere2005317.workers.dev`. Direct access from this cloud workspace is currently denied by its network policy; a domain draft is saved but unapplied. The normal deployment workflow must independently verify its health, authorization rejection, offline ciphertext delivery and signed receipt before packaging. Cloudflare account credentials remain in GitHub Actions, not this repository or chat.
+The release's `SHA256SUMS` matches the downloaded APK. The release notes identify the hotfix source and successful workflow. The artifact differs from the previous APK; it was not merely a notes update.
 
-The workflow-produced APK must match signing-certificate SHA-256 `0eb6f30787c2d6dc23136a28cfd7a08a7956e5fe0565ba142f6711be38ca3f0e`, package `app.family.igguard`, version name 4.8, a version code above 150 and a non-debuggable release. Download and checksum verification follow publication. Keep the old APK available if any required gate fails.
+Update **both phones in place** with this APK, open the parent app first, then reconnect the child app. Keep the existing secure pairing, consent and app data. Do not uninstall or erase data to migrate. A legacy pairing without a pinned parent key still needs the normal authorized invitation upgrade.
+
+Direct access from this development workspace remains restricted by its unapplied network draft; the live checks ran in GitHub Actions. That workspace restriction is not a phone setup step.
 
 No physical Samsung S26/Instagram two-phone test has been performed here. The implemented capture still depends on Android exposing Instagram notifications/loaded accessible text and keeping the visible services running; the relay does not bypass Android permissions, force-stop or bank-app checks. Passing tests is not a guarantee that software has no bugs.

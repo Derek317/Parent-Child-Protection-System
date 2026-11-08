@@ -77,7 +77,9 @@
 
 - [x] Run realistic end-to-end clients, offline/throttle/restart/rotation/fragment tests and 100-family load; record actual operation counts and limits.
 - [x] Run the full Android and backend suites, build/lint/workflow checks; request one independent whole-change review and fix important findings with regression tests.
-- [ ] Deploy to the user's free account when authorized account access is available; verify the public endpoint and both-device delivery. Do independent code/tests/docs work while access is pending.
-- [ ] Push verified source using existing Git authentication. Run the signed workflow with the real endpoint, download and verify package/version/certificate/checksum, then replace the existing 4.8 APK and release notes. If deployment/configuration remains unavailable, push a reviewable branch and report the exact release blocker; leave the published APK intact.
+- [x] Deploy to the user's free account when authorized account access is available; verify the public endpoint and both-device delivery. Do independent code/tests/docs work while access is pending.
+- [x] Push verified source using existing Git authentication. Run the signed workflow with the real endpoint, download and verify package/version/certificate/checksum, then replace the existing 4.8 APK and release notes. If deployment/configuration remains unavailable, push a reviewable branch and report the exact release blocker; leave the published APK intact.
 
 Execution: native in this session under the user's explicit approval to implement, push and replace 4.8. No further design/execution-method approval is needed. The live backend URL and account access are external prerequisites, not permission to guess an endpoint or publish an unconfigured APK.
+
+Publication evidence: [verification report](../../relay-migration-report.md), successful workflow42502726914, source640324f/tag4.8-hotfix.2, signed APK4.8/code159. Live parent/child protocol clients passed; physical Samsung/Instagram acceptance remains explicitly unverified.
