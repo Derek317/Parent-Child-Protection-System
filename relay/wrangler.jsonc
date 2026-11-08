@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ig-guard-relay",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-07-30",
+  "workers_dev": true,
+  "observability": { "enabled": false },
+  "durable_objects": {
+    "bindings": [{ "name": "FAMILIES", "class_name": "FamilyRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["FamilyRoom"] }]
+}

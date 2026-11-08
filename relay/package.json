@@ -5,7 +5,7 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test": "node test/protocol.test.js && node test/relay.test.js && node test/load.test.js",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },
