@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 import unittest
+import xml.etree.ElementTree as ET
 S=(Path(__file__).resolve().parents[1]/'MainActivity.kt').read_text()
 def contrast(a,b):
  def lum(h):
@@ -9,6 +10,11 @@ def contrast(a,b):
   return sum((x/12.92 if x<=.04045 else ((x+.055)/1.055)**2.4)*w for x,w in zip(v,(.2126,.7152,.0722)))
  a,b=sorted((lum(a),lum(b)));return (b+.05)/(a+.05)
 class Checks(unittest.TestCase):
+ def test_chat_reader_receives_accessibility_node_identifiers(self):
+  workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/build-apk.yml').read_text()
+  config=re.search(r'<accessibility-service\b.*?/>',workflow,re.S).group(0)
+  flags=ET.fromstring(config).attrib['{http://schemas.android.com/apk/res/android}accessibilityFlags'].split('|')
+  self.assertIn('flagReportViewIds',flags,'Toolbar and message identifiers must be available on actual devices')
  def test_settings_never_unlock(self):
   self.assertNotIn('grantTemporaryUnlock',S.split('private fun openDirectNotificationToggle()',1)[1].split('private fun syncRoleServices()',1)[0])
  def test_monitoring_is_declared(self):

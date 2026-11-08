@@ -84,6 +84,18 @@ class ConversationUiTest {
         all(d.window!!.decorView).filterIsInstance<Button>().single{it.text.toString()=="我已了解，啟用雙向擷取"}.performClick()
         assertTrue(GuardEngine.fullCaptureEnabled(ctx));c.destroy()
     }
+    @Test fun childWithoutParentPolicySeesIncomingOnlyModeAndExactNextSteps(){
+        GuardEngine.setRole(ctx,"child")
+        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a,"permissions")
+        try {
+            val page=views(a).filterIsInstance<TextView>().joinToString(" "){it.text}
+            assertTrue(page.contains("只擷取傳入警報"))
+            views(a).single{it.tag=="full_capture_setup"}.performClick()
+            val sheet=all(ShadowDialog.getLatestDialog().window!!.decorView).filterIsInstance<TextView>().joinToString(" "){it.text}
+            assertTrue(sheet.contains("傳送雙向擷取設定"));assertTrue(sheet.contains("我已了解，啟用雙向擷取"))
+            assertFalse(GuardEngine.fullCaptureEnabled(ctx))
+        }finally{c.destroy()}
+    }
     @Test fun newArrivalsDoNotShiftOlderConversationPagesOrRepeatBoundaryMessages(){
         (1..65).forEach{add(it)}
         val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
@@ -129,6 +141,22 @@ class ConversationUiTest {
             assertEquals((6..35).map{"evidence_ui-$it"},rows())
             views(b).filterIsInstance<Button>().single{it.text.toString()=="較新訊息"}.performClick()
             assertEquals((37..66).map{"evidence_ui-$it"},rows())
+        }finally{restored.destroy()}
+    }
+    @Test fun screenOrderBeforeTheFirstObservedMessageSurvivesRecreation(){
+        for(i in 0..64) {
+            val r=ConversationCapture.record(CapturedText("friend","screen message $i","incoming"),2000,true,false)
+                .put("event_id","screen-$i").put("screen_anchor_ms",1000).put("screen_order",i-40)
+            GuardEngine.recordParentAlert(ctx,r,"screen-$i")
+        }
+        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        views(a).single{it.tag=="evidence_contact_friend"}.performClick()
+        views(a).filterIsInstance<Button>().single{it.text.toString()=="較早訊息"}.performClick();views(a)
+        val saved=Bundle();c.saveInstanceState(saved);c.destroy()
+        val restored=Robolectric.buildActivity(MainActivity::class.java).create(saved);val b=restored.get();nav(b)
+        try {
+            val ids=views(b).mapNotNull{it.tag?.toString()}.filter{it.startsWith("evidence_screen-")}
+            assertEquals((5..34).map{"evidence_screen-$it"},ids)
         }finally{restored.destroy()}
     }
     @Test fun displayNameCannotBeSilentlyTruncatedIntoATrustedUsername(){

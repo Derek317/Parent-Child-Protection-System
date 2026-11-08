@@ -30,6 +30,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -807,9 +808,14 @@ object GuardEngine {
                 FamilyEvidence(ctx).use { db ->
                     val sql=db.writableDatabase;sql.beginTransaction()
                     try {
-                        val previous=if(windowKey!=null)db.captureWindow(scope,windowKey)else emptyList()
-                        val indices=if(windowKey!=null)ConversationCapture.newIndices(previous,hashes)else rows.indices.toList()
+                        val window=if(windowKey!=null)db.captureWindowState(scope,windowKey)else CaptureWindow()
+                        val previous=window.tokens
+                        val overlap=ConversationCapture.overlap(previous,hashes)
+                        val orderedScreen=windowKey!=null && rows.isNotEmpty() && rows.all{it.source=="visible_dm" && it.messageTime==0L && ConversationCapture.key(it.account,it.conversation,it.conversationKind)==windowKey}
                         val orderBase=prefs(ctx).getLong("capture_sequence",0)
+                        val anchor=if(orderedScreen && overlap.third>0 && window.anchor>0)window.anchor else now
+                        val start=if(orderedScreen && overlap.third>0 && window.anchor>0)window.start+overlap.first-overlap.second else orderBase+1
+                        val indices=if(windowKey!=null)ConversationCapture.newIndices(previous,hashes)else rows.indices.toList()
                         // A sequence gap after a failed SQLite transaction is harmless; timestamps remain unchanged.
                         if(indices.isNotEmpty())check(prefs(ctx).edit().putLong("capture_sequence",orderBase+indices.size).commit())
                         for((ordinal,index) in indices.withIndex()) {
@@ -819,6 +825,11 @@ object GuardEngine {
                             val r=ConversationCapture.record(c,now,contact.isNotBlank() && isTrustedSender(ctx,contact,c.text),contact.isNotBlank() && isFlaggedOffender(ctx,contact))
                                 .put("policy_id",pendingCapturePolicy(ctx)).put("child_self_handle",getChildSelfHandle(ctx)).put("capture_order",orderBase+ordinal+1)
                                 .put("possible_duplicate",c.possibleDuplicate || (windowKey!=null && previous.isNotEmpty() && indices.size==rows.size))
+                            if(orderedScreen) {
+                                r.put("screen_anchor_ms",anchor).put("screen_order",start+index)
+                                // Returning to an overlapping part of the same thread must not duplicate an occurrence.
+                                r.put("event_id","screen:"+AlertFrames.digest(JSONArray().put(windowKey).put(anchor).put(start+index).put(hashes[index]).toString().toByteArray(Charsets.UTF_8)))
+                            }
                             if(c.sourceKey.isNotEmpty())r.put("event_id","capture:"+AlertFrames.digest(JSONArray().put(r.getString("conversation_key")).put(c.source).put(c.sourceKey).toString().toByteArray(Charsets.UTF_8)))
                             val stamp=r.getLong("ts_ms")
                             r.put("time",SimpleDateFormat("MM-dd HH:mm:ss",Locale.US).format(Date(stamp)))
@@ -826,7 +837,7 @@ object GuardEngine {
                             val frames=AlertFrames.split(r).mapIndexed { n,f -> "${r.getString("event_id")}:$n" to encryptPayload(token,f.toString()) }
                             if(db.enqueueCaptured(scope,r.getString("event_id"),frames,true,ConversationCapture.priority(r)))accepted.add(r)
                         }
-                        if(windowKey!=null)db.setCaptureWindow(scope,windowKey,hashes)
+                        if(windowKey!=null && hashes.isNotEmpty())db.setCaptureWindow(scope,windowKey,hashes,if(orderedScreen)anchor else 0,if(orderedScreen)start else 0)
                         sql.setTransactionSuccessful()
                     } finally {sql.endTransaction()}
                 }
@@ -1766,8 +1777,12 @@ class IgAccessibilityService : AccessibilityService() {
         val isFocused: Boolean,
         val rawText:String=text,
         val fromText:Boolean=true,
-        val children:Int=0
-    )
+        val children:Int=0,
+        val viewId:String="",val button:Boolean=false,val heading:Boolean=false,
+        val direction:String="unknown",val bubbleLeft:Int=left,val bubbleRight:Int=right
+    ) {
+        fun visible()=VisibleCaptureText(rawText,top,bottom,left,right,isEditable,fromText,children,direction,viewId,button,heading,bubbleLeft,bubbleRight)
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -1805,15 +1820,16 @@ class IgAccessibilityService : AccessibilityService() {
         }
 
         val root = rootInActiveWindow ?: return
+        if(root.packageName?.toString()?.let{it!=GuardEngine.INSTAGRAM_PKG}==true)return
         val dmUnlocked = GuardEngine.isTemporarilyUnlocked(this)
 
         val metrics = resources.displayMetrics
         val rootBounds=Rect();root.getBoundsInScreen(rootBounds)
-        val screenHeight = rootBounds.bottom.takeIf{it>0}?:metrics.heightPixels.coerceAtLeast(1)
-        val screenWidth = rootBounds.right.takeIf{it>0}?:metrics.widthPixels.coerceAtLeast(1)
+        val screenHeight = rootBounds.height().takeIf{it>0}?:metrics.heightPixels.coerceAtLeast(1)
+        val screenWidth = rootBounds.width().takeIf{it>0}?:metrics.widthPixels.coerceAtLeast(1)
 
         val items = ArrayList<ScreenNodeItem>(90)
-        collectScreenNodes(root, items, depth = 0)
+        collectScreenNodes(root,items,0,rootBounds,intArrayOf(0))
         if (items.isEmpty()) return
 
         val joined = items.joinToString(" ") { it.text }
@@ -1842,14 +1858,13 @@ class IgAccessibilityService : AccessibilityService() {
 
         // A named DM composer can move above the keyboard. Full capture requires explicit DM context.
         val dmComposerNode = items.firstOrNull { item ->
+            fun named(value:String)=value.trim().trimEnd('.', '…', ' ').let {
+                it.equals("Message",true) || it in setOf("發送訊息","傳送訊息","輸入訊息")
+            }
             item.top >= (screenHeight * 0.42).toInt() &&
                 (!fullCapture && item.isEditable && item.top >= (screenHeight * 0.72).toInt() ||
-                    item.text.startsWith("Message...", ignoreCase = true) ||
-                    item.text.startsWith("發送訊息") ||
-                    item.text.startsWith("傳送訊息") ||
-                    item.hintText.startsWith("Message...", ignoreCase = true) ||
-                    item.hintText.startsWith("發送訊息") ||
-                    item.hintText.startsWith("傳送訊息"))
+                    item.isEditable && (named(item.text) || named(item.hintText)) ||
+                    item.viewId.substringAfterLast('/') in setOf("message_composer","row_thread_composer_edittext","message_input"))
         }
 
         // Profile controls quoted inside a DM are message text, not proof of the child's identity.
@@ -1876,21 +1891,9 @@ class IgAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Identify top header handle (top 20% of screen)
-        val headerCandidates = items.filter { item ->
-            val clean = item.text.trim().removePrefix("@")
-            val low = clean.lowercase(Locale.US)
-            !item.isEditable &&
-                item.bottom <= (screenHeight * 0.20).toInt() &&
-                clean.length in 2..(if(fullCapture)128 else 30) &&
-                (fullCapture && item.fromText && item.children==0 || !fullCapture && clean.count{it.isWhitespace()}<=2) &&
-                !clean.all { it.isDigit() } &&
-                low !in GuardEngine.RESERVED_UI_HEADERS &&
-                !GuardEngine.isNonMessageUiString(clean) &&
-                !GuardEngine.isChildSelfHandle(this, clean)
-        }.sortedBy { it.top }
-
-        val topHeaderSender = headerCandidates.firstOrNull()?.text?.trim()?.removePrefix("@") ?: ""
+        val header=ConversationCapture.threadHeader(items.map{it.visible()},screenHeight)
+            ?.takeUnless{GuardEngine.isChildSelfHandle(this,it.text.trim().removePrefix("@"))}
+        val topHeaderSender=header?.text?.trim()?.removePrefix("@").orEmpty()
 
         // Check if bottom navigation bar (Home/Search/Reels/Profile tabs) is visible -> If visible, user is on Feed/Reels/Explore/Profile, NOT inside a DM chat!
         val hasBottomNavTabs = items.count { item ->
@@ -1943,13 +1946,12 @@ class IgAccessibilityService : AccessibilityService() {
         if(GuardEngine.captureRelaySession(this)!=observationSession)return
 
         if(fullCapture) {
-            val headerBottom=headerCandidates.firstOrNull()?.bottom?:((screenHeight*.20).toInt())
-            val visible=ConversationCapture.visibleMessages(items.map{VisibleCaptureText(it.rawText,it.top,it.bottom,it.left,it.right,it.isEditable,it.fromText,it.children)},
-                screenWidth,screenHeight,headerBottom+4,dmComposerNode!!.top-4)
+            val visible=ConversationCapture.visibleMessages(items.map{it.visible()},
+                screenWidth,screenHeight,header!!.bottom,dmComposerNode!!.top)
             // The DM header identifies the peer, not which of the child's accounts is active.
             val account=""
             val snapshots=visible.map{CapturedText(topHeaderSender,it.text,it.direction,
-                if(it.direction=="outgoing")account.ifEmpty{"子女"} else "",account,"visible_dm")}
+                if(it.direction=="outgoing")account.ifEmpty{"子女"} else "",account,"visible_dm",labelFromToolbar=true)}
             val accepted=GuardEngine.captureMessages(this,snapshots,ConversationCapture.key(account,topHeaderSender),expectedSession=observationSession)
             if(GuardEngine.captureRelaySession(this)!=observationSession)return
             if(!dmUnlocked && (GuardEngine.isFlaggedOffender(this,topHeaderSender) || accepted.any{it.optString("direction")=="incoming" && it.optString("reason")=="sexual_or_grooming_content"}))performGlobalAction(GLOBAL_ACTION_BACK)
@@ -1972,15 +1974,15 @@ class IgAccessibilityService : AccessibilityService() {
         // - Right edge must NOT reach the right-aligned outgoing margin (<= 82% width)
         // - Horizontal midpoint must sit on the left half of the screen (centerX <= 50% width)
         // - Must NOT match any text recently typed/sent by the child
-        val dmZoneTop = (headerCandidates.firstOrNull()?.bottom ?: (screenHeight * 0.20).toInt()) + 4
+        val dmZoneTop = header!!.bottom
         val dmZoneBottom = (dmComposerNode!!.top - 10).coerceAtMost((screenHeight * 0.84).toInt())
         val maxLeftEdge = (screenWidth * 0.24).toInt()
         val maxRightEdge = (screenWidth * 0.82).toInt()
         val maxCenterX = (screenWidth * 0.50).toInt()
 
-        val incomingLeftBubbles = items.filter { item ->
+        val incomingLeftBubbles = ConversationCapture.visibleMessages(items.map{it.visible()},screenWidth,screenHeight,dmZoneTop,dmZoneBottom).filter { item ->
             val centerX = (item.left + item.right) / 2
-            !item.isEditable &&
+            item.direction=="incoming" &&
                 item.top >= dmZoneTop &&
                 item.bottom <= dmZoneBottom &&
                 item.left in 8..maxLeftEdge &&
@@ -2033,41 +2035,57 @@ class IgAccessibilityService : AccessibilityService() {
     }
 
     @Suppress("DEPRECATION")
-    private fun collectScreenNodes(node: AccessibilityNodeInfo?, out: MutableList<ScreenNodeItem>, depth: Int) {
-        if (node == null || out.size >= 180 || depth > 28) return
+    private fun collectScreenNodes(node: AccessibilityNodeInfo?, out: MutableList<ScreenNodeItem>, depth: Int,
+        origin:Rect,visited:IntArray,editableAncestor:Boolean=false,direction:String="unknown",bubble:Rect?=null) {
+        if (node == null || visited[0]++ >= 2048 || depth > 64) return
         try {
             if (!node.isVisibleToUser) return
-            val rawText = (node.text ?: node.contentDescription)?.toString()?.trim() ?: ""
+            val text=node.text?.toString().orEmpty()
+            val rawText = text.takeIf{it.isNotBlank()}?:node.contentDescription?.toString().orEmpty()
             val rawHint = if (Build.VERSION.SDK_INT >= 26) (node.hintText?.toString()?.trim() ?: "") else ""
+            val rect=Rect();node.getBoundsInScreen(rect);rect.offset(-origin.left,-origin.top)
+            val id=node.viewIdResourceName.orEmpty()
+            val ownDirection=ConversationCapture.semanticDirection(id).takeUnless{it=="unknown"}?:direction
+            val ownBubble=if(ConversationCapture.messageRole(id) && node.childCount>0 && rect.width()>0 && rect.width()<origin.width())rect else bubble
+            val editable=editableAncestor || node.isEditable
+            val ownIndex=out.size
             if (rawText.isNotEmpty() || node.isEditable) {
-                val rect = Rect()
-                node.getBoundsInScreen(rect)
                 out.add(
                     ScreenNodeItem(
-                        text = rawText,
+                        text = rawText.trim(),
                         hintText = rawHint,
                         top = rect.top,
                         bottom = rect.bottom,
                         left = rect.left,
                         right = rect.right,
-                        isEditable = node.isEditable,
+                        isEditable = editable,
                         isFocused = node.isFocused,
-                        rawText=(node.text?:node.contentDescription)?.toString().orEmpty(),
-                        fromText=node.text!=null,
-                        children=node.childCount
+                        rawText=rawText,
+                        fromText=text.isNotBlank(),
+                        children=node.childCount,
+                        viewId=id,button=node.className?.toString()?.contains("Button")==true,
+                        heading=Build.VERSION.SDK_INT>=28 && node.isHeading,
+                        direction=ownDirection,bubbleLeft=ownBubble?.left?:rect.left,bubbleRight=ownBubble?.right?:rect.right
                     )
                 )
             }
             val count = node.childCount
+            val childStart=out.size
             for (i in 0 until count) {
+                if(visited[0]>=2048)break
                 val child = node.getChild(i) ?: continue
                 try {
-                    collectScreenNodes(child, out, depth + 1)
+                    collectScreenNodes(child,out,depth+1,origin,visited,editable,ownDirection,ownBubble)
                 } finally {
                     if (Build.VERSION.SDK_INT < 33) {
                         try { child.recycle() } catch (_: Exception) {}
                     }
                 }
+            }
+            // Some versions expose the message on a container with only decorative children.
+            if(ownIndex<childStart && ConversationCapture.messageRole(id) &&
+                out.subList(childStart,out.size).none{!it.isEditable && !it.button && (it.fromText || ConversationCapture.messageRole(it.viewId))}) {
+                out[ownIndex]=out[ownIndex].copy(children=0)
             }
         } catch (_: Exception) {
         }
@@ -2363,15 +2381,33 @@ class MainActivity : Activity() {
         val t = currentTheme()
         val id = drawableIds.getOrPut(name) { resources.getIdentifier("ic_guard_" + name.replace('-', '_'), "drawable", packageName) }
         if (id != 0) setImageDrawable(resources.getDrawable(id, theme).mutate().apply { setTint(color(t.textSecondary)) })
-        background = ripple(t.bgCanvas, 10)
+        background = ripple(t.bgCard, 10, t.accentPowderSky)
         contentDescription = description
         setPadding(dp(12), dp(12), dp(12), dp(12))
         layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
         setOnClickListener(sessionClick(onClick))
     }
+    private fun focusSurface(fill:String,radius:Int,border:String?=null):StateListDrawable {
+        val t=currentTheme()
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused),background(fill,radius).apply {
+                setStroke(dp(2),color(if(fill==t.btnPrimaryBg)t.btnPrimaryText else t.accentSeafoam))
+            })
+            addState(intArrayOf(),background(fill,radius,border))
+        }
+    }
     private fun ripple(fill: String, radius: Int = 10, border: String? = null): RippleDrawable {
-        val accent = color(currentTheme().accentSeafoam)
-        return RippleDrawable(ColorStateList.valueOf((accent and 0x00ffffff) or 0x18000000), background(fill, radius, border), background("#FFFFFF", radius))
+        val t=currentTheme();val feedback=color(if(fill==t.btnPrimaryBg)t.btnPrimaryText else t.accentSeafoam)
+        return RippleDrawable(ColorStateList.valueOf((feedback and 0x00ffffff) or 0x24000000), focusSurface(fill,radius,border), background("#FFFFFF", radius))
+    }
+    private fun View.describeAsControl(choice:Boolean=false) {
+        accessibilityDelegate=object:View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host:View,info:AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host,info)
+                info.className=if(choice)"android.widget.RadioButton" else "android.widget.Button"
+                if(choice){info.isCheckable=true;info.isChecked=host.isSelected}
+            }
+        }
     }
     private fun applyTheme() {
         val bright = GuardEngine.isBrightTheme(this)
@@ -2424,7 +2460,7 @@ class MainActivity : Activity() {
                     for(i in 0 until cursors.length()) {
                         val row=cursors.getJSONArray(i);val page=row.getInt(0)
                         val cursor=EvidenceCursor(row.getLong(1),row.getLong(2),row.getString(3))
-                        require(page>0 && cursor.stamp>=0 && cursor.order>=0 && cursor.id.length in 1..160)
+                        require(page>0 && cursor.stamp>=0 && cursor.order>= -1_000_000_000L && cursor.id.length in 1..160)
                         evidenceCursors[page]=cursor
                     }
                     require((1..evidencePage).all{evidenceCursors.containsKey(it)})
@@ -2664,6 +2700,7 @@ class MainActivity : Activity() {
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 setOnClickListener { if (section != destination) navigateTo(destination) }
                 tag = "nav_$destination"
+                describeAsControl()
             }
             tab.addView(icon(glyph, if (selected) t.accentSeafoam else t.textMuted, 23))
             tab.addView(label(title, 11f, if (selected) t.accentSeafoam else t.textMuted, selected, topPad = 4).apply { gravity = Gravity.CENTER })
@@ -2682,7 +2719,8 @@ class MainActivity : Activity() {
             "child" -> {
                 val notification = if (!GuardEngine.isNotificationListenerEnabledStatic(this)) "通知未授權" else if (GuardEngine.cpNotifConnected) "通知已連接" else "通知等待連接"
                 val screen = if (!GuardEngine.isAccessibilityEnabledStatic(this)) "畫面未授權" else if (GuardEngine.cpAccConnected) "畫面已連接" else "畫面等待連接"
-                "$notification · $screen" + GuardEngine.pendingDeliveryCount(this).let { if (it > 0) " · 待確認 $it" else "" } + if (GuardEngine.isTemporarilyUnlocked(this)) " · 暫時解鎖中" else ""
+                val capture=if(GuardEngine.fullCaptureEnabled(this))"雙向擷取已啟用" else "只擷取傳入警報"
+                "$notification · $screen · $capture" + GuardEngine.pendingDeliveryCount(this).let { if (it > 0) " · 待確認 $it" else "" } + if (GuardEngine.isTemporarilyUnlocked(this)) " · 暫時解鎖中" else ""
             }
             else -> "選擇這部手機的身份"
         }
@@ -2703,10 +2741,11 @@ class MainActivity : Activity() {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(16), dp(20), dp(16), dp(20)); minimumHeight = dp(100)
-                background = ripple(if (selected) t.bgChip else t.bgCard, 12, if (selected) t.accentSeafoam else t.borderSubtle)
+                background = ripple(if (selected) t.bgChip else t.bgCard, 12, if (selected) t.accentSeafoam else t.accentPowderSky)
                 isClickable = true; isFocusable = true; isSelected = selected
                 contentDescription = "$title。$description"
                 tag = "entry_$role"; setOnClickListener { selectEntryRole(role) }
+                describeAsControl(choice=true)
             }
             card.addView(icon(if (role == "parent") "users-three" else "plant", t.accentSeafoam, 28))
             val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(8), 0) }
@@ -2790,7 +2829,7 @@ class MainActivity : Activity() {
             tabs.addView(Button(this).apply {
                 text = title; textSize = 13f; typeface = font(chartMode == mode); isAllCaps = false
                 setTextColor(color(if (chartMode == mode) t.accentSeafoam else t.textMuted))
-                background = ripple(if (chartMode == mode) t.bgChip else t.bgCard, 7)
+                background = ripple(if (chartMode == mode) t.bgChip else t.bgCard, 7, t.accentPowderSky)
                 minimumHeight = dp(48); isSelected = chartMode == mode
                 setOnClickListener { chartMode = mode; renderUi() }
             }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -2931,14 +2970,14 @@ class MainActivity : Activity() {
     }
     private fun evidenceSource(message:JSONObject):String=when(message.optString("source_context")) {
         "notification"->if(message.optString("conversation_kind")=="group")"群組通知擷取" else "通知擷取"
-        "visible_dm"->"畫面擷取 · 方向按版面辨識"
+        "visible_dm"->"畫面擷取 · 方向按介面資訊及版面辨識"
         "comment_story_draft"->"留言 / 限時動態草稿 · 未確認送出"
         else->"舊記錄 · 來源未詳"
     }
     private fun evidenceClock(message:JSONObject):String {
         val stamp=message.optLong("ts_ms").takeIf{it>0}?:message.optLong("received_at_ms")
         val qualifier=if(message.optString("type")!="captured_message")"舊記錄時間" else if(message.optLong("message_time_ms")>0)"訊息時間" else "擷取時間"
-        return "${evidenceTime(stamp)} · $qualifier"
+        return "${evidenceTime(stamp)} · $qualifier"+if(message.has("screen_order"))" · 按畫面先後排列" else ""
     }
     private fun reviewCategory(reason:String):String=when(reason){
         "sexual_or_grooming_content"->"關鍵字相符"
@@ -2960,7 +2999,7 @@ class MainActivity : Activity() {
         GuardEngine.prepareParentArchive(this)
         val inConversation=evidenceSender!=null
         heading(evidenceSender ?: when(evidenceSection){"review"->"需要跟進";"device"->"裝置與傳送";else->"對話記錄"},
-            if(inConversation)"按時間排列實際擷取的訊息；並非完整 Instagram 對話。" else "按對話對象整理。一般訊息與需要跟進的內容分開。",t)
+            if(inConversation)"只顯示實際擷取內容，按可確認的先後順序整理。" else "按對話對象整理。一般訊息與需要跟進的內容分開。",t)
         if(inConversation)rootContainer.addView(textAction("返回對話列表") { evidenceSender=null;evidenceConversationKey=null;evidenceDirection="all";evidencePage=0;renderUi() })
         else {
             val tabs=LinearLayout(this)
@@ -2976,6 +3015,12 @@ class MainActivity : Activity() {
             rootContainer.addView(tabs)
             rootContainer.addView(textAction(if(GuardEngine.parentFullCaptureConfirmed(this))"雙向擷取已確認 · 查看範圍" else "雙向擷取尚未確認 · 前往設定"){showFullCaptureSetup(t)})
         }
+        if(inConversation)rootContainer.addView(textAction("排序與擷取說明") {
+            showSheet("排序與擷取說明") { dialog ->
+                addView(label("按訊息時間或重疊畫面的先後排列；無法對齊的片段保留擷取順序。通知時間與畫面順序可能無法互相對齊。\n\n只包含實際擷取內容。未顯示或未擷取的訊息無法復原，這不是完整 Instagram 對話備份。",14f,t.textSecondary,bottomPad=18))
+                addView(actionButton("關閉",t.btnPrimaryBg,t.btnPrimaryText){dialog.dismiss()})
+            }
+        })
         val search=inputBox(t,"搜尋帳號或訊息",evidenceSearch,remember=false).apply{tag="evidence_search";maxLines=1}
         val searchUpdate=Runnable{evidencePage=0;renderUi()}
         search.addTextChangedListener(object:TextWatcher {
@@ -2983,21 +3028,25 @@ class MainActivity : Activity() {
             override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){evidenceSearch=s?.toString()?:"";uiHandler.removeCallbacks(searchUpdate);uiHandler.postDelayed(searchUpdate,300)}
             override fun afterTextChanged(s:Editable?)=Unit
         });rootContainer.addView(search)
-        val tools=LinearLayout(this)
-        tools.addView(textAction(if(evidenceDays==0)"全部日期" else "最近 $evidenceDays 日"){
+        val tools=mutableListOf<Button>()
+        tools.add(textAction(if(evidenceDays==0)"全部日期" else "最近 $evidenceDays 日"){
             alert().setTitle("篩選日期").setItems(arrayOf("全部日期","最近 7 日","最近 30 日","最近 90 日")){_,i->evidenceDays=listOf(0,7,30,90)[i];evidencePage=0;renderUi()}.show()
-        },LinearLayout.LayoutParams(0,-2,1f))
-        tools.addView(textAction(if(evidenceSaved)"已儲存 ✓" else "只看已儲存"){evidenceSaved=!evidenceSaved;evidencePage=0;renderUi()},LinearLayout.LayoutParams(0,-2,1f))
-        if(inConversation)tools.addView(textAction(when(evidenceDirection){"incoming"->"只看對方";"outgoing"->"只看子女";"unknown"->"方向未詳";else->"全部方向"}){
+        })
+        tools.add(textAction(if(evidenceSaved)"已儲存 ✓" else "只看已儲存"){evidenceSaved=!evidenceSaved;evidencePage=0;renderUi()}.apply{isSelected=evidenceSaved})
+        if(inConversation)tools.add(textAction(when(evidenceDirection){"incoming"->"只看對方";"outgoing"->"只看子女";"unknown"->"方向未詳";else->"全部方向"}){
             alert().setTitle("訊息方向").setItems(arrayOf("全部方向","只看對方","只看子女","方向未能判斷")){_,i->evidenceDirection=listOf("all","incoming","outgoing","unknown")[i];evidencePage=0;renderUi()}.show()
-        },LinearLayout.LayoutParams(0,-2,1f))
-        rootContainer.addView(tools)
+        })
         if(evidenceSection=="review" && !inConversation)rootContainer.addView(textAction(when(evidenceReview){"follow_up"->"篩選：待跟進";"reviewed"->"篩選：已查看";"all"->"篩選：全部狀態";else->"篩選：新記錄"}){
             alert().setTitle("跟進狀態").setItems(arrayOf("新記錄","待跟進","已查看","全部狀態")){_,i->evidenceReview=listOf("new","follow_up","reviewed","all")[i];evidencePage=0;renderUi()}.show()
         })
-        if(evidenceSection!="device")tools.addView(textAction(when(alertFilter){"high"->"關鍵字";"stranger"->"未核准";"followup"->"後續訊息";else->"內容分類"}){
+        if(evidenceSection!="device")tools.add(textAction(when(alertFilter){"high"->"關鍵字";"stranger"->"未核准";"followup"->"後續訊息";else->"內容分類"}){
             alert().setTitle("內容分類").setItems(arrayOf("全部內容","關鍵字相符","未核准聯絡對象","已標記對象後續")){_,i->alertFilter=listOf("all","high","stranger","followup")[i];evidencePage=0;renderUi()}.show()
-        },LinearLayout.LayoutParams(0,-2,1f))
+        })
+        for(pair in tools.chunked(2)) {
+            val toolRow=LinearLayout(this)
+            pair.forEachIndexed{index,button->toolRow.addView(button,LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(0,dp(4),if(index==0 && pair.size>1)dp(8)else 0,dp(6))})}
+            rootContainer.addView(toolRow)
+        }
         if(evidencePage==0)evidenceCursors.clear()
         val query=EvidenceQuery(evidenceSearch,if(!inConversation && evidenceSection=="device")"any" else alertFilter,if(evidenceConversationKey==null)evidenceSender?.trim()?.removePrefix("@")?.lowercase(Locale.ROOT) else null,
             evidenceSaved,if(evidenceDays==0)0 else System.currentTimeMillis()-evidenceDays*86_400_000L,if(inConversation)0 else evidencePage,
@@ -3022,7 +3071,8 @@ class MainActivity : Activity() {
                         for(contact in contacts.take(30)) {
                             val category=contact.categories.map{reviewCategory(it)}.distinct().joinToString(" / ").ifEmpty{"一般對話"}
                             val caption=(if(contact.kind=="group")"群組 · " else "")+"${contact.account.ifBlank{"帳號未確認"}} · 最近記錄 ${evidenceTime(contact.latest)}\n${contact.count} 則記錄 · ${contact.unreviewed} 則需查看 · $category\n${shortEvidence(contact.preview)}"
-                            results.addView(row("chat-circle",contact.label,caption,t){openConversation(contact.key,contact.label)}.apply{
+                            val display=ConversationCapture.displayLabel(contact.label,contact.unidentified)
+                            results.addView(row("chat-circle",display,caption,t){openConversation(contact.key,display)}.apply{
                                 tag="conversation_${contact.key}";getChildAt(0).tag="evidence_contact_${contact.label.trim().removePrefix("@").lowercase(Locale.ROOT)}"
                             })
                         }
@@ -3036,7 +3086,7 @@ class MainActivity : Activity() {
                         }
                         for(message in shown) {
                             val stamp=message.optLong("ts_ms").takeIf{it>0}?:message.optLong("received_at_ms")
-                            val date=evidenceTime(stamp).substringBefore(" ")
+                            val date=(if(message.optLong("message_time_ms")>0)"訊息日期 " else "擷取日期 ")+evidenceTime(stamp).substringBefore(" ")
                             if(date!=day){day=date;results.addView(label(day,12f,t.textMuted,topPad=18,bottomPad=8))}
                             if(inConversation)results.addView(conversationBubble(message,t))
                             else results.addView(row("info",alertTitle(message.optString("reason")),"${evidenceClock(message)}\n${shortEvidence(message.optString("text"))}",t){showAlertDetails(message,t)})
@@ -3067,6 +3117,7 @@ class MainActivity : Activity() {
             orientation=LinearLayout.VERTICAL;minimumHeight=dp(64);setPadding(dp(14),dp(13),dp(14),dp(13))
             background=ripple(if(outgoing)t.bgHero else t.bgCard,12,t.borderSubtle)
             isClickable=true;isFocusable=true;tag="evidence_${message.optString("_id")}"
+            describeAsControl()
             setOnClickListener(sessionClick{showAlertDetails(message,t)})
         }
         bubble.addView(label((if(message.optBoolean("_saved"))"已儲存 · " else "")+evidenceSpeaker(message),13f,t.textPrimary,true,bottomPad=6))
@@ -3074,6 +3125,9 @@ class MainActivity : Activity() {
         if(signalLabels(message).isNotEmpty())bubble.addView(label(signalLabels(message),12f,t.warmHoney,bottomPad=6))
         bubble.addView(label(shortEvidence(message.optString("text")),15f,t.textPrimary,bottomPad=8).apply{maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END})
         bubble.addView(label("${evidenceClock(message)}\n${evidenceSource(message)}"+(if(message.optBoolean("possible_duplicate"))" · 可能重複" else ""),10.5f,t.textMuted))
+        val details=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(10),0,0)}
+        details.addView(label("查看完整記錄",12f,t.accentSeafoam,true),LinearLayout.LayoutParams(0,-2,1f))
+        details.addView(icon("caret-right",t.accentSeafoam,16));bubble.addView(details)
         bubble.contentDescription="${evidenceSpeaker(message)}。${shortEvidence(message.optString("text"))}。${evidenceClock(message)}。點按查看完整內容"
         val gap=Space(this)
         if(outgoing)holder.addView(gap,LinearLayout.LayoutParams(0,1,.1f))
@@ -3086,9 +3140,11 @@ class MainActivity : Activity() {
         val scope = GuardEngine.getChannelTopic(this)
         val id = alert.optString("_id")
         val stored = FamilyEvidence(this).use { it.find(scope,id) } ?: return
-        showSheet(if(stored.optString("type")=="captured_message")stored.optString("conversation_label")else alertTitle(stored.optString("reason"))) { dialog ->
+        val unidentified=ConversationCapture.unidentifiedLegacyLabel(stored)
+        showSheet(if(stored.optString("type")=="captured_message")ConversationCapture.displayLabel(stored.optString("conversation_label"),unidentified)else alertTitle(stored.optString("reason"))) { dialog ->
             val reason = stored.optString("reason");val sender = stored.optString("sender","未識別來源")
             addView(label("${evidenceSpeaker(stored)}\n${evidenceClock(stored)}\n${evidenceSource(stored)}",13f,t.textSecondary,bottomPad=16))
+            if(unidentified)addView(label("舊版曾把導覽按鈕當作對話名稱，這些內容可能來自不同對話。原文保留，無法可靠還原對象，請勿據此判定發訊人。",13f,t.warmHoney,bottomPad=14))
             addView(label(if(reason=="archive_recovery")"原始舊資料未能自動解析，完整原始內容保留於此，可複製後尋求復原協助。" else if(stored.optBoolean("_legacy_partial"))"舊版本記錄，內容可能已截短，無法復原未保留的部分。" else "保留 App 實際擷取的文字，未必涵蓋 Instagram 原始對話的全部內容。",12f,t.textMuted,bottomPad=14))
             addView(label(stored.optString("text"),16f,t.textPrimary,bottomPad=20).apply{setTextIsSelectable(true)})
             if(reason=="sexual_or_grooming_content")addView(actionButton("尋求協助建議",t.btnSecondaryBg,t.btnSecondaryText) { dialog.dismiss();showSafetyAdvice(stored,t) })
@@ -3120,10 +3176,10 @@ class MainActivity : Activity() {
             }
             if(stored.optBoolean("possible_duplicate"))addView(label("此項擷取可能與其他來源重複；無法確認為獨立訊息。",12f,t.warmHoney,bottomPad=12))
             if(stored.optString("_conversation_key").isNotEmpty())addView(textAction("查看此對象的對話") {
-                dialog.dismiss();evidenceSearch="";evidenceSaved=false;openConversation(stored.optString("_conversation_key"),stored.optString("_conversation_label",sender))
+                dialog.dismiss();evidenceSearch="";evidenceSaved=false;openConversation(stored.optString("_conversation_key"),ConversationCapture.displayLabel(stored.optString("_conversation_label",sender),unidentified))
             })
             val handle = sender.trim().lowercase(Locale.US).removePrefix("@")
-            if(reason in setOf("stranger_message","sexual_or_grooming_content") && !sender.startsWith("子女留言") &&
+            if(!unidentified && reason in setOf("stranger_message","sexual_or_grooming_content") && !sender.startsWith("子女留言") &&
                 stored.optString("conversation_kind")!="group" && handle.matches(Regex("[a-z0-9._]{2,30}")) &&
                 handle !in GuardEngine.getTrustedHandles(this@MainActivity) && !GuardEngine.isChildSelfHandle(this@MainActivity,handle) && !handle.contains("instagram")) {
                 addView(actionButton("加入信任好友並解除封鎖",t.btnSecondaryBg,t.btnSecondaryText) { addTrustedSender(handle);GuardEngine.syncTrustedFromParent(this@MainActivity);dialog.dismiss() })
@@ -3175,6 +3231,11 @@ class MainActivity : Activity() {
         val alert=FamilyEvidence(this).use{it.find(GuardEngine.getChannelTopic(this),id)} ?: return
         if(alert.optString("reason")=="sexual_or_grooming_content")showSafetyAdvice(alert,currentTheme()) else showAlertDetails(alert,currentTheme())
     }
+    private fun childCaptureStatus():String=when {
+        GuardEngine.fullCaptureEnabled(this)->"雙向擷取已啟用 · 傳入、傳出及信任對象的實際擷取內容。"
+        GuardEngine.pendingCapturePolicy(this).isNotEmpty()->"只擷取傳入警報 · 已收到家長設定，點按此處閱讀及確認雙向範圍。"
+        else->"只擷取傳入警報 · 請家長先傳送雙向擷取設定，點按查看步驟。"
+    }
     private fun renderChildOverview(t: ThemeColors) {
         rootContainer.addView(icon("plant", t.accentSeafoam, 42))
         heading("安心上網，\n自在成長。", "給你探索的空間，也給家人一份安心。", t)
@@ -3184,7 +3245,7 @@ class MainActivity : Activity() {
         card.addView(label(if (notification && screen) "你的保護已準備好" else "完成設定，讓保護正常運作。", 17f, t.textPrimary, true, bottomPad = 8))
         card.addView(label(if (notification && screen) "通知及畫面保護已連接。" else "通知讀取保護背景訊息；畫面保護處理對話、留言回覆及防靜音。", 14f, t.textSecondary))
         rootContainer.addView(card)
-        rootContainer.addView(row("chat-circle","雙向對話記錄",if(GuardEngine.fullCaptureEnabled(this))"已啟用 · 傳入、傳出及信任對象的擷取內容會送給家長。" else "尚未啟用新版範圍；現有傳入警報保護仍保留。",t){showFullCaptureNotice(t)})
+        rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)})
         rootContainer.addView(actionButton("查看保護狀態", t.btnPrimaryBg, t.btnPrimaryText) { navigateTo("permissions") })
         rootContainer.addView(row("key", "需要暫時解鎖？", "輸入家長提供的解鎖碼", t) { navigateTo("unlock") })
         rootContainer.addView(textAction("裝置及家庭詳情") {
@@ -3200,7 +3261,7 @@ class MainActivity : Activity() {
         if(!GuardEngine.isParentMode(this))return
         val scope=GuardEngine.getChannelTopic(this)
         showSheet("設定雙向對話擷取") { dialog ->
-            addView(label("兩部手機均需更新。請只為你有權監護的子女設定，並與孩子說明範圍。",15f,t.textPrimary,bottomPad=16))
+            addView(label("兩部手機均需更新。家長在此傳送設定，再在子女手機的「權限 → 雙向對話記錄」閱讀並確認範圍。請只為你有權監護的子女設定，並與孩子說明範圍。",15f,t.textPrimary,bottomPad=16))
             addView(label("新版會保留實際擷取的傳入及傳出訊息，包括信任名單中的一般對話。一般內容不會逐則發出警報，家長可按對話對象及時間查看。",14f,t.textSecondary,bottomPad=14))
             addView(label("家長送出設定後，子女手機需閱讀並確認範圍。未確認前只維持原有保護。Instagram 未向通知或畫面提供的內容無法擷取；這不是完整對話備份。",14f,t.textSecondary,bottomPad=18))
             addView(actionButton("傳送雙向擷取設定",t.btnPrimaryBg,t.btnPrimaryText) {
@@ -3224,6 +3285,11 @@ class MainActivity : Activity() {
         if(!GuardEngine.isChildMode(this))return
         val policy=GuardEngine.pendingCapturePolicy(this)
         showSheet("了解新的對話擷取範圍") { dialog ->
+            if(policy.isEmpty())addView(label("目前只擷取傳入警報，不會記錄子女傳出的 DM。\n\n1. 家長手機：提醒 → 對話記錄 → 雙向擷取尚未確認 → 傳送雙向擷取設定。\n2. 保持兩部手機連線，在此重新接收設定。\n3. 子女手機閱讀後，點按「我已了解，啟用雙向擷取」。\n\n未收到時，請家長再次傳送，並在連接與診斷檢查加密通道。",13f,t.textSecondary,bottomPad=12))
+            if(policy.isEmpty())addView(actionButton("重新接收家長設定",t.btnPrimaryBg,t.btnPrimaryText) {
+                    dialog.dismiss()
+                    thread { GuardEngine.pollChannelOnce(applicationContext,since="all");runOnUiThread{if(!isDestroyed)renderUi()} }
+                })
             addView(label("家長可收到 Instagram 實際擷取的傳入及傳出訊息，包括信任名單中的一般對話。這比舊版只轉傳部分傳入警報的範圍更廣。",15f,t.textPrimary,bottomPad=16))
             addView(label("DM 輸入框內尚未送出的草稿不會作為已傳出訊息收集。既有留言及限時動態回覆檢查可能擷取未送出的草稿，會另行標示。",14f,t.textSecondary,bottomPad=14))
             addView(label("內容會先在此手機加密，經第三方 ntfy.sh 中繼服務傳送至配對家長手機。家長的本機記錄保留至刪除；本 App 沒有開發者訊息資料庫。中繼服務仍處理加密流量及連線資料。",14f,t.textSecondary,bottomPad=14))
@@ -3236,18 +3302,14 @@ class MainActivity : Activity() {
                 })
                 addView(actionButton("暫不啟用",t.btnSecondaryBg,t.btnSecondaryText){dialog.dismiss()})
             } else {
-                addView(label(if(policy.isEmpty())"尚未收到家長的新版設定；現有傳入警報保護仍保留。" else "此手機已確認上述範圍。",13f,t.textSecondary,bottomPad=12))
+                if(policy.isNotEmpty())addView(label("此手機已確認上述範圍。",13f,t.textSecondary,bottomPad=12))
                 addView(actionButton("關閉",t.btnSecondaryBg,t.btnSecondaryText){dialog.dismiss()})
             }
         }
     }
     private fun renderChildPermissions(t: ThemeColors) {
         heading("每個設定，都說清楚。", "了解每項權限的用途，再前往 Android 設定確認。", t)
-        rootContainer.addView(row("chat-circle","雙向對話記錄",when {
-            GuardEngine.fullCaptureEnabled(this)->"已確認範圍：傳入、傳出及信任對象的實際擷取內容。"
-            GuardEngine.pendingCapturePolicy(this).isNotEmpty()->"家長已提出新版擷取範圍，等待此手機確認。"
-            else->"等待家長傳送設定；現有傳入警報保護仍保留。"
-        },t){showFullCaptureNotice(t)}.apply{getChildAt(0).tag="full_capture_setup"})
+        rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)}.apply{getChildAt(0).tag="full_capture_setup"})
         if (!GuardEngine.hasSecureParentCommands(this)) rootContainer.addView(label("需要更新家庭配對：現有監察仍會運作。新版家長指令與臨時碼需要家長傳送新邀請；請先更新兩部手機，並以新主密碼重新建立家庭。", 14f, t.warmHoney, bottomPad = 20))
         val notification = GuardEngine.isNotificationListenerEnabledStatic(this)
         val screen = GuardEngine.isAccessibilityEnabledStatic(this)
@@ -3303,7 +3365,7 @@ class MainActivity : Activity() {
         for ((bright, text) in listOf(true to "淺色模式", false to "深色模式")) {
             modes.addView(actionButton(text, if (GuardEngine.isBrightTheme(this) == bright) t.bgChip else t.bgCard, t.accentSeafoam) {
                 GuardEngine.setBrightTheme(this, bright); renderUi()
-            }, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(8), 0) })
+            }.apply{isSelected=GuardEngine.isBrightTheme(this@MainActivity)==bright}, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(8), 0) })
         }
         rootContainer.addView(modes)
         sectionTitle("保護與通知", t)
@@ -3461,6 +3523,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(74); setPadding(0, dp(14), 0, dp(14))
             isClickable = true; isFocusable = true; background = ripple(t.bgCanvas, 8)
             contentDescription = "$title。$description"; setOnClickListener(sessionClick(onClick))
+            describeAsControl()
         }
         line.addView(icon(glyph, t.accentSeafoam, 24))
         val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(10), 0) }
@@ -3476,7 +3539,7 @@ class MainActivity : Activity() {
     }
     private fun inputBox(t: ThemeColors, hintText: String, initialValue: String, isPassword: Boolean = false, remember: Boolean = true): EditText = EditText(this).apply {
         hint = hintText; contentDescription = hintText; textSize = 15f; typeface = font()
-        setTextColor(color(t.textPrimary)); setHintTextColor(color(t.textMuted)); background = background(t.bgInput, 8, t.borderSubtle)
+        setTextColor(color(t.textPrimary)); setHintTextColor(color(t.textMuted)); background = focusSurface(t.bgInput, 8, t.accentPowderSky)
         inputType = if (isPassword) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_CLASS_TEXT
         setText(if (remember) inputDrafts[hintText] ?: initialValue else initialValue)
         if (remember) addTextChangedListener(object : TextWatcher {
@@ -3489,15 +3552,15 @@ class MainActivity : Activity() {
     }
     private fun actionButton(title: String, hexBg: String, hexText: String, onClick: () -> Unit): Button = Button(this).apply {
         text = title; textSize = 14f; typeface = font(true); isAllCaps = false
-        setTextColor(color(hexText)); background = ripple(hexBg, 8, if (hexBg == currentTheme().btnSecondaryBg) currentTheme().borderSubtle else null)
+        setTextColor(color(hexText)); background = ripple(hexBg, 8, if (hexBg != currentTheme().btnPrimaryBg) currentTheme().accentPowderSky else null)
         minimumHeight = dp(52); setPadding(dp(14), dp(13), dp(14), dp(13)); setOnClickListener(sessionClick(onClick))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(5), 0, dp(8)) }
     }
     private fun textAction(title: String, onClick: () -> Unit): Button = Button(this).apply {
         val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
-        setTextColor(color(t.accentSeafoam)); background = ripple(t.bgCanvas, 8); minimumHeight = dp(48)
-        gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(0, dp(10), 0, dp(6)); setOnClickListener(sessionClick(onClick))
-        layoutParams = LinearLayout.LayoutParams(-1, -2)
+        setTextColor(color(t.accentSeafoam)); background = ripple(t.bgCard, 8, t.accentPowderSky); minimumHeight = dp(48)
+        gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(dp(12), dp(10), dp(12), dp(10)); setOnClickListener(sessionClick(onClick))
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply{setMargins(0,dp(4),0,dp(6))}
     }
     private fun checkInitialPairingConfirmation() {
         if (!GuardEngine.isChildMode(this)) return

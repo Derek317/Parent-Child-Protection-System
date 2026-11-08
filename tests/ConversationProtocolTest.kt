@@ -80,6 +80,21 @@ class ConversationProtocolTest {
         val rows=GuardEngine.captureMessages(ctx,listOf(CapturedText("friend","Seen","incoming",author="friend",source="notification",sourceKey="real-message")))
         assertEquals(1,rows.size);assertEquals("Seen",rows.single().getString("text"))
     }
+    @Test fun scrollingOlderMessagesUsesObservedThreadOrderWithoutChangingTimestamps(){
+        receive(policy());assertTrue(GuardEngine.confirmFullCapture(ctx))
+        val key=ConversationCapture.key("","friend")
+        fun snapshot(vararg text:String)=GuardEngine.captureMessages(ctx,text.map{CapturedText("friend",it,"incoming")},key)
+        val initial=snapshot("b","c")
+        val older=snapshot("a","b")
+        assertTrue(snapshot("a","b").isEmpty())
+        val newer=snapshot("b","c","d")
+        val all=initial+older+newer
+        FamilyEvidence(ctx).use{db->
+            for(r in all.reversed())db.append("f",r.getString("event_id"),r)
+            assertEquals(listOf("a","b","c","d"),db.timeline("f",EvidenceQuery(conversationKey=key)).map{it.getString("text")})
+            for(r in all)assertEquals(r.getLong("captured_at_ms"),db.find("f",r.getString("event_id"))!!.getLong("ts_ms"))
+        }
+    }
     @Test fun rollingNotificationBundleCommitsNewMessageAlongsidePreviouslySeenMessage(){
         receive(policy());assertTrue(GuardEngine.confirmFullCapture(ctx))
         val a=CapturedText("friend","earlier message","incoming",author="friend",source="notification",messageTime=1000,sourceKey="event-a")

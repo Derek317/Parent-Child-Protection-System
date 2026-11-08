@@ -19,6 +19,49 @@ class ConversationArchiveTest {
     @Before fun reset(){ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit()}
     private fun record(i:Int,partner:String="friend",direction:String="incoming",text:String="text $i",account:String="child")=
         ConversationCapture.record(CapturedText(partner,text,direction,author=if(direction=="outgoing")"child" else partner,account=account,messageTime=1000L+i),2000L+i,true,false).put("event_id","message-$i")
+    @Test fun versionTwoUpgradeKeepsPayloadReviewBookmarksAndEncryptedQueue(){
+        val path=ctx.getDatabasePath("family_evidence.db");path.parentFile!!.mkdirs()
+        val original=record(1)
+        SQLiteDatabase.openOrCreateDatabase(path,null).use { old ->
+            old.execSQL("CREATE TABLE evidence(scope TEXT,id TEXT,sender TEXT,reason TEXT,stamp INTEGER,body TEXT,payload TEXT,saved INTEGER DEFAULT 0,help_seen INTEGER DEFAULT 0,legacy INTEGER DEFAULT 0,conversation_key TEXT,conversation_label TEXT,account_label TEXT,direction TEXT,review_state TEXT,kind TEXT,actionable INTEGER,capture_order INTEGER,PRIMARY KEY(scope,id))")
+            old.execSQL("CREATE TABLE seen(scope TEXT,id TEXT,PRIMARY KEY(scope,id))")
+            old.execSQL("CREATE TABLE capture_seen(scope TEXT,id TEXT,PRIMARY KEY(scope,id))")
+            old.execSQL("CREATE TABLE capture_windows(scope TEXT,thread TEXT,tokens TEXT,updated INTEGER,PRIMARY KEY(scope,thread))")
+            old.execSQL("CREATE TABLE fragments(scope TEXT,id TEXT,part INTEGER,parts INTEGER,digest TEXT,data TEXT,PRIMARY KEY(scope,id,part))")
+            old.execSQL("CREATE TABLE outbox(scope TEXT,id TEXT,event_id TEXT,wire TEXT,receipt INTEGER DEFAULT 0,accepted INTEGER DEFAULT 0,attempts INTEGER DEFAULT 0,retry_at INTEGER DEFAULT 0,priority INTEGER DEFAULT 1,PRIMARY KEY(scope,id))")
+            old.execSQL("INSERT INTO evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",arrayOf("f","old","friend","conversation_context",1001,"text 1",original.toString(),1,1,0,original.getString("conversation_key"),"friend","child","incoming","reviewed","message",0,7))
+            old.execSQL("INSERT INTO outbox(scope,id,event_id,wire,receipt) VALUES('f','pending:0','pending','ciphertext',1)")
+            old.execSQL("INSERT INTO capture_windows VALUES('f','thread','[\"hash\"]',1000)")
+            old.version=2
+        }
+        FamilyEvidence(ctx).use { db ->
+            val row=db.timeline("f",EvidenceQuery(conversationKey=original.getString("conversation_key"))).single()
+            assertEquals("text 1",row.getString("text"));assertTrue(row.getBoolean("_saved"))
+            assertEquals("reviewed",row.getString("_review_state"));assertEquals(1001,row.getLong("_sort_stamp"));assertEquals(7,row.getLong("_sort_order"))
+            assertEquals("ciphertext",db.due("f",Long.MAX_VALUE).single().wire)
+            assertEquals(listOf("hash"),db.captureWindow("f","thread"));assertEquals(0,db.captureWindowState("f","thread").anchor)
+        }
+    }
+    @Test fun negativeScreenPositionsPageStablyAndRotationPreservesWindowAnchors(){
+        val key=ConversationCapture.key("child","friend")
+        FamilyEvidence(ctx).use{db->
+            for(i in -40..24) {
+                val r=ConversationCapture.record(CapturedText("friend","position $i","incoming",account="child"),4000,true,false)
+                    .put("screen_anchor_ms",2000).put("screen_order",i)
+                db.append("f","position-$i",r)
+            }
+            val first=db.timeline("f",EvidenceQuery(conversationKey=key),30)
+            val oldest=first.first()
+            val before=EvidenceCursor(oldest.getLong("_sort_stamp"),oldest.getLong("_sort_order"),oldest.getString("_id"))
+            val older=db.timeline("f",EvidenceQuery(conversationKey=key,before=before),30)
+            assertEquals((-5..24).map{"position $it"},first.map{it.getString("text")})
+            assertEquals((-35..-6).map{"position $it"},older.map{it.getString("text")})
+            db.setCaptureWindow("f",key,listOf("a","b"),2000,-1)
+            db.rotate("f","new"){it}
+            assertEquals(CaptureWindow(listOf("a","b"),2000,-1),db.captureWindowState("new",key))
+            assertEquals(65,db.conversations("new",EvidenceQuery(section="conversations")).single().count)
+        }
+    }
     @Test fun bothAuthorsShareAConversationAndTimelineUsesSourceTimeWithStablePaging() {
         FamilyEvidence(ctx).use { db ->
             for(i in (0..64).reversed())db.append("family","message-$i",record(i,direction=if(i%2==0)"incoming" else "outgoing"))
