@@ -113,5 +113,32 @@ if args[:2]==['release','upload'] and os.environ.get('FAKE_UPLOAD_FAIL')=='1':sy
         self.assertNotEqual(0, result.returncode)
         self.assertEqual([], rows)
 
+    def prepare_hotfix(self):
+        self.git('-c','user.name=Release test','-c','user.email=test@example.invalid','commit','--allow-empty','-qm','hotfix')
+        self.sha=self.git('rev-parse','HEAD').strip()
+        self.git('tag','4.7-hotfix.1')
+
+    def test_hotfix_updates_existing_release_without_moving_original_tag(self):
+        original=self.git('rev-parse','refs/tags/4.7').strip();self.prepare_hotfix()
+        result,rows=self.publish(GITHUB_REF_NAME='4.7-hotfix.1',FAKE_RELEASE_EXISTS='1')
+        self.assertEqual(0,result.returncode,result.stderr)
+        edit=next(row for row in rows if row['args'][:2]==['release','edit'])
+        self.assertEqual('4.7',edit['args'][2]);self.assertIn(self.sha,edit['notes'])
+        upload=next(row for row in rows if row['args'][:2]==['release','upload'])
+        self.assertIn('IG-Guard-4.7.apk',upload['assets'])
+        self.assertEqual(original,self.git('rev-parse','refs/tags/4.7').strip())
+
+    def test_failed_hotfix_never_changes_existing_notes_or_apk(self):
+        self.prepare_hotfix()
+        result,rows=self.publish(GITHUB_REF_NAME='4.7-hotfix.1',FAKE_RELEASE_EXISTS='1',BUILD_RESULT='failure')
+        self.assertNotEqual(0,result.returncode)
+        self.assertFalse(any(row['args'][:2] in (['release','edit'],['release','upload'],['release','create']) for row in rows))
+
+    def test_hotfix_never_creates_an_unrelated_missing_release(self):
+        self.prepare_hotfix()
+        result,rows=self.publish(GITHUB_REF_NAME='4.7-hotfix.1')
+        self.assertNotEqual(0,result.returncode)
+        self.assertFalse(any(row['args'][:2] in (['release','create'],['release','upload']) for row in rows))
+
 
 if __name__ == '__main__': unittest.main()

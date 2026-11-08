@@ -7,9 +7,56 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ig-guard-relay-and-release
+  cancel-in-progress: false
+
 jobs:
-  build:
+  relay:
     runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout relay source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+
+      - name: Test relay protocol, storage and 100-family workload
+        working-directory: relay
+        run: npm ci && npm test
+
+      - name: Deploy to the configured Cloudflare account
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/4.8-hotfix.')
+        working-directory: relay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -euo pipefail
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            npm run deploy
+          else
+            echo "Cloudflare deployment credentials are not configured; checking the existing endpoint instead." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Verify deployed relay and authenticated offline delivery
+        env:
+          RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
+        run: |
+          python3 scripts/relay-config.py --require --probe
+          cd relay
+          npm run smoke
+
+  build:
+    needs: relay
+    runs-on: ubuntu-24.04
+    env:
+      RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
     outputs:
       artifact_name: ${{ steps.package.outputs.artifact_name }}
       signed_verified: ${{ steps.verify.outputs.signed_verified }}
@@ -40,7 +87,8 @@ jobs:
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/values
           cp -R ui-res/. app/src/main/res/
-          cp FamilySecurity.kt FamilyEvidence.kt ConversationCapture.kt FamilyRelay.kt app/src/main/java/app/family/igguard/
+          cp FamilySecurity.kt FamilyEvidence.kt ConversationCapture.kt FamilyRelay.kt CloudRelay.kt app/src/main/java/app/family/igguard/
+          python3 scripts/relay-config.py --output app/relay-config.json
 
           if [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
             sed "s/^package .*/package app.family.igguard/" MainActivity.kt > app/src/main/java/app/family/igguard/MainActivity.kt
@@ -53,6 +101,7 @@ jobs:
 
 
           VER_CODE=$((100 + ${{ github.run_number }}))
+          if [ "$VER_CODE" -le 150 ]; then VER_CODE=151; fi
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -93,6 +142,7 @@ jobs:
           android {
               namespace 'app.family.igguard'
               compileSdk 34
+              buildFeatures { buildConfig true }
 
               defaultConfig {
                   applicationId "app.family.igguard"
@@ -128,6 +178,14 @@ jobs:
                   jvmTarget = '17'
               }
           }
+          def relayConfig = new groovy.json.JsonSlurper().parse(file('relay-config.json'))
+          android.defaultConfig.buildConfigField 'String', 'RELAY_BASE_URL', groovy.json.JsonOutput.toJson(relayConfig.base_url)
+          tasks.matching { it.name == 'packageRelease' }.configureEach {
+              doFirst {
+                  if (!relayConfig.base_url) throw new GradleException('[RELAY_CONFIG] Deploy and configure the relay before release packaging.')
+              }
+          }
+          dependencies { implementation 'com.squareup.okhttp3:okhttp:4.12.0' }
           EOF
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
@@ -221,15 +279,20 @@ jobs:
           cat >> app/build.gradle <<'EOF'
           android { testOptions {
               unitTests.includeAndroidResources = true
-              unitTests.all { maxHeapSize = '1g' }
+              unitTests.all {
+                  maxHeapSize = '1g'
+                  systemProperty 'igguard.protocol.vector', new File(rootDir, 'relay/test/protocol-vector.json').absolutePath
+              }
           } }
+          android { buildTypes { debug { buildConfigField 'String', 'RELAY_BASE_URL', '""' } } }
           dependencies {
+              testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
               testImplementation 'junit:junit:4.13.2'
               testImplementation 'org.json:json:20240303'
               testImplementation 'org.robolectric:robolectric:4.14.1'
           }
           EOF
-          gradle testDebugUnitTest --no-daemon
+          gradle testDebugUnitTest lintDebug --no-daemon
 
       - name: Compile APK
         id: package
@@ -284,7 +347,18 @@ jobs:
         run: |
           set -euo pipefail
           for apk in app/build/outputs/apk/release/*.apk; do
-            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify "$apk"
+            "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/apk-certificate.txt"
+            certificate="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-certificate.txt")"
+            test "$certificate" = "0eb6f30787c2d6dc23136a28cfd7a08a7956e5fe0565ba142f6711be38ca3f0e"
+            "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
+            grep -q "name='app.family.igguard'" "$RUNNER_TEMP/apk-badging.txt"
+            grep -q "versionName='4.8'" "$RUNNER_TEMP/apk-badging.txt"
+            code="$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" "$RUNNER_TEMP/apk-badging.txt" | head -1)"
+            test "$code" -gt 150
+            if grep -q '^application-debuggable' "$RUNNER_TEMP/apk-badging.txt"; then
+              echo "::error::A debuggable APK cannot replace the release download."
+              exit 1
+            fi
           done
           echo "signed_verified=true" >> "$GITHUB_OUTPUT"
 
@@ -305,6 +379,8 @@ jobs:
     steps:
       - name: Checkout tagged source and release notes
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Download verified signed APK
         id: download

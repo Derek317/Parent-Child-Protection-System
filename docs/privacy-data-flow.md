@@ -1,10 +1,10 @@
 # Family use and data flow
 
-Code inspection date: 8 November 2026. The preceding published baseline was app commit `a5b87c6`; this document also describes the 4.7 two-way capture update. It is not a full privacy notice, penetration test or legal opinion. The new capture scope requires updated phones, a signed parent request and local acknowledgment on the child device.
+Code inspection date: 8 November 2026. This document describes the Cloudflare relay migration from the original 4.8 APK and the existing two-way capture behavior. It is not a full privacy notice, penetration test or legal opinion. The new capture scope requires updated phones, a signed parent request and local acknowledgment on the child device.
 
 ## Intended use
 
-IG Guard is intended for authorized private parent–child protection. It contains no school administration console, developer-operated family-message database or developer message-viewing dashboard. Choosing the parent role does not verify a person's identity or parental responsibility. The existing child pairing flow requires explicit confirmation and supports comparing a full security code on both phones.
+IG Guard is intended for authorized private parent–child protection. It contains no school administration console or developer plaintext-message dashboard. The developer-deployed relay does temporarily store encrypted undelivered packets and routing metadata. Choosing the parent role does not verify a person's identity or parental responsibility. The existing child pairing flow requires explicit confirmation and supports comparing a full security code on both phones.
 
 ## Where information goes
 
@@ -13,7 +13,7 @@ IG Guard is intended for authorized private parent–child protection. It contai
 | Capture and matching | The child app processes Instagram notifications and selected accessible screen text locally. | The child device and its authorized app process. |
 | Monitoring scope | The original incoming-alert mode remains until expanded-scope acknowledgment. Full mode processes exposed incoming/outgoing message bubbles and notification entries, including ordinary trusted contacts. The DM typing box is excluded. The separate comment/story-reply path can still forward an unsent draft and is labelled accordingly. The app does not classify image/audio files. | Accepted captures are forwarded to the paired parent. Ordinary records are separated from actionable review events. This is not a complete Instagram transcript and does not guarantee background access to outgoing messages. |
 | Local pending delivery | Serialized alerts are encrypted before durable frames enter the child outbox. | The child app holds queued ciphertext and the family secret. |
-| Delivery | HTTPS requests send application-encrypted bodies to `ntfy.sh`. Polling/streaming requests retrieve available relay messages. | The independent relay processes ciphertext, topic identifiers and connection information. The app does not send it the family token/decryption key. |
+| Delivery | Authenticated WSS connections use a developer-deployed Cloudflare Worker and a private Durable Object room. Ordinary records/receipts forward directly while the receiver is connected; otherwise bounded encrypted mailboxes buffer delivery. Critical controls are buffered before acceptance. | The developer can administer ciphertext and routing metadata. Cloudflare processes these and connection information. Neither is supplied the family token, AES key, parent private signing key or password verifier. |
 | Parent archive | The parent app decrypts alerts and stores captured text in app-private SQLite. | The parent app/user. SQLite contents are not separately encrypted by this app; Android's app isolation and device security remain important. |
 | Other local state | Private preferences hold settings, pairing material and bounded checkpoint logs; logs can include handles and delivery status. | The relevant phone/app. No automatic diagnostic-upload service was found. |
 | User-directed disclosure | A user can copy a full record, or copy/share a pairing invitation through Android facilities. | Clipboard/share recipients chosen by that user, outside the archive's access controls. Pairing invitations are secret. |
@@ -34,17 +34,19 @@ These are source-code findings about normal operation. They do not establish tha
 
 - Parent evidence remains until explicit deletion. App-data clearing/uninstallation also removes local app data. Old-family archives remain isolated and have an explicit removal control.
 - Deleting archived text retains content-free replay tombstones and separate chart statistics. It does not request remote relay-cache deletion or erase clipboard/export copies.
-- Securely paired updated child apps retain queued ciphertext until a valid parent-device receipt, or until the applicable pending work is discarded on family replacement/app-data removal. Legacy pairings use relay acceptance instead of signed parent receipts.
+- Securely paired updated child apps retain queued ciphertext until a valid parent-device receipt, or until the applicable pending work is discarded on family replacement/app-data removal. The new backend requires the pinned parent public key; legacy pairings need the normal adult-authorized invitation upgrade.
 - The parent can retain incomplete received-message assemblies until completion or archive deletion, subject to the documented assembly bounds. Their fragment data has already passed transport decryption; app-private storage is not a claim of separate database encryption.
 - Content-free child capture identities and bounded hashed screen windows suppress known re-observations without persisting a second plaintext conversation archive on the child device. Source identities can be incomplete; uncertain duplicates/attribution remain labelled rather than claiming a certified unique transcript.
 - The manifest/data-extraction rules disable app cloud backup and device transfer. This is not a guarantee against all manual copies, OS/vendor behavior or device compromise.
-- The app requests available relay cache with `since=all`. The relay's current cache duration, access logs, hosting location, backups and deletion policy were not verified in this review. No fixed relay-retention promise is made.
+- Each cloud mailbox is bounded to 512 encrypted packets per direction, reserving headroom for controls/urgent traffic. Cloud copies expire after seven days, with scheduled and connection-time cleanup; duplicates do not extend the stored copy’s expiry. A still-unconfirmed phone-side record may be submitted again after expiry. Local archive deletion does not remotely erase every cloud copy, provider backup or export.
+- The server stores the parent public key, family scope, a child-capability hash and a bounded nonce-replay cache. Parent proof headers include signatures; child authorization uses a domain-separated capability, not the decryption token. No global privileged API credential is shipped in the APK. Backend code does not log message bodies or authorization, and Worker observability logging is disabled in configuration. Provider security/access logging, hosting regions and backups were not independently verified.
+- The original 4.8 APK used ntfy polling/streaming. Migration does not erase any old relay cache. Existing encrypted phone queues and parent evidence are preserved; mixed old/new transport builds cannot communicate.
 
 ## Code references
 
 - [Encryption and family key derivation](../MainActivity.kt#L291); [local family-token generation](../MainActivity.kt#L639).
 - [Parent control-signing identity](../MainActivity.kt#L425); [pairing invitation containing the family token](../MainActivity.kt#L712).
-- [Alert fields and encrypted outbox](../MainActivity.kt#L914); [relay uploads](../MainActivity.kt#L1062); [cached relay retrieval](../MainActivity.kt#L1109).
+- [Alert fields and encrypted outbox](../MainActivity.kt#L914); [authenticated WebSocket client](../CloudRelay.kt); [routing and capability derivation](../FamilyRelay.kt); [encrypted backend mailboxes](../relay/src/worker.js).
 - [Local archive/outbox schema](../FamilyEvidence.kt#L21); [parent archive insertion/deletion](../MainActivity.kt#L1341).
 - [Typed reply forwarding callback](../MainActivity.kt#L1586); [comment/story-reply capture and outgoing-DM exclusion](../MainActivity.kt#L1760).
 - [Pairing confirmation](../MainActivity.kt#L2267); [conditional monitoring notification](../MainActivity.kt#L609).

@@ -140,3 +140,14 @@ test('expired cloud copies are removed on reconnect and duplicates do not extend
     parent.close(); child.close();
   } finally { await mf.dispose(); }
 });
+
+test('backend storage refusal is retryable and is not reported as incorrect pairing', async () => {
+  const mf=runtime();
+  try{
+    const f=family(),parent=await connection(mf,f);parent.close();
+    await sql(mf,f.room,"CREATE TRIGGER refuse_write BEFORE INSERT ON metadata BEGIN SELECT RAISE(FAIL,'test storage unavailable'); END");
+    const response=(await connection(mf,f)).response;
+    assert.equal(response.status,503);
+    assert.equal((await response.json()).error.code,'relay_unavailable');
+  }finally{await mf.dispose()}
+});

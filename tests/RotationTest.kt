@@ -19,39 +19,27 @@ import java.util.concurrent.TimeUnit
 class RotationTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     @Before fun reset(){ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit();GuardEngine.setRole(ctx,"parent")}
-    private fun refusingRelay(requests:Int, test:(CountDownLatch)->Unit) {
-        val original=ProxySelector.getDefault();val selected=CountDownLatch(requests)
-        ProxySelector.setDefault(object:ProxySelector(){
-            override fun select(uri:URI):List<Proxy> {
-                if(uri.host=="ntfy.sh"){selected.countDown();return listOf(Proxy(Proxy.Type.HTTP,InetSocketAddress("127.0.0.1",9)))}
-                return original?.select(uri)?:listOf(Proxy.NO_PROXY)
-            }
-            override fun connectFailed(uri:URI,sa:SocketAddress,e:IOException){}
-        })
-        try{test(selected)}finally{ProxySelector.setDefault(original)}
+    private fun rotateAndAwait():String {
+        val done=CountDownLatch(1)
+        val next=GuardEngine.rotateKeyAndNotifyChild(ctx,false){success->assertFalse(success);done.countDown()}
+        assertTrue(done.await(5,TimeUnit.SECONDS))
+        return next
     }
-    @Test fun failedRotationPublishKeepsOriginalFamily()=refusingRelay(1){selected->
+    @Test fun failedRotationPublishKeepsOriginalFamily(){
         val old=GuardEngine.getOrCreateFamilyToken(ctx)
-        val proposed=GuardEngine.rotateKeyAndNotifyChild(ctx,false)
-        assertTrue(selected.await(5,TimeUnit.SECONDS))
-        assertNotEquals(old,proposed)
-        assertEquals(old,GuardEngine.getOrCreateFamilyToken(ctx))
+        val proposed=rotateAndAwait()
+        assertNotEquals(old,proposed);assertEquals(old,GuardEngine.getOrCreateFamilyToken(ctx))
     }
-    @Test fun oldChannelReportDoesNotErasePendingRotationRetry()=refusingRelay(2){selected->
+    @Test fun oldChannelReportDoesNotErasePendingRotationRetry(){
         val old=GuardEngine.getOrCreateFamilyToken(ctx)
-        val proposed=GuardEngine.rotateKeyAndNotifyChild(ctx,false)
+        val proposed=rotateAndAwait()
         val alert=org.json.JSONObject().put("type","alert").put("reason","heartbeat_ok").put("ts_ms",System.currentTimeMillis())
         val line=org.json.JSONObject().put("event","message").put("id","old-channel-report")
             .put("message",GuardEngine.encryptPayload(old,alert.toString())).toString()
         GuardEngine.processIncomingRelayLine(ctx,line,"parent",null)
-        val retry=GuardEngine.rotateKeyAndNotifyChild(ctx,false)
-        assertTrue(selected.await(5,TimeUnit.SECONDS))
-        assertEquals(proposed,retry)
+        assertEquals(proposed,rotateAndAwait())
     }
-    @Test fun repeatedRotationRetriesSamePendingTransition()=refusingRelay(2){selected->
-        val proposed=GuardEngine.rotateKeyAndNotifyChild(ctx,false)
-        val retry=GuardEngine.rotateKeyAndNotifyChild(ctx,false)
-        assertTrue(selected.await(5,TimeUnit.SECONDS))
-        assertEquals(proposed,retry)
+    @Test fun repeatedRotationRetriesSamePendingTransition(){
+        assertEquals(rotateAndAwait(),rotateAndAwait())
     }
 }

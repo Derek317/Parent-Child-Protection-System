@@ -1,21 +1,32 @@
 #!/usr/bin/env bash
 # Run inside the tag workflow. Signing keys remain exclusively in the build job.
 set -euo pipefail
-release_tag="${GITHUB_REF_NAME:?}"
+source_tag="${GITHUB_REF_NAME:?}"
+release_tag="$source_tag"
+hotfix=false
 release_repo="${GITHUB_REPOSITORY:?}"
 release_commit="${GITHUB_SHA:?}"
-if [[ ! "$release_tag" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+if [[ "$source_tag" =~ ^([0-9]+\.[0-9]+(\.[0-9]+)?)-hotfix\.[1-9][0-9]*$ ]]; then
+  release_tag="${BASH_REMATCH[1]}"
+  hotfix=true
+elif [[ ! "$release_tag" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
   echo "Not a version tag; no release published."
   exit 0
 fi
 test "$(git rev-parse HEAD)" = "$release_commit"
-test "$(git rev-parse "refs/tags/$release_tag^{commit}")" = "$release_commit"
+test "$(git rev-parse "refs/tags/$source_tag^{commit}")" = "$release_commit"
+if [ "$hotfix" = true ]; then
+  git merge-base --is-ancestor "refs/tags/$release_tag^{commit}" "$release_commit"
+fi
 source_notes="docs/releases/$release_tag.md"
 test -s "$source_notes"
 release_temp="$(mktemp -d "${RUNNER_TEMP:-/tmp}/ig-guard-release.XXXXXX")"
 trap 'rm -rf "$release_temp"' EXIT
 release_notes="$release_temp/notes.md"
 cp "$source_notes" "$release_notes"
+if [ "$hotfix" = true ]; then
+  printf '\nHotfix source: `%s` (tag `%s`). The original `%s` source tag is unchanged.\n' "$release_commit" "$source_tag" "$release_tag" >> "$release_notes"
+fi
 run_url="${GITHUB_SERVER_URL:-https://github.com}/$release_repo/actions/runs/${GITHUB_RUN_ID:?}"
 release_assets=()
 shopt -s nullglob
@@ -29,6 +40,10 @@ if [[ "${BUILD_RESULT:-}" = success && "${ARTIFACT_NAME:-}" = ig-guard-signed-ap
     release_assets=("$release_temp/$apk_name" "$release_temp/SHA256SUMS")
   fi
 fi
+if [ "$hotfix" = true ] && [ "${#release_assets[@]}" = 0 ]; then
+  echo "::error::A hotfix requires a verified signed APK. Existing release notes and assets are unchanged."
+  exit 1
+fi
 if [[ "${#release_assets[@]}" -gt 0 ]]; then
   printf '\n## Build artifact\nSigned APK verified by the build job; SHA256SUMS accompanies the download.\n\nWorkflow: %s\n' "$run_url" >> "$release_notes"
 else
@@ -37,6 +52,10 @@ fi
 if gh release view "$release_tag" --repo "$release_repo" >/dev/null 2>&1; then
   gh release edit "$release_tag" --repo "$release_repo" --title "IG Guard $release_tag" --notes-file "$release_notes" --latest
 else
+  if [ "$hotfix" = true ]; then
+    echo "::error::The original release must exist before publishing its hotfix."
+    exit 1
+  fi
   gh release create "$release_tag" --repo "$release_repo" --verify-tag --title "IG Guard $release_tag" --notes-file "$release_notes" --latest
 fi
 if [[ "${#release_assets[@]}" -gt 0 ]]; then

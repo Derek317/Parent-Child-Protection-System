@@ -27,7 +27,7 @@ export function header(f, role = 'parent', nonce = randomUUID()) {
   return 'IGGuard ' + Buffer.from(JSON.stringify(auth)).toString('base64url');
 }
 
-export function runtime(persist) {
+export function runtime(persist, options = {}) {
   return new Miniflare({
     name: 'ig-guard-relay', modules: true, scriptPath: fileURLToPath(new URL('../src/worker.js', import.meta.url)),
     modulesRules: [{ type: 'ESModule', include: ['**/*.js'] }],
@@ -37,6 +37,7 @@ export function runtime(persist) {
     unsafeInspectDurableObjects: true,
     host: '127.0.0.1', port: 0,
     log: undefined,
+    ...options,
   });
 }
 
