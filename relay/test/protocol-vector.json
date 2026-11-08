@@ -1,0 +1,22 @@
+{
+  "purpose": "TEST ONLY: disposable crypto interoperability key; never used by the app",
+  "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIGmn3KwN5kc6U59ycefJ8oFpSOFrHSPw7WYmb4LPrWXfOPsT6MoNZCVjFkr_l9_CzkmeWn3OCPNZ7eZtxmKJCA",
+  "privateKey": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgwo0I2f3qQW1rORIAKQLW67Xhn8JufQe5b0CVarm8c5WhRANCAAQgaafcrA3mRzpTn3Jx58nygWlI4WsdI_DtZiZvgs-tZd84-xPoyg1kJWMWSv-X38LOSZ5afc4I81nt5m3GYokI",
+  "token": "12345678-1234-4234-9234-123456789abc",
+  "scope": "ig_hk_0123456789abcdef0123456789ab",
+  "room": "16396533b6685ec6db7eaaf49eca8e79652afa155595db28269d6bea4f3c0c07",
+  "capability": "NZXA0eJIN-Bjm9hcZ7S3x8EGNQxyf8BIH8rTRVYpSb8",
+  "capability_hash": "151896e222134f6bba3c30d1ebd7d275c20407ab60b073898ebc4d6124877d86",
+  "transcript": "igguard-relay-auth-v1\nparent\n16396533b6685ec6db7eaaf49eca8e79652afa155595db28269d6bea4f3c0c07\nig_hk_0123456789abcdef0123456789ab\n1800000000000\n12345678-1234-4234-9234-123456789abc\n151896e222134f6bba3c30d1ebd7d275c20407ab60b073898ebc4d6124877d86",
+  "auth": {
+    "v": 1,
+    "role": "parent",
+    "room": "16396533b6685ec6db7eaaf49eca8e79652afa155595db28269d6bea4f3c0c07",
+    "scope": "ig_hk_0123456789abcdef0123456789ab",
+    "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIGmn3KwN5kc6U59ycefJ8oFpSOFrHSPw7WYmb4LPrWXfOPsT6MoNZCVjFkr_l9_CzkmeWn3OCPNZ7eZtxmKJCA",
+    "capability_hash": "151896e222134f6bba3c30d1ebd7d275c20407ab60b073898ebc4d6124877d86",
+    "ts_ms": 1800000000000,
+    "nonce": "12345678-1234-4234-9234-123456789abc",
+    "signature": "MEUCIFl_G78oC_f9IFOGeSJtUrbNeksYut79SkwkRZwPWa15AiEAl7bLc17W5uIo_ajNy4EWpu-HPfsYuTqtr3gKMmBpo30"
+  }
+}

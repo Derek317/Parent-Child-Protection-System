@@ -20,6 +20,7 @@ shutil.copyfile(repo/'MainActivity.kt',out/'MainActivity.kt')
 shutil.copyfile(repo/'FamilySecurity.kt',out/'FamilySecurity.kt')
 shutil.copyfile(repo/'FamilyEvidence.kt',out/'FamilyEvidence.kt')
 shutil.copyfile(repo/'ConversationCapture.kt',out/'ConversationCapture.kt')
+shutil.copyfile(repo/'FamilyRelay.kt',out/'FamilyRelay.kt')
 shutil.copytree(repo/'ui-res',out/'ui-res',dirs_exist_ok=True)
 PY
 cd "$build_dir"
@@ -35,6 +36,7 @@ android { testOptions {
             if (System.getProperty(key)) systemProperty key, System.getProperty(key)
         }
         systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+        systemProperty 'igguard.protocol.vector', System.getenv('IG_GUARD_SOURCE') + '/relay/test/protocol-vector.json'
     }
 } }
 dependencies {

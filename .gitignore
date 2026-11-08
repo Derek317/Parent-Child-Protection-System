@@ -1,0 +1,8 @@
+.superpowers/
+relay/node_modules/
+relay/.wrangler/
+relay/.dev.vars
+relay/.env*
+*.jks
+*.keystore
+signing-key.base64
