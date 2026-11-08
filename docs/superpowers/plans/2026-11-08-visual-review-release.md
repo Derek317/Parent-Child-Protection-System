@@ -33,6 +33,6 @@
 - [x] Add failing tests for accessible button roles, discoverable record details, filter operation and retained ordering explanations.
 - [x] Repair shared control boundaries/focus, message affordance and filter layout; run focused regressions and inspect new native renders.
 - [x] Conduct one fresh read-only review, correct material findings with regressions and run the full Android build/lint/test and workflow checks.
-- [ ] Write release notes, validation results and setup limits; commit verified files, push main/tag 4.8 and verify workflow/release assets and signing certificate.
+- [x] Write release notes, validation results and setup limits; commit verified files, push main/tag 4.8 and verify workflow/release assets and signing certificate.
 
-Local verification complete: 181 Android tests, 22 workflow checks, 56 after renders, both builds and lint (0 errors / 57 warnings). The publication step is recorded after the remote workflow and assets are confirmed.
+Local verification complete: 181 Android tests, 22 workflow checks, 56 after renders, both builds and lint (0 errors / 57 warnings). Publication verified: main and tag workflows succeeded, the downloaded 4.8 APK / code 150 matches SHA256SUMS and the 4.7 signing certificate. See the visual review report and machine-readable release verification.

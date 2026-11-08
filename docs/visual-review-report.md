@@ -52,3 +52,15 @@ Two-way capture still requires the parent's signed request, the child's explicit
 ## Release and signing
 
 Version 4.8 is built by the existing GitHub tag workflow using the repository's signing secrets. The workflow verifies the signed APK before uploading it with SHA256SUMS. Local release validation uses an unsigned APK and does not handle the private release key. The release notes link this report and the capture repair report; a failed or unsigned build produces a notes-only release instead of presenting an unsigned APK as the signed download.
+
+## Published release verification
+
+- Release: [IG Guard 4.8](https://github.com/Derek317/Parent-Child-Protection-System/releases/tag/4.8); source commit `ebb8f78`.
+- [Tag workflow](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42458776227) and [main workflow](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42458776278): **success**.
+- Downloaded release APK: `app.family.igguard`, **version 4.8 / code 150**, not debuggable; APK Signature Scheme v2 verification passed.
+- APK SHA-256: `75238e903163fc64273e49699d4c2f33e1ec9cd035061c3d089542926f85b6fa` — matches the published SHA256SUMS.
+- Signing-certificate SHA-256: `0eb6f30787c2d6dc23136a28cfd7a08a7956e5fe0565ba142f6711be38ca3f0e` — independently matches the downloaded 4.7 APK, preserving signing compatibility. No signing-key replacement is required by this release.
+- The downloaded archive contains no keystore files or audit/test fixture strings.
+- [Machine-readable verification](releases/4.8-verification.json) records the checks and workflow links.
+
+Historical contact/direction errors cannot be reliably corrected from text alone; the repair does not rewrite past evidence or silently clear protective flags. Parents should review uncertain historical records.

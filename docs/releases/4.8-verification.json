@@ -1,0 +1,19 @@
+{
+  "source_commit": "ebb8f783f80531bb44ec16ecf7dc7e230c2512c1",
+  "release": "4.8",
+  "version_code": 150,
+  "package": "app.family.igguard",
+  "apk_sha256": "75238e903163fc64273e49699d4c2f33e1ec9cd035061c3d089542926f85b6fa",
+  "signer_certificate_sha256": "0eb6f30787c2d6dc23136a28cfd7a08a7956e5fe0565ba142f6711be38ca3f0e",
+  "same_signer_as_4_7": true,
+  "v2_signature_verified": true,
+  "debuggable": false,
+  "tag_workflow": "https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42458776227",
+  "main_workflow": "https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42458776278",
+  "workflow_result": "success",
+  "android_tests_passed": 181,
+  "android_test_classes": 22,
+  "workflow_checks_passed": 22,
+  "lint_errors": 0,
+  "lint_warnings": 57
+}
