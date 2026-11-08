@@ -21,6 +21,11 @@ shutil.copyfile(repo/'FamilySecurity.kt',out/'FamilySecurity.kt')
 shutil.copyfile(repo/'FamilyEvidence.kt',out/'FamilyEvidence.kt')
 shutil.copyfile(repo/'ConversationCapture.kt',out/'ConversationCapture.kt')
 shutil.copyfile(repo/'FamilyRelay.kt',out/'FamilyRelay.kt')
+shutil.copyfile(repo/'CloudRelay.kt',out/'CloudRelay.kt')
+(out/'scripts').mkdir(exist_ok=True)
+shutil.copyfile(repo/'scripts/relay-config.py',out/'scripts/relay-config.py')
+(out/'relay').mkdir(exist_ok=True)
+shutil.copyfile(repo/'relay/endpoint.json',out/'relay/endpoint.json')
 shutil.copytree(repo/'ui-res',out/'ui-res',dirs_exist_ok=True)
 PY
 cd "$build_dir"
@@ -39,7 +44,9 @@ android { testOptions {
         systemProperty 'igguard.protocol.vector', System.getenv('IG_GUARD_SOURCE') + '/relay/test/protocol-vector.json'
     }
 } }
+android { buildTypes { debug { buildConfigField 'String', 'RELAY_BASE_URL', '""' } } }
 dependencies {
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
     testImplementation 'org.robolectric:robolectric:4.14.1'

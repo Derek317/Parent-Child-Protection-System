@@ -6,6 +6,7 @@ const MAX_QUEUE = 512;
 const WINDOW = 8;
 const ranks = { control: '0', receipt: '1', urgent: '2', data: '3' };
 const encoder = new TextEncoder();
+class AccessDenied extends Error {}
 const table = role => role === 'parent' ? 'parent_inbox' : 'child_inbox';
 const peerRole = role => role === 'parent' ? 'child' : 'parent';
 const prefix = role => role === 'parent' ? 'p' : 'c';
@@ -57,14 +58,16 @@ export class FamilyRoom extends DurableObject {
     try {
       auth = parseAuthorization(request.headers.get('Authorization'));
       if (auth.room !== room) return json(401, 'unauthorized');
+      if(auth.role === 'parent')await verifyParentAuthorization(auth, room);
+    } catch { return json(401, 'unauthorized'); }
+    try {
       if (auth.role === 'parent') {
-        await verifyParentAuthorization(auth, room);
         // No await between replay check and commit: concurrent upgrades cannot spend a nonce twice.
         this.ctx.storage.transactionSync(() => {
           const owner = this.metadata();
-          if (owner && (owner.public_key !== auth.public_key || owner.scope !== auth.scope || !sameHash(owner.capability_hash, auth.capability_hash))) throw new Error('Unauthorized');
+          if (owner && (owner.public_key !== auth.public_key || owner.scope !== auth.scope || !sameHash(owner.capability_hash, auth.capability_hash))) throw new AccessDenied();
           const nonces = (owner?.nonces ?? []).filter(n => n[1] >= Date.now());
-          if (nonces.some(n => n[0] === auth.nonce) || nonces.length >= 128) throw new Error('Unauthorized');
+          if (nonces.some(n => n[0] === auth.nonce) || nonces.length >= 128) throw new AccessDenied();
           nonces.push([auth.nonce, auth.ts_ms + 120_000]);
           this.sql.exec("INSERT OR REPLACE INTO metadata(key,value) VALUES('owner',?)", JSON.stringify({
             public_key: auth.public_key, scope: auth.scope, capability_hash: auth.capability_hash, nonces,
@@ -76,7 +79,7 @@ export class FamilyRoom extends DurableObject {
         if (owner.scope !== auth.scope || typeof auth.capability !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(auth.capability) ||
             !sameHash(owner.capability_hash, await capabilityHash(auth.capability))) return json(401, 'unauthorized');
       }
-    } catch { return json(401, 'unauthorized'); }
+    } catch(error) { return error instanceof AccessDenied ? json(401, 'unauthorized') : json(503, 'relay_unavailable'); }
 
     this.cleanupExpired();
     const pair = new WebSocketPair();

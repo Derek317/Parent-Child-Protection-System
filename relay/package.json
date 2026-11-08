@@ -3,14 +3,24 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "test": "node test/protocol.test.js && node test/relay.test.js && node test/load.test.js",
+    "test": "node test/protocol.test.js && node test/relay.test.js && node test/load.test.js && node test/smoke.test.js",
     "deploy": "wrangler deploy",
+    "smoke": "node --use-env-proxy scripts/smoke.js",
     "dev": "wrangler dev"
   },
   "devDependencies": {
     "miniflare": "4.20260730.0",
-    "wrangler": "4.158.0"
+    "wrangler": "4.158.0",
+    "ws": "8.21.0"
+  },
+  "overrides": {
+    "miniflare": {
+      "sharp": "0.35.5",
+      "undici": "7.30.2"
+    }
   }
 }

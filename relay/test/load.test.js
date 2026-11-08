@@ -22,6 +22,7 @@ test('100 independent two-phone families exchange encrypted records and signed r
   const mf = runtime();
   const perFamily = Number(process.env.LOAD_MESSAGES ?? 25);
   const familyCount = Number(process.env.LOAD_FAMILIES ?? 100);
+  assert.ok(Number.isInteger(familyCount) && familyCount > 0 && familyCount <= 100);
   assert.ok(Number.isInteger(perFamily) && perFamily > 0 && perFamily <= 500);
   const started = performance.now();
   let publishes = 0, buffered = 0, throttleResponses = 0, bytes = 0;
@@ -84,7 +85,6 @@ test('100 independent two-phone families exchange encrypted records and signed r
       assert.deepEqual([...archive.values()].sort((a, b) => a.ts_ms - b.ts_ms).map(e => e.capture_order), Array.from({ length: perFamily }, (_, n) => n));
       assert.equal((await sql(mf, f.room, 'SELECT COUNT(*) AS count FROM parent_inbox'))[0].count, 0);
       parent.close(); child.close();
-      console.log(`Completed family ${index}: ${archive.size} records, ${pending.size} pending`);
     }));
     console.log(JSON.stringify({ families: familyCount, phoneConnections: familyCount * 2, records: perFamily * familyCount, publishes, buffered, throttleResponses, encryptedBytesPublished: bytes, elapsedMs: Math.round(performance.now() - started) }));
   } finally { await mf.dispose(); }

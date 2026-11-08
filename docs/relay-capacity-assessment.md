@@ -1,6 +1,6 @@
 # Relay capacity and replacement assessment
 
-Status: the user selected Cloudflare Workers Free with Durable Objects and WebSockets after the capacity comparison, for around 100 parent–child families. No relay replacement has been implemented or released. The [Cloudflare design](superpowers/specs/2026-11-08-cloudflare-relay-design.md) is ready for review. Firebase is no longer the selected implementation; no Firebase project or client configuration is needed for this design.
+Status: the user selected Cloudflare Workers Free with Durable Objects and WebSockets after the capacity comparison, for around 100 parent–child families. The [Cloudflare design](superpowers/specs/2026-11-08-cloudflare-relay-design.md) is approved and implemented locally; live deployment and signed publication are tracked in the [verification report](relay-migration-report.md). Firebase is no longer the selected implementation; no Firebase project or client configuration is needed for this design.
 
 ## Confirmed failure
 

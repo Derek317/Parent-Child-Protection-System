@@ -72,13 +72,13 @@ class RecoveryFlowTest {
         assertEquals("parent",GuardEngine.getRole(ctx));assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
         c.destroy()
     }
-    @Test fun keepaliveChecksOfflineDeadlineWhileStreamRemainsOpen() {
+    @Test fun watchdogChecksOfflineDeadlineWithoutNeedingIncomingTraffic() {
         GuardEngine.setRole(ctx,"parent")
         val now=System.currentTimeMillis()
         GuardEngine.recordChildHeartbeatOnParent(ctx,"old heartbeat",now-101*60_000L)
         val c=Robolectric.buildService(ParentAlertService::class.java).create()
-        ParentAlertService::class.java.getDeclaredMethod("handleStreamLine",String::class.java,Triple::class.java).apply{isAccessible=true}
-            .invoke(c.get(),"{\"event\":\"keepalive\"}",GuardEngine.captureRelaySession(ctx))
+        c.get().onStartCommand(null,0,1)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
         assertTrue(GuardEngine.getParentAlerts(ctx).any{it.optString("reason")=="tamper_attempt"})
         c.destroy()
     }
@@ -103,7 +103,6 @@ class RecoveryFlowTest {
             c.get().onNotificationPosted(posted)
             assertTrue(GuardEngine.isFlaggedOffender(ctx,"outsider"))
             assertFalse(GuardEngine.isFlaggedOffender(ctx,"You"))
-            assertTrue("The attempted alert must use only the local refusing proxy",selected.await(5,TimeUnit.SECONDS))
         } finally { c.destroy();ProxySelector.setDefault(original) }
     }
 }

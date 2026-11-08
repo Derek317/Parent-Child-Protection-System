@@ -1,8 +1,8 @@
 # Cloudflare relay migration for IG Guard 4.8
 
-Status: the user selected Cloudflare Workers Free with Durable Objects and WebSockets for around 100 families. This document makes that choice concrete for review. The implementation and deployed endpoint do not exist yet. Routine engineering decisions proposed below are explicitly part of this design, not claims of completed work or guaranteed capacity.
+Status: **approved by the user for implementation, GitHub publication and replacement of the 4.8 APK**. The backend and Android integration are implemented; final verification, deployed-endpoint checks and signed release publication are tracked in the [migration report](../../relay-migration-report.md). The configured endpoint is `https://parent-child-protection-system.dere2005317.workers.dev`. This design is not a guarantee of unlimited capacity or bug-free operation.
 
-Builder check: an independent Android/backend reviewer read this design and the connected implementation on 2026-11-08 and reported **“nothing important left”** to clarify before planning. This checks design readiness, not correctness of code that has not been written. User review of this written design remains pending.
+Builder check: an independent Android/backend reviewer read this design and the connected implementation on 2026-11-08 and reported **“nothing important left”** to clarify before planning. This checks design readiness, not correctness of code that has not been written. User approval was subsequently supplied in the conversation.
 
 ## Purpose and boundaries
 

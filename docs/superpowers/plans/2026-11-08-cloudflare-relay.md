@@ -1,6 +1,6 @@
 # Cloudflare Relay Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Replace ntfy delivery with an authenticated free Cloudflare relay while preserving existing family data and signed delivery confirmation.
 
@@ -35,10 +35,10 @@
 
 **Interfaces:** `FamilyRelay.room(publicKey, scope): String`, `childCapability(token): String`, `parentAuthorization(identity, scope, token, now, nonce): String`; backend `roomId(publicKey,scope)`, `verifyParentAuthorization(auth,room,now)`, `capabilityHash(capability)`. Authorization uses a fixed newline-delimited domain-separated message and canonical base64url SPKI; ECDSA signatures have explicitly converted DER/raw forms.
 
-- [ ] Write tests for distinct room/key/scope, non-key child capability, signature verification, tampered fields and expiry with shared literal vectors.
-- [ ] Run tests and observe missing behavior fail.
-- [ ] Implement minimal standard crypto helpers and pinned test/runtime tooling.
-- [ ] Run Android helper tests and Node protocol tests; commit.
+- [x] Write tests for distinct room/key/scope, non-key child capability, signature verification, tampered fields and expiry with shared literal vectors.
+- [x] Run tests and observe missing behavior fail.
+- [x] Implement minimal standard crypto helpers and pinned test/runtime tooling.
+- [x] Run Android helper tests and Node protocol tests; commit.
 
 ### Task 2: Authenticated durable WebSocket backend
 
@@ -46,9 +46,9 @@
 
 **Interfaces:** WSS `/v1/rooms/{room}` with `Authorization: IGGuard <base64url JSON>`. Client sends `publish{id,wire,kind}`, `consume{id,digest}`, `replay`; server sends `ready`, `accepted{id,mode}`, `message{id,delivery_id,wire,digest}`, `error{code,retry_after_ms}`. Roles determine inbox/outbox; stable packet keys and fresh delivery IDs are separate.
 
-- [ ] Write failing real-runtime tests for owner bootstrap, capability/role isolation, nonce replay/concurrency, offline queue, direct forwarding, duplicate/conflicting packets, consumption, queue bounds/expiry and restart.
-- [ ] Implement Worker routing, synchronous SQLite admission transactions, hibernation sockets and bounded cleanup/rate limits.
-- [ ] Run Miniflare tests, including fragments/queue progression and 100-room traffic/operation measurements; commit.
+- [x] Write failing real-runtime tests for owner bootstrap, capability/role isolation, nonce replay/concurrency, offline queue, direct forwarding, duplicate/conflicting packets, consumption, queue bounds/expiry and restart.
+- [x] Implement Worker routing, synchronous SQLite admission transactions, hibernation sockets and bounded cleanup/rate limits.
+- [x] Run Miniflare tests, including fragments/queue progression and 100-room traffic/operation measurements; commit.
 
 ### Task 3: Android connection, receipt and lifecycle integration
 
@@ -56,10 +56,10 @@
 
 **Interfaces:** `CloudRelay.connect(ctx)`, `publish(ctx,token,id,wire,kind,onComplete)`, `disconnect()`, `receive handler` captures immutable role/token/generation. `GuardEngine.processIncomingRelayLine` returns a consumed/rejected/retry outcome while retaining the existing decoded record/signature paths. Keep source storage until existing signed event receipt.
 
-- [ ] Write failing regressions for accepted-frame retry preservation, durable consume only after local commit, receipt recovery, stale sessions, child-first connection, configuration failure and controls/rotation.
-- [ ] Implement one active socket per session with bounded pending publishes, jittered reconnect and persistent provider cooldown. Replace ntfy stream/poll/publish call sites without changing capture logic.
-- [ ] Preserve critical parent control durability and old-room rotation recovery; prioritize unaccepted frames without blocking other events.
-- [ ] Run affected Android tests, then full Android tests/lint/build and backend suite; commit.
+- [x] Write failing regressions for accepted-frame retry preservation, durable consume only after local commit, receipt recovery, stale sessions, child-first connection, configuration failure and controls/rotation.
+- [x] Implement one active socket per session with bounded pending publishes, jittered reconnect and persistent provider cooldown. Replace ntfy stream/poll/publish call sites without changing capture logic.
+- [x] Preserve critical parent control durability and old-room rotation recovery; prioritize unaccepted frames without blocking other events.
+- [x] Run affected Android tests, then full Android tests/lint/build and backend suite; commit.
 
 ### Task 4: Deployment and release safeguards
 
@@ -67,15 +67,15 @@
 
 **Interfaces:** public repository variable `RELAY_BASE_URL` supplies the reviewed HTTPS worker endpoint. Signing secrets remain unchanged. Release scripts accept an explicitly checked 4.8 hotfix source without moving tag 4.8; existing APK is retained if configuration/build verification fails.
 
-- [ ] Add failing script/workflow behavioral checks for missing/unsafe endpoint, hotfix provenance, failed build preserving assets and valid update upload.
-- [ ] Implement config generation/validation, backend tests in CI, deployment commands and signed artifact safeguards.
-- [ ] Run checks/actionlint, test deployment locally and document external account/endpoint requirements; commit.
+- [x] Add failing script/workflow behavioral checks for missing/unsafe endpoint, hotfix provenance, failed build preserving assets and valid update upload.
+- [x] Implement config generation/validation, backend tests in CI, deployment commands and signed artifact safeguards.
+- [x] Run checks/actionlint, test deployment locally and document external account/endpoint requirements; commit.
 
 ### Task 5: Whole-change verification and publication
 
 **Files:** Update `README.md`, `docs/privacy-data-flow.md`, `docs/releases/4.8.md`; create `docs/relay-migration-report.md` and update design status.
 
-- [ ] Run realistic end-to-end clients, offline/throttle/restart/rotation/fragment tests and 100-family load; record actual operation counts and limits.
+- [x] Run realistic end-to-end clients, offline/throttle/restart/rotation/fragment tests and 100-family load; record actual operation counts and limits.
 - [ ] Run the full Android and backend suites, build/lint/workflow checks; request one independent whole-change review and fix important findings with regression tests.
 - [ ] Deploy to the user's free account when authorized account access is available; verify the public endpoint and both-device delivery. Do independent code/tests/docs work while access is pending.
 - [ ] Push verified source using existing Git authentication. Run the signed workflow with the real endpoint, download and verify package/version/certificate/checksum, then replace the existing 4.8 APK and release notes. If deployment/configuration remains unavailable, push a reviewable branch and report the exact release blocker; leave the published APK intact.

@@ -65,9 +65,6 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.URL
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
@@ -82,7 +79,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import javax.net.ssl.HttpsURLConnection
 import kotlin.concurrent.thread
 import kotlin.random.Random
 
@@ -173,9 +169,9 @@ object GuardEngine {
     private val recentChildSentTexts = LinkedHashMap<String, Long>()
     // State transactions only. Never hold this lock during network I/O.
     private val pollLock = Any()
-    private val pollInFlight = AtomicBoolean(false)
     private val deliveryInFlight = AtomicBoolean(false)
-    private val deliveryCallbacks = java.util.concurrent.ConcurrentHashMap<Pair<String,String>, (Boolean,String)->Unit>()
+    private data class DeliveryCallback(val origin:Triple<String,String,Int>,val complete:(Boolean,String)->Unit)
+    private val deliveryCallbacks = java.util.concurrent.ConcurrentHashMap<Pair<String,String>, DeliveryCallback>()
     private var relayGeneration = 0
 
     fun captureRelaySession(ctx: Context): Triple<String, String, Int> = synchronized(pollLock) {
@@ -435,6 +431,22 @@ object GuardEngine {
         }
     }
 
+    fun relayPublicKey(ctx:Context):String = synchronized(pollLock) {
+        val key=if(isParentMode(ctx))parentIdentity(ctx).publicKey else prefs(ctx).getString("parent_command_public_key","").orEmpty()
+        require(FamilySecurity.validPublicKey(key)){"Pairing needs a pinned parent key"};key
+    }
+    fun relayAuthorization(ctx:Context,token:String):String = synchronized(pollLock) {
+        val scope=getChannelTopicForToken(token)
+        if(isParentMode(ctx))FamilyRelay.parentAuthorization(parentIdentity(ctx),scope,token)
+        else {check(isChildMode(ctx));FamilyRelay.childAuthorization(relayPublicKey(ctx),scope,token)}
+    }
+    private fun relayRouteTokens(ctx:Context):List<String> = synchronized(pollLock) {
+        val current=getOrCreateFamilyToken(ctx)
+        val pending=try{JSONObject(prefs(ctx).getString("pending_rotation_json","{}").orEmpty())}catch(_:Exception){JSONObject()}
+        val old=pending.optString("old_token")
+        if(isParentMode(ctx) && current==pending.optString("new_token") && FamilySecurity.validToken(old))listOf(current,old).distinct() else listOf(current)
+    }
+
     fun isStrongPasswordValid(password: String): Boolean {
         val clean = password.trim()
         if (clean.length < 8) return false
@@ -582,7 +594,7 @@ object GuardEngine {
     fun setRole(ctx: Context, role: String) {
         require(role in setOf("child", "parent", "unconfigured"))
         synchronized(pollLock) {
-            if (getRole(ctx) != role) relayGeneration++
+            if (getRole(ctx) != role) {relayGeneration++;CloudRelay.disconnect()}
             prefs(ctx).edit().putString("role", role).apply()
         }
         syncChildComponents(ctx)
@@ -669,6 +681,7 @@ object GuardEngine {
                 manager?.activeNotifications?.filter { it.tag?.startsWith(getChannelTopicForToken(old) + ":") == true }
                     ?.forEach { manager.cancel(it.tag, it.id) }
                 relayGeneration++
+                CloudRelay.disconnect()
                 if (!preserveFamilyHistory) {
                     for (key in listOf("control_state_json", "last_control_ts_ms", "pending_rotation_json", "synced_15m_code", "synced_15m_exp", "unlock_until_ms",
                         "capture_policy_id","capture_local_ack_id","capture_child_ack_id","capture_sequence",
@@ -682,13 +695,14 @@ object GuardEngine {
             }
             // Token and family-scoped history change in the same state transaction.
             check(editor.putString("family_uuid_token", clean).remove("evidence_transition_json").commit())
+            if(getRole(ctx)!="unconfigured")CloudRelay.connect(ctx)
         }
     }
 
     fun hasSentInitialSetupConfirmation(ctx: Context): Boolean = prefs(ctx).getBoolean("sent_setup_ok", false)
     fun markInitialSetupConfirmationSent(ctx: Context, sent: Boolean) = prefs(ctx).edit().putBoolean("sent_setup_ok", sent).apply()
 
-    // shortcut: uses public ntfy.sh HTTPS relay with AES-256-GCM E2EE payload encryption, upgrade to self-hosted relay for enterprise scale
+    // Stable local family scope; the network route additionally binds the parent's signing key.
     fun getChannelTopic(ctx: Context): String = getChannelTopicForToken(getOrCreateFamilyToken(ctx))
 
     fun getChannelTopicForToken(token: String): String {
@@ -1088,7 +1102,7 @@ object GuardEngine {
                     else { FamilyEvidence(ctx).use { it.enqueueBatch(topic,wires,waitForReceipt=receiptRequested) };true }
                 }
                 if(!queued){completeAlertCallback(onComplete,false,"家庭配對已變更，原傳送已停止");return}
-                if(onComplete!=null)deliveryCallbacks[topic to payload.getString("event_id")] = { success,message ->
+                if(onComplete!=null)deliveryCallbacks[topic to payload.getString("event_id")] = DeliveryCallback(queuedSession) { success,message ->
                     val same=captureRelaySession(ctx)==queuedSession
                     completeAlertCallback(onComplete,same && success,if(same)message else "家庭配對已變更，原傳送已停止")
                 }
@@ -1100,43 +1114,31 @@ object GuardEngine {
             }
             return
         }
-        val wireJson = if (payload.optString("type") in FamilySecurity.controlTypes) {
-            payload.put("scope", topic).put("command_id", UUID.randomUUID().toString())
-            FamilySecurity.signCommand(payload, parentIdentity(ctx).privateKey).toString()
-        } else plainJson
-        thread {
-            var conn: HttpsURLConnection? = null
-            try {
-                val encryptedBody = encryptPayload(token, wireJson)
-                conn = (URL("https://ntfy.sh/$topic").openConnection() as HttpsURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 8000
-                    readTimeout = 8000
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        val origin=captureRelaySession(ctx)
+        try {
+            val type=payload.optString("type")
+            require(topic==getChannelTopicForToken(token) && token in relayRouteTokens(ctx))
+            val parentCommand=type in FamilySecurity.controlTypes
+            check(if(parentCommand)isParentMode(ctx) else isChildMode(ctx) && type in setOf("capture_ack","sync_child_handle"))
+            val commandId=UUID.randomUUID().toString()
+            payload.put("scope",topic).put("command_id",commandId)
+            val envelope=if(parentCommand)FamilySecurity.signCommand(payload,parentIdentity(ctx).privateKey) else payload
+            val eventId="control:$commandId"
+            val wrapped=JSONObject().put("type","alert").put("event_id",eventId).put("relay_control",true).put("envelope",envelope)
+            val frames=AlertFrames.split(wrapped).mapIndexed{index,frame->"$eventId:$index" to encryptPayload(token,frame.toString())}
+            synchronized(pollLock) {
+                check(captureRelaySession(ctx)==origin)
+                FamilyEvidence(ctx).use{it.enqueueBatch(topic,frames,role=origin.first,kind=if(type=="alert_receipt")"receipt" else "control")}
+                if(onComplete!=null)deliveryCallbacks[topic to eventId]=DeliveryCallback(origin){success,message->
+                    val same=captureRelaySession(ctx)==origin
+                    completeAlertCallback(onComplete,same && success,if(same)message else "家庭配對已變更，原傳送已停止")
                 }
-                conn.outputStream.use { it.write(encryptedBody.toByteArray(Charsets.UTF_8)) }
-                val code = conn.responseCode
-                conn.disconnect()
-
-                val statusMsg = if (code in 200..299) {
-                    "HTTPS $code (AES-256-GCM E2EE 🔒)"
-                } else if (code == 429) {
-                    "HTTPS 429 Rate Limit"
-                } else {
-                    "HTTPS $code Error"
-                }
-                cpLastHttpStatus = "${nowTimeStr()} -> $statusMsg"
-                addCheckpointLog(ctx, "CP3-E2EE", statusMsg)
-                onComplete?.invoke(code in 200..299, statusMsg)
-            } catch (e: Exception) {
-                val err = "TLS Fail: ${e.javaClass.simpleName}"
-                cpLastHttpStatus = "${nowTimeStr()} -> $err"
-                addCheckpointLog(ctx, "CP3-ERR", err)
-                onComplete?.invoke(false, err)
-            } finally {
-                try { conn?.disconnect() } catch (_: Exception) {}
             }
+            cpLastHttpStatus="指令已加密保留 · 等待中繼確認"
+            retryPendingAlerts(ctx)
+        } catch(e:Exception) {
+            cpLastHttpStatus="未能保留指令 · ${e.javaClass.simpleName}"
+            completeAlertCallback(onComplete,false,cpLastHttpStatus)
         }
     }
 
@@ -1145,102 +1147,84 @@ object GuardEngine {
     private fun completeAlertCallback(callback: ((Boolean,String)->Unit)?,success: Boolean,message: String) {
         try { callback?.invoke(success,message) } catch (_: Exception) {}
     }
-    private fun finishDeliveryCallbacks(ctx: Context,session: Triple<String,String,Int>) {
-        val scope=getChannelTopicForToken(session.second)
+    private fun finishDeliveryCallbacks(ctx: Context) {
         for((key,callback) in deliveryCallbacks.entries.toList()) {
-            if(key.first!=scope)continue
-            val active=captureRelaySession(ctx)==session
+            val scope=key.first
+            val active=captureRelaySession(ctx)==callback.origin
+            if(!active){if(deliveryCallbacks.remove(key,callback))completeAlertCallback(callback.complete,false,"家庭配對已變更，原傳送已停止");continue}
             var accepted=false;var due=false
             try { FamilyEvidence(ctx).use { db -> accepted=db.unacceptedEventCount(scope,key.second)==0;due=db.eventDue(scope,key.second,System.currentTimeMillis()) } }
             catch (_: Exception) {}
             if(!active || accepted || !due) {
-                if(deliveryCallbacks.remove(key,callback))completeAlertCallback(callback,active && accepted,
+                if(deliveryCallbacks.remove(key,callback))completeAlertCallback(callback.complete,active && accepted,
                     if(!active)"家庭配對已變更，原傳送已停止" else if(accepted)cpLastHttpStatus else "未送達：已加密保留，稍後重試")
             }
         }
     }
+    fun prepareRelayOutbox(ctx:Context) = synchronized(pollLock) {
+        if(!isChildMode(ctx) || !hasSecureParentCommands(ctx))return@synchronized
+        val token=getOrCreateFamilyToken(ctx)
+        FamilyEvidence(ctx).use{db->db.migrateRelay(getChannelTopicForToken(token)){wire->
+            val decoded=decryptPayload(token,wire) ?: error("Encrypted queue recovery required")
+            require(decoded.optString("type") in ConversationCapture.contentTypes || decoded.optString("type")=="alert_fragment")
+            decoded.put("receipt_requested",true)
+            encryptPayload(token,decoded.toString())
+        }}
+    }
     fun retryPendingAlerts(ctx: Context, force: Boolean = false) {
-        if (!isChildMode(ctx)) return
+        if (getRole(ctx)=="unconfigured") return
+        try{prepareRelayOutbox(ctx)}catch(_:Exception){
+            cpLastHttpStatus="加密佇列需要復原 · 已保留原有片段，請保留 App 資料"
+            val origin=captureRelaySession(ctx)
+            for((key,callback) in deliveryCallbacks.entries.toList())if(callback.origin==origin && deliveryCallbacks.remove(key,callback))completeAlertCallback(callback.complete,false,cpLastHttpStatus)
+            return
+        }
         if (force) FamilyEvidence(ctx).use { it.retryNow(getChannelTopic(ctx)) }
         if (!deliveryInFlight.compareAndSet(false, true)) return
-        val app = ctx.applicationContext
-        val session = captureRelaySession(app)
+        val app=ctx.applicationContext
+        val session=captureRelaySession(app)
         thread {
             try {
-                deliveryLoop@ while (captureRelaySession(app) == session && isChildMode(app)) {
-                    val scope = getChannelTopicForToken(session.second)
-                    val batch = FamilyEvidence(app).use { it.due(scope, System.currentTimeMillis()) }
-                    if (batch.isEmpty()) break
-                    for (frame in batch) {
-                        if (captureRelaySession(app) != session) return@thread
-                        var conn: HttpsURLConnection? = null
-                        try {
-                            conn = (URL("https://ntfy.sh/$scope").openConnection() as HttpsURLConnection).apply {
-                                requestMethod = "POST";connectTimeout = 8000;readTimeout = 8000;doOutput = true
-                                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                            }
-                            conn.outputStream.use { it.write(frame.wire.toByteArray(Charsets.UTF_8)) }
-                            val code = conn.responseCode
-                            FamilyEvidence(app).use { db ->
-                                if (code in 200..299) {
-                                    if(frame.waitForReceipt)db.relayAccepted(scope,frame.id,System.currentTimeMillis()) else db.acknowledge(scope, frame.id)
-                                } else db.failed(scope, frame.id, System.currentTimeMillis())
-                            }
-                            if (captureRelaySession(app) == session) cpLastHttpStatus = if (code in 200..299)
-                                (if(frame.waitForReceipt)"中繼站已接收 · 等待家長手機確認" else "中繼站已接收 · 此配對尚未啟用送達確認") else "HTTPS $code · 已保留，稍後重試"
-                            addCheckpointLog(app,if(code in 200..299)"CP3-RELAY" else "CP3-ERR","Publish HTTPS $code; parent receipt is separate")
-                            if (code !in 200..299) break@deliveryLoop
-                        } catch (e: Exception) {
-                            FamilyEvidence(app).use { it.failed(scope, frame.id, System.currentTimeMillis()) }
-                            if (captureRelaySession(app) == session) cpLastHttpStatus = "傳送失敗 (${e.javaClass.simpleName}) · 已保留，稍後重試"
-                            addCheckpointLog(app,"CP3-ERR","Publish failed: ${e.javaClass.simpleName}; encrypted queue retained")
-                            break@deliveryLoop
-                        } finally { try { conn?.disconnect() } catch (_: Exception) {} }
+                deliveryLoop@ while(captureRelaySession(app)==session) {
+                    val next=relayRouteTokens(app).firstNotNullOfOrNull{token->
+                        val scope=getChannelTopicForToken(token)
+                        val batch=FamilyEvidence(app).use{it.due(scope,System.currentTimeMillis(),session.first)}
+                        if(batch.isEmpty())null else Triple(token,scope,batch)
+                    } ?: break
+                    for(frame in next.third) {
+                        if(captureRelaySession(app)!=session)break@deliveryLoop
+                        val result=CloudRelay.publishBlocking(app,next.first,frame.id,frame.wire,frame.kind)
+                        synchronized(pollLock) {
+                        if(captureRelaySession(app)!=session)return@thread
+                        FamilyEvidence(app).use{db->
+                            if(result.accepted) {
+                                if(frame.waitForReceipt)db.relayAccepted(next.second,frame.id,System.currentTimeMillis()) else db.acknowledge(next.second,frame.id)
+                            } else db.failed(next.second,frame.id,System.currentTimeMillis(),session.first,if(result.contextFull)"data" else null)
+                        }
+                        }
+                        if(captureRelaySession(app)==session) {
+                            // A signed receipt may have overtaken the publish acknowledgment.
+                            val stillPending=FamilyEvidence(app).use{it.pendingEvent(next.second,frame.id)}
+                            if(!result.accepted || !frame.waitForReceipt || stillPending)cpLastHttpStatus=result.message
+                            addCheckpointLog(app,if(result.accepted)"CP3-RELAY" else "CP3-ERR",if(result.accepted)"Encrypted packet accepted; parent receipt is separate" else result.message)
+                        }
+                        if(!result.accepted){if(result.contextFull)continue@deliveryLoop else break@deliveryLoop}
                     }
                 }
             } finally {
                 deliveryInFlight.set(false)
-                finishDeliveryCallbacks(app,session)
+                finishDeliveryCallbacks(app)
                 app.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(app.packageName))
-                // Close the enqueue-vs-worker-exit race without spinning on failed/backed-off frames.
-                if (isChildMode(app) && FamilyEvidence(app).use { it.due(getChannelTopic(app), System.currentTimeMillis()).isNotEmpty() }) retryPendingAlerts(app)
+                // A new capture arriving as the worker exits must not be stranded.
+                if(captureRelaySession(app)==session && relayRouteTokens(app).any{token->FamilyEvidence(app).use{it.due(getChannelTopicForToken(token),System.currentTimeMillis(),session.first).isNotEmpty()}})retryPendingAlerts(app)
             }
         }
     }
 
     fun pollChannelOnce(ctx: Context, since: String = "all", onNewAlertForParent: ((JSONObject) -> Unit)? = null) {
-        // Coalesce overlapping polls instead of queuing network threads behind the UI state lock.
-        if (!pollInFlight.compareAndSet(false, true)) return
-        var conn: HttpsURLConnection? = null
-        try {
-            val session = captureRelaySession(ctx)
-            if (session.first == "unconfigured") return
-            val topic = getChannelTopicForToken(session.second)
-            conn = (URL("https://ntfy.sh/$topic/json?poll=1&since=$since").openConnection() as HttpsURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 8000
-                readTimeout = 8000
-            }
-            val code = conn.responseCode
-            if (code !in 200..299) {
-                cpLastPollStatus = "${nowTimeStr()} -> HTTPS $code"
-                addCheckpointLog(ctx,"CP4-POLL","Poll HTTPS $code")
-                return
-            }
-            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    processIncomingRelayLine(ctx, line, session.first, onNewAlertForParent, session.second, session.third)
-                }
-            }
-            cpLastPollStatus = "${nowTimeStr()} -> HTTPS 200 (AES-256-GCM 🔒)"
-        } catch (e: Exception) {
-            cpLastPollStatus = "${nowTimeStr()} -> TLS Err: ${e.javaClass.simpleName}"
-            addCheckpointLog(ctx,"CP4-POLL","Poll failed: ${e.javaClass.simpleName}")
-        } finally {
-            try { conn?.disconnect() } catch (_: Exception) {}
-            pollInFlight.set(false)
-        }
+        // Existing callers now request one shared socket/replay, never a second polling transport.
+        CloudRelay.connect(ctx,onNewAlertForParent)
+        retryPendingAlerts(ctx)
     }
 
     fun processIncomingRelayLine(
@@ -1250,54 +1234,65 @@ object GuardEngine {
         onNewAlertForParent: ((JSONObject) -> Unit)?,
         expectedToken: String? = null,
         expectedGeneration: Int? = null
-    ) = synchronized(pollLock) {
-        if (role != getRole(ctx) || role == "unconfigured") return
-        if (expectedGeneration != null && expectedGeneration != relayGeneration) return
-        if (expectedToken != null && expectedToken != getOrCreateFamilyToken(ctx)) return
-        val outer = try { JSONObject(line) } catch (_: Exception) { return }
-        if (outer.optString("event") != "message") return
+    ): RelayConsumption = synchronized(pollLock) {
+        try {
+        if (role != getRole(ctx) || role == "unconfigured") return RelayConsumption.RETRY
+        if (expectedGeneration != null && expectedGeneration != relayGeneration) return RelayConsumption.RETRY
+        if (expectedToken != null && expectedToken != getOrCreateFamilyToken(ctx)) return RelayConsumption.RETRY
+        val outer = try { JSONObject(line) } catch (_: Exception) { return RelayConsumption.REJECTED }
+        if (outer.optString("event") != "message") return RelayConsumption.REJECTED
         val msgId = outer.optString("id")
-        if (msgId.isEmpty()) return
+        if (msgId.isEmpty()) return RelayConsumption.REJECTED
 
         val existingSet = prefs(ctx).getStringSet("seen_msg_ids", emptySet()) ?: emptySet()
-        if (existingSet.contains(msgId)) return
+        if (existingSet.contains(msgId)) return RelayConsumption.CONSUMED
 
         val innerStr = outer.optString("message")
         val token = getOrCreateFamilyToken(ctx)
-        val decoded = decryptPayload(token, innerStr) ?: return
+        val decoded = decryptPayload(token, innerStr) ?: return RelayConsumption.REJECTED
         val decrypted = if (decoded.optString("type") == "alert_fragment") {
-            if (role != "parent") return
+            if (role != "parent" && !(role=="child" && decoded.optString("event_id").startsWith("control:"))) return RelayConsumption.REJECTED
             val completed = FamilyEvidence(ctx).use { it.fragment(getChannelTopicForToken(token), decoded) }
             if (completed == null) {
                 if(FamilyEvidence(ctx).use { it.hasSeen(getChannelTopicForToken(token),decoded.optString("event_id")) })
                     sendDeliveryReceipt(ctx,decoded.optString("event_id"),decoded.optBoolean("receipt_requested"))
-                return
+                val durable=FamilyEvidence(ctx).use { db -> db.hasSeen(getChannelTopicForToken(token),decoded.optString("event_id")) || db.hasFragment(getChannelTopicForToken(token),decoded.optString("event_id"),decoded.optInt("part",-1),decoded.optString("digest")) }
+                return if(durable)RelayConsumption.CONSUMED else RelayConsumption.REJECTED
             }
-            completed
+            if(decoded.optBoolean("receipt_requested"))completed.put("receipt_requested",true) else completed
         } else decoded
-        val inner = if (decrypted.has("payload")) {
-            if (role != "child") return
-            FamilySecurity.readCommand(decrypted, prefs(ctx).getString("parent_command_public_key", "") ?: "", getChannelTopicForToken(token), System.currentTimeMillis()) ?: return
+        val controlId=if(decrypted.optBoolean("relay_control"))decrypted.optString("event_id") else ""
+        val envelope=if(controlId.isNotEmpty())decrypted.optJSONObject("envelope") ?: return RelayConsumption.REJECTED else decrypted
+        val inner = if (envelope.has("payload")) {
+            if (role != "child") return RelayConsumption.REJECTED
+            FamilySecurity.readCommand(envelope, prefs(ctx).getString("parent_command_public_key", "") ?: "", getChannelTopicForToken(token), System.currentTimeMillis()) ?: return RelayConsumption.REJECTED
         } else {
-            if (decrypted.optString("type") in FamilySecurity.controlTypes) return
-            decrypted
+            if (envelope.optString("type") in FamilySecurity.controlTypes) return RelayConsumption.REJECTED
+            if(controlId.isNotEmpty() && (role!="parent" || envelope.optString("type") !in setOf("capture_ack","sync_child_handle")))return RelayConsumption.REJECTED
+            envelope
         }
+        if(controlId.isNotEmpty() && controlId!="control:"+inner.optString("command_id"))return RelayConsumption.REJECTED
         val msgType = inner.optString("type")
         val msgTs = inner.optLong("ts_ms", 0L)
 
+        var committedControlState:String?=null
         if (msgType in FamilySecurity.controlTypes) {
             val state = try { JSONObject(prefs(ctx).getString("control_state_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
             val ids = state.optJSONObject("ids") ?: JSONObject().also { state.put("ids", it) }
             val id = inner.getString("command_id")
-            if (ids.has(id) || (msgType != "alert_receipt" && msgTs < state.optLong(msgType))) return
+            if (ids.has(id)) {
+                if(controlId.isNotEmpty())FamilyEvidence(ctx).use{it.controlConsumed(getChannelTopicForToken(token),controlId)}
+                return RelayConsumption.CONSUMED
+            }
+            if (msgType != "alert_receipt" && msgTs < state.optLong(msgType)) return RelayConsumption.REJECTED
             for (key in ids.keys().asSequence().toList()) if (ids.optLong(key) < System.currentTimeMillis() - 24 * 60 * 60_000L) ids.remove(key)
             ids.put(id, msgTs); state.put(msgType, msgTs)
-            prefs(ctx).edit().putString("control_state_json", state.toString()).apply()
+            committedControlState=state.toString()
         }
 
         when (msgType) {
             "capture_policy" -> {
-                if(role!="child")return
+                if(role!="child")return RelayConsumption.REJECTED
                 val id=inner.getString("policy_id")
                 prefs(ctx).edit().putString("capture_policy_id",id).commit()
                 ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
@@ -1362,7 +1357,7 @@ object GuardEngine {
             "alert", "captured_message" -> {
                 if (role == "parent") {
                     if(msgType=="captured_message") {
-                        if(!ConversationCapture.valid(inner) || pendingCapturePolicy(ctx).isEmpty() || inner.optString("policy_id")!=pendingCapturePolicy(ctx))return
+                        if(!ConversationCapture.valid(inner) || pendingCapturePolicy(ctx).isEmpty() || inner.optString("policy_id")!=pendingCapturePolicy(ctx))return RelayConsumption.REJECTED
                         prefs(ctx).edit().putString("capture_child_ack_id",inner.getString("policy_id")).apply()
                     }
                     val childSelf = inner.optString("child_self_handle")
@@ -1371,7 +1366,7 @@ object GuardEngine {
                     }
                     val inserted = recordParentAlert(ctx, inner, "relay:$msgId")
                     sendDeliveryReceipt(ctx,inner.optString("event_id"),inner.optBoolean("receipt_requested"))
-                    if (!inserted) return
+                    if (!inserted) return RelayConsumption.CONSUMED
                     val reason = inner.optString("reason")
                     if (reason in setOf("heartbeat_ok", "pairing_verified", "tamper_attempt", "test_alert")) {
                         recordChildHeartbeatOnParent(ctx, inner.optString("text"), msgTs)
@@ -1391,7 +1386,18 @@ object GuardEngine {
         } else {
             updatedIds
         }
-        prefs(ctx).edit().putStringSet("seen_msg_ids", persistedSet).apply()
+        val editor=prefs(ctx).edit().putStringSet("seen_msg_ids", persistedSet)
+        if(committedControlState!=null)editor.putString("control_state_json",committedControlState)
+        check(editor.commit())
+        if(controlId.isNotEmpty())FamilyEvidence(ctx).use{db->
+            db.controlConsumed(getChannelTopicForToken(token),controlId)
+            if(getOrCreateFamilyToken(ctx)!=token)db.controlConsumed(getChannelTopic(ctx),controlId)
+        }
+        RelayConsumption.CONSUMED
+        } catch(e:Exception) {
+            cpLastPollStatus="本機未能完成儲存 · ${e.javaClass.simpleName} · 保留中繼記錄並重試"
+            RelayConsumption.RETRY
+        }
 
     }
 
@@ -1469,7 +1475,7 @@ object GuardEngine {
             alertObj.put("_id", id)
             // Replaying a committed archive row can finish a statistics write interrupted by process death.
             stats.record(id, alertObj)
-            prefs(ctx).edit().putString("weekly_stats_json", stats.state.toString()).commit()
+            check(prefs(ctx).edit().putString("weekly_stats_json", stats.state.toString()).commit())
             inserted
         }
     }
@@ -2108,20 +2114,24 @@ class IgAccessibilityService : AccessibilityService() {
 class ParentAlertService : Service() {
 
     companion object {
-        @Volatile private var activeConnection: HttpsURLConnection? = null
-        private val streamGeneration = AtomicInteger(0)
-
+        @Volatile private var activeService:ParentAlertService?=null
         fun reconnectActiveStream() {
-            streamGeneration.incrementAndGet()
-            try {
-                activeConnection?.disconnect()
-            } catch (_: Exception) {
-            }
-            activeConnection = null
+            val service=activeService ?: return
+            CloudRelay.disconnect()
+            if(GuardEngine.isParentMode(service))CloudRelay.connect(service.applicationContext){service.fireNativeParentNotification(it)}
         }
     }
-
-    @Volatile private var running = false
+    @Volatile private var running=false
+    private val watchdogHandler=Handler(Looper.getMainLooper())
+    private val watchdog=object:Runnable {
+        override fun run() {
+            if(!running || !GuardEngine.isParentMode(this@ParentAlertService))return
+            checkHeartbeatMissing()
+            CloudRelay.connect(applicationContext){fireNativeParentNotification(it)}
+            GuardEngine.retryPendingAlerts(applicationContext)
+            watchdogHandler.postDelayed(this,60_000L)
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!GuardEngine.isParentMode(this)) {
@@ -2147,67 +2157,10 @@ class ParentAlertService : Service() {
             startForeground(1, fgNotif)
         }
 
-        if (!running) {
-            running = true
-            thread {
-                while (running && GuardEngine.isParentMode(applicationContext)) {
-                    val myGen = streamGeneration.get()
-                    checkHeartbeatMissing()
-
-                    val relaySession = GuardEngine.captureRelaySession(applicationContext)
-                    val topic = GuardEngine.getChannelTopicForToken(relaySession.second)
-                    var conn: HttpsURLConnection? = null
-                    try {
-                        GuardEngine.cpParentStreamState = "Connecting TLS stream..."
-                        val url = URL("https://ntfy.sh/$topic/json?since=all")
-                        conn = (url.openConnection() as HttpsURLConnection).apply {
-                            requestMethod = "GET"
-                            connectTimeout = 10_000
-                            readTimeout = 90_000
-                        }
-                        activeConnection = conn
-                        val code = conn.responseCode
-                        if (code in 200..299) {
-                            GuardEngine.cpParentStreamState = "TLS + AES-256-GCM E2EE Active 🔒"
-                            GuardEngine.addCheckpointLog(applicationContext, "CP4-STREAM", "Connected to encrypted TLS stream")
-                            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
-                                var line: String? = null
-                                while (running && streamGeneration.get() == myGen &&
-                                    GuardEngine.isParentMode(applicationContext) &&
-                                    reader.readLine().also { line = it } != null
-                                ) {
-                                    handleStreamLine(line!!, relaySession)
-                                }
-                            }
-                        } else {
-                            GuardEngine.cpParentStreamState = "HTTPS $code (Retrying in 15s)"
-                            GuardEngine.addCheckpointLog(applicationContext, "CP4-ERR", "Stream returned HTTPS $code")
-                        }
-                    } catch (e: Exception) {
-                        if (running && streamGeneration.get() == myGen) {
-                            GuardEngine.cpParentStreamState = "Reconnecting TLS (${e.javaClass.simpleName})..."
-                        }
-                    } finally {
-                        activeConnection = null
-                        try { conn?.disconnect() } catch (_: Exception) {}
-                    }
-                    if (running && streamGeneration.get() == myGen) {
-                        try {
-                            Thread.sleep(15_000L)
-                        } catch (_: Exception) {
-                        }
-                    }
-                }
-            }
-        }
+        if(!running){running=true;activeService=this;watchdogHandler.post(watchdog)}
         return START_STICKY
     }
 
-    private fun handleStreamLine(line: String, session: Triple<String, String, Int>) {
-        if (GuardEngine.captureRelaySession(applicationContext) != session) return
-        GuardEngine.processIncomingRelayLine(applicationContext, line, "parent", { fireNativeParentNotification(it) }, session.second, session.third)
-        checkHeartbeatMissing()
-    }
     private fun checkHeartbeatMissing() {
         if (!GuardEngine.isParentMode(applicationContext)) return
         if (GuardEngine.shouldFireHeartbeatMissingAlert(applicationContext)) {
@@ -2274,8 +2227,9 @@ class ParentAlertService : Service() {
     }
 
     override fun onDestroy() {
-        running = false
-        reconnectActiveStream()
+        running=false;watchdogHandler.removeCallbacks(watchdog)
+        if(activeService===this)activeService=null
+        if(GuardEngine.isParentMode(this))CloudRelay.disconnect()
         super.onDestroy()
     }
 

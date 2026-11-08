@@ -21,18 +21,9 @@ class DeliveryReliabilityTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     @Before fun reset(){ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit();GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")}
     @Test fun failedSendLeavesCompleteEncryptedTextDurableForRetry(){
-        val original=ProxySelector.getDefault();val attempted=CountDownLatch(1);val completed=CountDownLatch(1);var delivered=true
-        ProxySelector.setDefault(object:ProxySelector(){
-            override fun select(uri:URI):List<Proxy>{
-                if(uri.host=="ntfy.sh"){attempted.countDown();return listOf(Proxy(Proxy.Type.HTTP,InetSocketAddress("127.0.0.1",9)))}
-                return original?.select(uri)?:listOf(Proxy.NO_PROXY)
-            }
-            override fun connectFailed(uri:URI,address:SocketAddress,error:IOException){}
-        })
-        try {
+        val completed=CountDownLatch(1);var delivered=true
             val text="廣東話🙂長訊息\n".repeat(180)
             GuardEngine.sendAlertFromChild(ctx,"stranger_message","unapproved",text,onComplete={success,_ -> delivered=success;completed.countDown()})
-            assertTrue("Only a local refusing proxy may receive this attempt",attempted.await(5,TimeUnit.SECONDS))
             assertTrue("The failed delivery callback must complete",completed.await(5,TimeUnit.SECONDS));assertFalse(delivered)
             val scope=GuardEngine.getChannelTopic(ctx);val token=GuardEngine.getOrCreateFamilyToken(ctx)
             FamilyEvidence(ctx).use{db->
@@ -42,25 +33,16 @@ class DeliveryReliabilityTest {
                 for(frame in frames)received=if(frame.optString("type")=="alert")frame else db.fragment(scope,frame)?:received
                 assertEquals(text,received!!.getString("text"))
             }
-        } finally {ProxySelector.setDefault(original)}
     }
-    @Test fun secondAlertCompletionWaitsForActiveWorkersAttempt(){
-        val original=ProxySelector.getDefault();val entered=CountDownLatch(1);val release=CountDownLatch(1);val done=CountDownLatch(1)
-        val calls=java.util.concurrent.atomic.AtomicInteger(0)
-        ProxySelector.setDefault(object:ProxySelector(){
-            override fun select(uri:URI):List<Proxy>{
-                if(uri.host=="ntfy.sh"){entered.countDown();release.await(5,TimeUnit.SECONDS);return listOf(Proxy(Proxy.Type.HTTP,InetSocketAddress("127.0.0.1",9)))}
-                return original?.select(uri)?:listOf(Proxy.NO_PROXY)
-            }
-            override fun connectFailed(uri:URI,address:SocketAddress,error:IOException){}
-        })
+    @Test fun concurrentAlertsEachCompleteOnceAndRemainQueuedWithoutAConfiguredRelay(){
+        val done=CountDownLatch(32);val calls=java.util.concurrent.atomic.AtomicIntegerArray(32)
+        val workers=java.util.concurrent.Executors.newFixedThreadPool(4)
         try {
-            GuardEngine.sendAlertFromChild(ctx,"stranger_message","one","first")
-            assertTrue(entered.await(5,TimeUnit.SECONDS))
-            GuardEngine.sendAlertFromChild(ctx,"stranger_message","two","second",onComplete={_,_->calls.incrementAndGet();done.countDown()})
-            assertFalse("No outcome exists while the active attempt is blocked",done.await(100,TimeUnit.MILLISECONDS))
-            release.countDown();assertTrue(done.await(5,TimeUnit.SECONDS));assertEquals(1,calls.get())
-        } finally {release.countDown();ProxySelector.setDefault(original)}
+            for(index in 0 until 32)workers.submit{GuardEngine.sendAlertFromChild(ctx,"stranger_message","contact_$index","message $index",onComplete={success,_->assertFalse(success);calls.incrementAndGet(index);done.countDown()},bypassDedupe=true)}
+            assertTrue("Each captured alert needs its own completion",done.await(10,TimeUnit.SECONDS))
+            for(index in 0 until 32)assertEquals(1,calls.get(index))
+            FamilyEvidence(ctx).use{assertEquals(32,it.pendingCount(GuardEngine.getChannelTopic(ctx)))}
+        } finally {workers.shutdownNow()}
     }
     @Test fun childPrivacyAndUnapprovedContactPolicyRemainIntact(){
         GuardEngine.recordChildTypedDmText("private outgoing conversation")
