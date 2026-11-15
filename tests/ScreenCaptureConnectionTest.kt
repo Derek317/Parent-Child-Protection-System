@@ -93,10 +93,32 @@ class ScreenCaptureConnectionTest {
         assertEquals(listOf("Edit profile"),rows.map{it.getString("text")})
         assertFalse(GuardEngine.isChildSelfHandle(ctx,"friend"))
     }
-    @Test fun actualStoryReplyComposerRetainsExistingDraftCheckWithExplicitLabel(){
+    @Test fun storyReplyDraftIsNeverForwardedInExpandedMode(){
         val rows=captureRows("Story",1700,body="",draft="actual story reply",full=true,hint="Reply...")
-        assertEquals(listOf("actual story reply"),rows.map{it.getString("text")})
-        assertEquals("comment_story_draft",rows.single().optString("source_context"))
+        assertTrue(rows.isEmpty())
+    }
+    @Test fun commentDraftIsNeverForwardedInBaselineMode(){
+        assertTrue(captureRows("Comments",1700,body="",draft="send nudes",hint="Add a comment...").isEmpty())
+    }
+    @Test fun unsentDmTextDoesNotSuppressAnIdenticalIncomingMessage(){
+        val rows=captureRows("outsider",1700,body="ordinary greeting",draft="ordinary greeting")
+        assertEquals(listOf("ordinary greeting"),rows.map{it.getString("text")})
+    }
+    @Test fun composerContentsAndDescendantsAreNotCollected(){
+        val root=node("",Rect(0,0,1000,2000))
+        val composer=node("private unsent draft",Rect(30,1700,970,1800),editable=true,hint="Message...")
+        shadowOf(composer).addChild(node("nested private draft",Rect(30,1720,970,1780)))
+        shadowOf(root).addChild(composer)
+        val controller=Robolectric.buildService(IgAccessibilityService::class.java).create()
+        try {
+            val method=IgAccessibilityService::class.java.declaredMethods.single{it.name=="collectScreenNodes"}.apply{isAccessible=true}
+            val items=ArrayList<Any>()
+            method.invoke(controller.get(),root,items,0,Rect(0,0,1000,2000),intArrayOf(0),false,"unknown",null)
+            assertEquals(1,items.size)
+            fun field(name:String)=items.single().javaClass.getDeclaredField(name).apply{isAccessible=true}.get(items.single())
+            assertEquals("",field("text"));assertEquals("",field("rawText"))
+            assertEquals("Message...",field("hintText"));assertEquals(true,field("isEditable"))
+        } finally {controller.destroy()}
     }
     @Test fun unnamedEditableComposerCannotMakeQuotedProfileTextEstablishChildIdentity(){
         captureRows("friend",1700,body="Edit profile",full=true,hint="")

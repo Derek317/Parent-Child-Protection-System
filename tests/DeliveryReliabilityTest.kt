@@ -45,8 +45,6 @@ class DeliveryReliabilityTest {
         } finally {workers.shutdownNow()}
     }
     @Test fun childPrivacyAndUnapprovedContactPolicyRemainIntact(){
-        GuardEngine.recordChildTypedDmText("private outgoing conversation")
-        assertNull(GuardEngine.evaluateMessage(ctx,"outsider","private outgoing conversation"))
         assertNull(GuardEngine.evaluateMessage(ctx,"You","hello"))
         assertEquals("stranger_message",GuardEngine.evaluateMessage(ctx,"unapproved","ordinary greeting"))
         GuardEngine.setTrustedHandles(ctx,listOf("trusted_friend"))

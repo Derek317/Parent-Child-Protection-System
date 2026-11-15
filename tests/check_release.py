@@ -69,6 +69,15 @@ if args[:2]==['release','upload'] and os.environ.get('FAKE_UPLOAD_FAIL')=='1':sy
         checksum = bytes.fromhex(upload['assets']['SHA256SUMS']).decode()
         self.assertEqual(hashlib.sha256(payload).hexdigest()+'  IG-Guard-4.7.apk\n', checksum)
 
+    def test_beta_release_is_prerelease_and_never_latest(self):
+        self.git('tag','4.9-beta.1')
+        (self.root / 'docs/releases/4.9-beta.1.md').write_text('# Local beta notes\n')
+        result,rows=self.publish(GITHUB_REF_NAME='4.9-beta.1')
+        self.assertEqual(0,result.returncode,result.stderr)
+        create=next(row for row in rows if row['args'][:2]==['release','create'])
+        self.assertIn('--prerelease',create['args'])
+        self.assertIn('--latest=false',create['args'])
+
     def test_existing_release_is_updated_without_creating_another(self):
         result, rows = self.publish(FAKE_RELEASE_EXISTS='1')
         self.assertEqual(0, result.returncode, result.stderr)

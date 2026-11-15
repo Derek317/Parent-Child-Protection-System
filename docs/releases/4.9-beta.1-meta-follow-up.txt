@@ -1,0 +1,45 @@
+UNSENT DRAFT — prepared 12 November 2026 (Hong Kong)
+Subject: IG Guard 4.9-beta.1 — revised capture scope and request for guidance
+
+Preparation note: The assistant has not sent the prepared request or this draft.
+Use as a follow-up only if the project operator independently confirms an earlier
+request was sent; otherwise adapt it as an initial request. No Meta approval is
+recorded here. Earlier descriptions of draft capture apply to older builds.
+
+Dear Meta team,
+
+Project repository: https://github.com/Derek317/Parent-Child-Protection-System
+The changes below are currently local and await approval to publish; the public
+repository still describes the earlier published implementation.
+
+We are preparing the local IG Guard 4.9-beta.1 Android beta for authorized private
+parent–child safeguarding. This version removes the typed Instagram comment and
+story-reply sender and its debounce state, and does not read DM composer bodies
+for outgoing filtering. Composer contents and descendants are excluded from
+screen capture. Older draft records remain historical, with sending unconfirmed,
+until explicitly deleted; updating does not automatically erase them.
+
+Incoming-alert mode remains. Expanded capture of exposed incoming/outgoing DMs,
+including ordinary trusted-contact conversations, requires a signed parent request
+and local acknowledgment on the teen's phone. There is no separate expanded-capture withdrawal switch.
+Stopping new capture requires disabling both Android notification access and
+accessibility. Withdrawal does not erase pending or delivered copies.
+
+Capture uses Android notifications and accessibility and is view-dependent and
+incomplete. Encrypted delivery uses a Cloudflare relay without the family
+decryption key. Buffered packets expire seven days after queuing or are removed
+when consumed; retained phone records may be resubmitted. Registration metadata
+has no automatic expiry or deletion route in the current relay code. Parent
+archives remain until deleted. Provider logs/backups require separate verification.
+
+Use is limited to Instagram accounts meeting the applicable minimum age, at least
+13 or higher where required. Android grants and local acknowledgment are technical
+controls, not proof of legal consent or authority in every case.
+
+We request guidance on applicable platform requirements and whether a supported
+official integration is available for this use. We do not claim Meta approval,
+official API access or an implemented portability integration. Any future change
+would require separate technical and policy review.
+
+Safe Guard
+ppefyp2026@gmail.com

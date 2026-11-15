@@ -154,7 +154,7 @@ class AlertStatistics(val state: JSONObject, private val now: Long) {
 
 /**
  * IG Guard — explicit, user-controlled Android special access
- * Family-Friendly Instagram DM & Comment-Reply Safety Guard
+ * Family-Friendly Instagram DM Safety Guard
  * Co-authored & maintained with @citreae_313
  * Example protected teen account handle: @zuck
  */
@@ -167,7 +167,6 @@ object GuardEngine {
     private const val SCREEN_DEDUPE_MS = 45_000L
     private val recentAlerts = LinkedHashMap<String, Long>()
     private val seenNotifMsgTimestamps = LinkedHashSet<String>()
-    private val recentChildSentTexts = LinkedHashMap<String, Long>()
     // State transactions only. Never hold this lock during network I/O.
     private val pollLock = Any()
     private val deliveryInFlight = AtomicBoolean(false)
@@ -248,34 +247,6 @@ object GuardEngine {
         val bytesA = a.toByteArray(Charsets.UTF_8)
         val bytesB = b.toByteArray(Charsets.UTF_8)
         return MessageDigest.isEqual(bytesA, bytesB)
-    }
-
-    // Tracks messages typed by the child in Instagram's DM input bar so the child's own outgoing messages are never alerted
-    @Synchronized
-    fun recordChildTypedDmText(raw: String) {
-        val clean = raw.trim()
-        if (clean.length < 2 || isNonMessageUiString(clean)) return
-        val now = System.currentTimeMillis()
-        val iter = recentChildSentTexts.entries.iterator()
-        while (iter.hasNext()) {
-            if (now - iter.next().value > 10 * 60_000L) iter.remove()
-        }
-        recentChildSentTexts[clean.lowercase(Locale.US)] = now
-    }
-
-    @Synchronized
-    fun wasRecentlyTypedByChild(candidate: String): Boolean {
-        val clean = candidate.trim().lowercase(Locale.US)
-        if (clean.isEmpty()) return false
-        val now = System.currentTimeMillis()
-        for ((typed, ts) in recentChildSentTexts) {
-            if (now - ts <= 10 * 60_000L) {
-                if (clean == typed || (clean.length >= 4 && typed.startsWith(clean)) || (typed.length >= 4 && clean.startsWith(typed))) {
-                    return true
-                }
-            }
-        }
-        return false
     }
 
     fun isSelfSenderLabel(ctx: Context, rawSender: String): Boolean {
@@ -686,7 +657,7 @@ object GuardEngine {
                         "parent_master_password", "parent_share_verifier", "parent_password_verifier", "parent_command_public_key", "trusted_csv", "flagged_offenders_csv",
                         "child_self_handle", "pw_failed_count", "pw_lockout_until_ms", "sent_setup_ok", "next_heartbeat_at_ms", "checkpoint_logs")) editor.remove(key)
                     pauseTamperUntilMs = 0L
-                    synchronized(this) { recentAlerts.clear(); recentChildSentTexts.clear(); seenNotifMsgTimestamps.clear() }
+                    synchronized(this) { recentAlerts.clear(); seenNotifMsgTimestamps.clear() }
                     editor.remove("weekly_stats_json").remove("parent_alerts_json").remove("seen_msg_ids")
                         .remove("parent_last_child_hb_ms").remove("parent_last_child_hb_text").remove("parent_hb_missing_alerted")
                 }
@@ -1001,7 +972,6 @@ object GuardEngine {
         if (IGNORED_NOTIFICATIONS.matches(text)) return null
         if (isNonMessageUiString(text)) return null
         if (isSelfSenderLabel(ctx, senderTitle)) return null
-        if (wasRecentlyTypedByChild(text)) return null
 
         if (SEXUAL_PATTERN.containsMatchIn(text) || SEXUAL_PATTERN.containsMatchIn(senderTitle)) {
             markSenderAsFlaggedOffender(ctx, senderTitle)
@@ -1663,7 +1633,7 @@ class IgNotificationListener : NotificationListenerService() {
         }
 
         if (resolvedMessage.isEmpty() || resolvedSender.isEmpty()) return
-        if (GuardEngine.isSelfSenderLabel(this, resolvedSender) || GuardEngine.wasRecentlyTypedByChild(resolvedMessage)) {
+        if (GuardEngine.isSelfSenderLabel(this, resolvedSender)) {
             return
         }
 
@@ -1761,7 +1731,7 @@ class IgNotificationListener : NotificationListenerService() {
     }
 }
 
-// 2. CHILD ONLY: Strict Context-Gated Instagram DM Incoming Bubble Reader + Child Comment-Reply Reader
+// 2. CHILD ONLY: Context-Gated Instagram DM Reader (composer contents excluded)
 // Issue #3 & #4 Fix: Only hooks com.instagram.android (no OS Settings hooking) and NEVER scans middle-of-screen feed/reel texts!
 class IgAccessibilityService : AccessibilityService() {
 
@@ -1771,40 +1741,6 @@ class IgAccessibilityService : AccessibilityService() {
     private var pendingScan:Runnable? = null
 
     private val debounceHandler = Handler(Looper.getMainLooper())
-    private var pendingReplyText: String = ""
-    private var pendingReplyContextAuthor: String = ""
-    private var pendingReplySession:Triple<String,String,Int>? = null
-    private var lastSentCommentReply: String = ""
-
-    private val flushPendingCommentReplyRunnable = Runnable {
-        val origin=pendingReplySession
-        if (!GuardEngine.isChildMode(this@IgAccessibilityService) || origin==null || GuardEngine.captureRelaySession(this)!=origin) {
-            pendingReplyText = ""
-            pendingReplySession=null
-            return@Runnable
-        }
-        val textToSend = pendingReplyText.trim()
-        val targetAuthor = pendingReplyContextAuthor.ifEmpty { "IG_Post_Or_Story" }
-        if (textToSend.length >= 2 && textToSend != lastSentCommentReply) {
-            lastSentCommentReply = textToSend
-            val isSexual = GuardEngine.SEXUAL_PATTERN.containsMatchIn(textToSend)
-            if(GuardEngine.fullCaptureEnabled(this))GuardEngine.captureMessages(this,listOf(CapturedText(
-                targetAuthor,textToSend,"outgoing","子女","","comment_story_draft")),expectedSession=origin)
-            else GuardEngine.sendAlertFromChild(
-                this@IgAccessibilityService,
-                reason = if (isSexual) "sexual_or_grooming_content" else "stranger_message",
-                sender = "子女留言/限時動態回覆 (@$targetAuthor)",
-                text = textToSend,
-                expectedSession = origin
-            )
-            if (GuardEngine.captureRelaySession(this)==origin && isSexual && !GuardEngine.isTemporarilyUnlocked(this@IgAccessibilityService)) {
-                performGlobalAction(GLOBAL_ACTION_BACK)
-            }
-        }
-        pendingReplyText = ""
-        pendingReplySession=null
-    }
-
     private data class ScreenNodeItem(
         val text: String,
         val hintText: String,
@@ -1832,7 +1768,7 @@ class IgAccessibilityService : AccessibilityService() {
         GuardEngine.cpAccConnected = true
         GuardEngine.refreshMonitoringDisclosure(this)
         GuardEngine.scheduleNextRandomHeartbeat(this)
-        GuardEngine.addCheckpointLog(this, "CP1-ACC", "IG DM & Comment-Reply Guard Connected ✅")
+        GuardEngine.addCheckpointLog(this, "CP1-ACC", "IG DM Guard Connected ✅")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -1956,29 +1892,8 @@ class IgAccessibilityService : AccessibilityService() {
                 (t.equals("Comments",true) || t=="留言"))
         }
 
-        // ================= CONTEXT 1: STORY / POST COMMENTS REPLY (ONLY READ CHILD'S TYPED REPLY!) =================
-        if (isCommentsOrStoryReplySheet) {
-            val activeReplyEdit = items.firstOrNull { item ->
-                isReplyComposer(item) && item.text.isNotEmpty() &&
-                    item.text != item.hintText &&
-                    !GuardEngine.isNonMessageUiString(item.text)
-            }
-            if (activeReplyEdit != null) {
-                val typed = activeReplyEdit.text.trim()
-                if (typed.length >= 2) {
-                    pendingReplyText = typed
-                    pendingReplySession=observationSession
-                    pendingReplyContextAuthor = topHeaderSender.ifEmpty { "IG_Post" }
-                    debounceHandler.removeCallbacks(flushPendingCommentReplyRunnable)
-                    debounceHandler.postDelayed(flushPendingCommentReplyRunnable, 1_400L)
-                }
-            } else if (pendingReplyText.isNotEmpty()) {
-                debounceHandler.removeCallbacks(flushPendingCommentReplyRunnable)
-                flushPendingCommentReplyRunnable.run()
-            }
-            // Issue #4 Fix: Never read public comments or middle-of-screen text when viewing comments/stories!
-            return
-        }
+        // Comments/story composers are never a source of captured content.
+        if (isCommentsOrStoryReplySheet) return
 
         // ================= CONTEXT 2: STRICTLY INSIDE A 1-ON-1 / GROUP DM CHAT THREAD =================
         val isStrictlyInsideDmChat = !hasBottomNavTabs && dmComposerNode != null && topHeaderSender.isNotEmpty() && dmComposerNode.top>header!!.bottom
@@ -2005,11 +1920,6 @@ class IgAccessibilityService : AccessibilityService() {
 
         GuardEngine.cpLastCaptureStatus="僅傳入警報模式 · 雙向範圍尚未確認"
 
-        // Record anything the child is currently typing in the DM composer EditText so we never alert on the child's own sent messages!
-        items.filter { it.isEditable && it.text.isNotEmpty() && it.text != it.hintText }.forEach { editNode ->
-            GuardEngine.recordChildTypedDmText(editNode.text)
-        }
-
         // Block child from staying in a DM session with any flagged sexual/grooming offender
         if (!dmUnlocked && GuardEngine.isFlaggedOffender(this, topHeaderSender)) {
             performGlobalAction(GLOBAL_ACTION_BACK)
@@ -2020,7 +1930,6 @@ class IgAccessibilityService : AccessibilityService() {
         // - Left edge must start near the left margin (<= 24% width)
         // - Right edge must NOT reach the right-aligned outgoing margin (<= 82% width)
         // - Horizontal midpoint must sit on the left half of the screen (centerX <= 50% width)
-        // - Must NOT match any text recently typed/sent by the child
         val dmZoneTop = header!!.bottom
         val dmZoneBottom = (dmComposerNode!!.top - 10).coerceAtMost((screenHeight * 0.84).toInt())
         val maxLeftEdge = (screenWidth * 0.24).toInt()
@@ -2037,7 +1946,6 @@ class IgAccessibilityService : AccessibilityService() {
                 centerX <= maxCenterX &&
                 !GuardEngine.isNonMessageUiString(item.text) &&
                 !GuardEngine.isSelfSenderLabel(this, item.text) &&
-                !GuardEngine.wasRecentlyTypedByChild(item.text) &&
                 !item.text.trim().removePrefix("@").equals(topHeaderSender, ignoreCase = true)
         }.sortedBy { it.top }
 
@@ -2087,14 +1995,15 @@ class IgAccessibilityService : AccessibilityService() {
         if (node == null || visited[0]++ >= 2048 || depth > 64) return
         try {
             if (!node.isVisibleToUser) return
-            val text=node.text?.toString().orEmpty()
-            val rawText = text.takeIf{it.isNotBlank()}?:node.contentDescription?.toString().orEmpty()
+            val id=node.viewIdResourceName.orEmpty()
+            val editable=editableAncestor || node.isEditable || ConversationCapture.composerRole(id)
+            // Composer text and descriptions can contain unsent private composition.
+            val text=if(editable) "" else node.text?.toString().orEmpty()
+            val rawText = if(editable) "" else text.takeIf{it.isNotBlank()}?:node.contentDescription?.toString().orEmpty()
             val rawHint = if (Build.VERSION.SDK_INT >= 26) (node.hintText?.toString()?.trim() ?: "") else ""
             val rect=Rect();node.getBoundsInScreen(rect);rect.offset(-origin.left,-origin.top)
-            val id=node.viewIdResourceName.orEmpty()
             val ownDirection=ConversationCapture.semanticDirection(id).takeUnless{it=="unknown"}?:direction
             val ownBubble=if(ConversationCapture.messageRole(id) && node.childCount>0 && rect.width()>0 && rect.width()<origin.width())rect else bubble
-            val editable=editableAncestor || node.isEditable || ConversationCapture.composerRole(id)
             val ownIndex=out.size
             if (rawText.isNotEmpty() || editable) {
                 out.add(
@@ -2116,6 +2025,8 @@ class IgAccessibilityService : AccessibilityService() {
                     )
                 )
             }
+            // Keep only layout, role and hint metadata; never traverse composer children.
+            if(editable) return
             val count = node.childCount
             val childStart=out.size
             for (i in 0 until count) {
@@ -2129,6 +2040,10 @@ class IgAccessibilityService : AccessibilityService() {
                     }
                 }
             }
+            // Do not retain aggregate text from a container that also contains a composer.
+            if(ownIndex<childStart && out.subList(childStart,out.size).any{it.isEditable}) {
+                out[ownIndex]=out[ownIndex].copy(text="",rawText="",fromText=false)
+            }
             // Some versions expose the message on a container with only decorative children.
             if(ownIndex<childStart && ConversationCapture.messageRole(id) &&
                 out.subList(childStart,out.size).none{!it.isEditable && !it.button && (it.fromText || ConversationCapture.messageRole(it.viewId))}) {
@@ -2141,8 +2056,6 @@ class IgAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {
         debounceHandler.removeCallbacksAndMessages(null)
         pendingScan=null
-        pendingReplyText = ""
-        pendingReplySession=null
     }
 
     override fun onDestroy() {
@@ -2967,7 +2880,7 @@ class MainActivity : Activity() {
     private fun evidenceSource(message:JSONObject):String=when(message.optString("source_context")) {
         "notification"->if(message.optString("conversation_kind")=="group")"群組通知擷取" else "通知擷取"
         "visible_dm"->"畫面擷取 · 方向按介面資訊及版面辨識"
-        "comment_story_draft"->"留言 / 限時動態草稿 · 未確認送出"
+        "comment_story_draft"->"舊版留言 / 限時動態草稿 · 未確認送出"
         else->"舊記錄 · 來源未詳"
     }
     private fun evidenceClock(message:JSONObject):String {
@@ -3241,6 +3154,7 @@ class MainActivity : Activity() {
         card.addView(label(if (notification && screen) "你的保護已準備好" else "完成設定，讓保護正常運作。", 17f, t.textPrimary, true, bottomPad = 8))
         card.addView(label(if (notification && screen) "通知及畫面保護已連接。" else "通知讀取保護背景訊息；畫面保護處理對話、留言回覆及防靜音。", 14f, t.textSecondary))
         rootContainer.addView(card)
+        rootContainer.addView(label("僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整；警報會加密轉傳至配對家長。停止新擷取請在 Android 關閉通知存取及無障礙服務；已排隊或送達的記錄不會因此刪除。",13f,t.textSecondary,bottomPad=14))
         rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)})
         rootContainer.addView(actionButton("查看保護狀態", t.btnPrimaryBg, t.btnPrimaryText) { navigateTo("permissions") })
         rootContainer.addView(row("key", "需要暫時解鎖？", "輸入家長提供的解鎖碼", t) { navigateTo("unlock") })
@@ -3287,9 +3201,9 @@ class MainActivity : Activity() {
                     thread { GuardEngine.pollChannelOnce(applicationContext,since="all");runOnUiThread{if(!isDestroyed)renderUi()} }
                 })
             addView(label("家長可收到 Instagram 實際擷取的傳入及傳出訊息，包括信任名單中的一般對話。這比舊版只轉傳部分傳入警報的範圍更廣。",15f,t.textPrimary,bottomPad=16))
-            addView(label("DM 輸入框內尚未送出的草稿不會作為已傳出訊息收集。既有留言及限時動態回覆檢查可能擷取未送出的草稿，會另行標示。",14f,t.textSecondary,bottomPad=14))
+            addView(label("此版本不再讀取 DM、留言及限時動態輸入框的未送出文字；只使用輸入框位置及提示辨識畫面。舊版已保留的草稿仍可查看及刪除；已排隊的舊記錄仍可能送達。",14f,t.textSecondary,bottomPad=14))
             addView(label("內容會先在此手機加密，經本 App 的 Cloudflare 中繼傳送至配對家長手機。離線內容可在雲端加密暫存最多七天；手機會保留未確認記錄並重試。家長的本機記錄保留至刪除。開發者及 Cloudflare 可處理密文及連線資料，中繼不會取得家庭解密金鑰。",14f,t.textSecondary,bottomPad=14))
-            addView(label("只能保留通知及畫面實際提供的內容；未顯示、未擷取或已過期的內容無法復原。確認範圍不代表 App 已獲法律認證。",13f,t.textMuted,bottomPad=18))
+            addView(label("只能保留通知及畫面實際提供的內容；未顯示、未擷取或已過期的內容無法復原。確認範圍不代表 App 已獲法律認證或 Meta 授權。停止新擷取請在 Android 關閉通知存取及無障礙服務；已排隊及已送達記錄需分別處理。",13f,t.textMuted,bottomPad=18))
             if(policy.isNotEmpty() && !GuardEngine.fullCaptureEnabled(this@MainActivity)) {
                 addView(actionButton("我已了解，啟用雙向擷取",t.btnPrimaryBg,t.btnPrimaryText) {
                     if(GuardEngine.pendingCapturePolicy(this@MainActivity)==policy && GuardEngine.confirmFullCapture(this@MainActivity)) {
@@ -3305,12 +3219,13 @@ class MainActivity : Activity() {
     }
     private fun renderChildPermissions(t: ThemeColors) {
         heading("每個設定，都說清楚。", "了解每項權限的用途，再前往 Android 設定確認。", t)
+        rootContainer.addView(label("僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整；警報會加密轉傳至配對家長。停止新擷取請在 Android 關閉通知存取及無障礙服務；已排隊或送達的記錄不會因此刪除。",13f,t.textSecondary,bottomPad=14))
         rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)}.apply{getChildAt(0).tag="full_capture_setup"})
         if (!GuardEngine.hasSecureParentCommands(this)) rootContainer.addView(label("需要更新家庭配對：現有監察仍會運作。新版家長指令與臨時碼需要家長傳送新邀請；請先更新兩部手機，並以新主密碼重新建立家庭。", 14f, t.warmHoney, bottomPad = 20))
         val notification = GuardEngine.isNotificationListenerEnabledStatic(this)
         val screen = GuardEngine.isAccessibilityEnabledStatic(this)
         rootContainer.addView(row("bell-simple", "Instagram 通知", if (notification) { if (GuardEngine.cpNotifConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取 IG 通知並加密傳送警報。", t) { openDirectNotificationToggle() })
-        rootContainer.addView(row("shield-check", "進階畫面保護", if (screen) { if (GuardEngine.cpAccConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。辨識高危對話、留言及靜音操作。", t) { openAccessibilityToggle() })
+        rootContainer.addView(row("shield-check", "進階畫面保護", if (screen) { if (GuardEngine.cpAccConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取已顯示的 DM，辨識高危對話及靜音操作。", t) { openAccessibilityToggle() })
         rootContainer.addView(row("info", "監察狀態通知", "持續顯示子女保護模式，與通知讀取是不同權限。", t) { requestAppNotifications() })
         if ((!notification || !screen) && Build.VERSION.SDK_INT >= 33) {
             val card = makeCard(t, true)
@@ -3368,7 +3283,7 @@ class MainActivity : Activity() {
         rootContainer.addView(row("bell-simple", if (GuardEngine.isParentMode(this)) "家長警報通知" else "監察狀態通知", "管理系統通知的顯示方式", t) { requestAppNotifications() })
         rootContainer.addView(row("shield", "權限與相容性", "了解 Android 授權及銀行 App 提醒", t) {
             showSheet("清楚了解，每一份授權。") { dialog ->
-                addView(label("通知存取、無障礙服務及系統通知是不同權限，正式授權由 Android 處理。\n\n子女模式會讀取 Instagram 通知及畫面。銀行 App 或 Play Protect 仍可能提示風險，允許受限設定不代表這些服務已認可本 App。家長模式不啟用子女監察服務。\n\n若遇到封鎖，請保留完整警告及版本資料，交由開發者向 Google 提交審查。", 14f, t.textSecondary, bottomPad = 18))
+                addView(label("通知存取、無障礙服務及系統通知是不同權限，正式授權由 Android 處理。\n\n子女模式會讀取 Instagram 通知及已顯示的 DM；未送出草稿不會讀取。已確認的雙向模式包含傳出及信任對象的一般訊息。記錄會加密傳至配對家長，家長本機封存保留至刪除。停止新擷取需關閉通知存取及無障礙服務，舊記錄及待傳送佇列需另行刪除。本 App 未獲 Meta 授權，也未整合官方資料轉移機制。銀行 App 或 Play Protect 仍可能提示風險，允許受限設定不代表這些服務已認可本 App。家長模式不啟用子女監察服務。\n\n若遇到封鎖，請保留完整警告及版本資料，交由開發者向 Google 提交審查。", 14f, t.textSecondary, bottomPad = 18))
                 addView(actionButton("受限設定協助", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss(); openAppDetailsSettings() })
             }
         })

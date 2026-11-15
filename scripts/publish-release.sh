@@ -4,11 +4,14 @@ set -euo pipefail
 source_tag="${GITHUB_REF_NAME:?}"
 release_tag="$source_tag"
 hotfix=false
+release_flags=(--latest)
 release_repo="${GITHUB_REPOSITORY:?}"
 release_commit="${GITHUB_SHA:?}"
 if [[ "$source_tag" =~ ^([0-9]+\.[0-9]+(\.[0-9]+)?)-hotfix\.[1-9][0-9]*$ ]]; then
   release_tag="${BASH_REMATCH[1]}"
   hotfix=true
+elif [[ "$source_tag" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?-beta\.[1-9][0-9]*$ ]]; then
+  release_flags=(--prerelease --latest=false)
 elif [[ ! "$release_tag" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
   echo "Not a version tag; no release published."
   exit 0
@@ -50,13 +53,13 @@ else
   printf '\n## Build artifact\nSigned APK unavailable for this run. This publication contains the update log; existing release assets, if any, are unchanged.\n\nBuild result: %s. Workflow: %s\n' "${BUILD_RESULT:-unknown}" "$run_url" >> "$release_notes"
 fi
 if gh release view "$release_tag" --repo "$release_repo" >/dev/null 2>&1; then
-  gh release edit "$release_tag" --repo "$release_repo" --title "IG Guard $release_tag" --notes-file "$release_notes" --latest
+  gh release edit "$release_tag" --repo "$release_repo" --title "IG Guard $release_tag" --notes-file "$release_notes" "${release_flags[@]}"
 else
   if [ "$hotfix" = true ]; then
     echo "::error::The original release must exist before publishing its hotfix."
     exit 1
   fi
-  gh release create "$release_tag" --repo "$release_repo" --verify-tag --title "IG Guard $release_tag" --notes-file "$release_notes" --latest
+  gh release create "$release_tag" --repo "$release_repo" --verify-tag --title "IG Guard $release_tag" --notes-file "$release_notes" "${release_flags[@]}"
 fi
 if [[ "${#release_assets[@]}" -gt 0 ]]; then
   if ! gh release upload "$release_tag" "${release_assets[@]}" --repo "$release_repo" --clobber; then
