@@ -1,0 +1,22 @@
+{
+  "android": {
+    "tests": 262,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "python_tests": 33,
+  "lint_errors": 0,
+  "terms_sha256": "744d51bd3116032aeef243fa685ad5965fc1a736410c2db2b2ad74e715b1c058",
+  "physical_device_tested": false,
+  "commit": "9a836af50d1cb2aa18421fd709c9f4d049930045",
+  "ci_run": "https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/43837959021",
+  "review": "All actionable findings resolved; independent review has no remaining findings.",
+  "ci_conclusion": "success",
+  "apk_sha256": "27f65720a65bf3c5d89bc1effc292273d78335aa624580c3524961733db90c71",
+  "certificate_sha256": "0eb6f30787c2d6dc23136a28cfd7a08a7956e5fe0565ba142f6711be38ca3f0e",
+  "version_name": "4.9-beta.3",
+  "version_code": 165,
+  "test_classes_excluded": true,
+  "published_terms_verified": true
+}
