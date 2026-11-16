@@ -26,7 +26,7 @@ import org.robolectric.shadows.ShadowAlertDialog
 class NativeDesignTest {
     private val ctx: Application get() = RuntimeEnvironment.getApplication()
     @Before fun reset() {
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit()
+        LocalVault.preferences(ctx).edit().clear().commit()
         GuardEngine.pauseTamperUntilMs=0
     }
     private fun all(v: View): List<View> = listOf(v)+if(v is ViewGroup)(0 until v.childCount).flatMap{all(v.getChildAt(it))} else emptyList()

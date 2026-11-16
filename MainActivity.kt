@@ -238,7 +238,7 @@ object GuardEngine {
     @Volatile
     var pauseTamperUntilMs: Long = 0L
 
-    private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private fun prefs(ctx: Context) = LocalVault.preferences(ctx)
 
     fun nowTimeStr(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
     fun nowDateTimeStr(): String = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date())
@@ -2344,8 +2344,14 @@ class MainActivity : Activity() {
         }
     }
     override fun onCreate(savedInstanceState: Bundle?) {
-        applyTheme()
         super.onCreate(savedInstanceState)
+        try {
+            LocalVault.preferences(this).all
+            FamilyEvidence(this).use { it.readableDatabase }
+            storageReady = true
+            applyTheme()
+        } catch (_: SecurityException) { showStorageFailure(); return }
+          catch (_: android.database.sqlite.SQLiteException) { showStorageFailure(); return }
         GuardEngine.syncChildComponents(this)
         section = savedInstanceState?.getString("section") ?: "role"
         renderedRole = savedInstanceState?.getString("rendered_role") ?: GuardEngine.getRole(this)
@@ -2377,7 +2383,8 @@ class MainActivity : Activity() {
             }
             evidenceDays = savedInstanceState.getInt("evidence_days")
             evidenceSaved = savedInstanceState.getBoolean("evidence_saved")
-            savedInstanceState.getBundle("drafts")?.let { b -> for (key in b.keySet()) inputDrafts[key] = b.getString(key) ?: "" }
+            if(savedInstanceState.getInt("private_storage_state_version")==1)
+                savedInstanceState.getBundle("drafts")?.let { b -> for (key in b.keySet()) inputDrafts[key] = b.getString(key) ?: "" }
         }
         screenShell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fixedHeader = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(4), dp(16), 0) }
@@ -2393,6 +2400,8 @@ class MainActivity : Activity() {
         handleDeepLinkIntent(intent)
     }
     override fun onSaveInstanceState(outState: Bundle) {
+        if (!storageReady) { super.onSaveInstanceState(outState); return }
+        outState.putInt("private_storage_state_version",1)
         outState.putString("section", section); outState.putString("rendered_role", renderedRole)
         outState.putString("entry_role", selectedEntryRole); outState.putString("chart_mode", chartMode)
         outState.putString("alert_filter", alertFilter); outState.putString("unlock_code", displayed15MinCode)
@@ -2410,6 +2419,7 @@ class MainActivity : Activity() {
     }
     @Deprecated("Activity back navigation")
     override fun onBackPressed() {
+        if (!storageReady) { finish(); return }
         when {
             section == "alerts" && evidenceSender != null -> { evidenceSender = null;evidenceConversationKey=null;evidenceDirection="all"; evidencePage = 0; renderUi(animate = true) }
             section.endsWith("_setup") -> navigateTo("role")
@@ -2418,7 +2428,7 @@ class MainActivity : Activity() {
             else -> navigateTo("role")
         }
     }
-    override fun onNewIntent(intent: Intent?) { super.onNewIntent(intent); handleDeepLinkIntent(intent) }
+    override fun onNewIntent(intent: Intent?) { super.onNewIntent(intent); if(storageReady)handleDeepLinkIntent(intent) }
     private fun handleDeepLinkIntent(incoming: Intent?) {
         if (incoming?.action == "app.family.igguard.OPEN_EVIDENCE") { handleEvidenceNotification(incoming); return }
         val data = incoming?.data ?: return
@@ -2454,7 +2464,9 @@ class MainActivity : Activity() {
         return true
     }
     override fun onResume() {
-        super.onResume(); activityVisible = true
+        super.onResume()
+        if (!storageReady) return
+        activityVisible = true
         val filter = IntentFilter(GuardEngine.ACTION_UI_REFRESH)
         // The flag protects Android 13+; the signature permission protects earlier releases.
         registerReceiver(refreshReceiver, filter, "$packageName.INTERNAL", null, Context.RECEIVER_NOT_EXPORTED)
@@ -2520,6 +2532,12 @@ class MainActivity : Activity() {
         }
     }
     private fun renderUi(animate: Boolean = false) {
+        if (!storageReady) return
+        try { renderProtectedUi(animate) }
+        catch (_: SecurityException) { showStorageFailure() }
+        catch (_: android.database.sqlite.SQLiteException) { showStorageFailure() }
+    }
+    private fun renderProtectedUi(animate: Boolean = false) {
         applyTheme()
         val t = currentTheme(); val role = GuardEngine.getRole(this)
         val session = GuardEngine.captureRelaySession(this)
@@ -3359,6 +3377,20 @@ class MainActivity : Activity() {
         }
     }
     private var activeSheet: Dialog? = null
+    private var storageReady = false
+    private fun showStorageFailure() {
+        storageReady = false
+        activityVisible = false
+        uiHandler.removeCallbacksAndMessages(null)
+        dismissUiDialogs()
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 32) }
+        content.addView(TextView(this).apply {
+            text = "無法開啟加密儲存空間\n\n現有資料已保留。請先解鎖手機再重試。如持續失敗，請保留 App 資料並聯絡支援；請勿清除資料或重新配對。"
+            textSize = 18f
+        })
+        content.addView(Button(this).apply { text = "重試"; setOnClickListener { recreate() } })
+        setContentView(content)
+    }
     private val uiDialogs = mutableSetOf<Dialog>()
     private fun trackDialog(dialog: Dialog) {
         uiDialogs.add(dialog)
@@ -3453,8 +3485,9 @@ class MainActivity : Activity() {
         hint = hintText; contentDescription = hintText; textSize = 15f; typeface = font()
         setTextColor(color(t.textPrimary)); setHintTextColor(color(t.textMuted)); background = focusSurface(t.bgInput, 8, t.accentPowderSky)
         inputType = if (isPassword) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_CLASS_TEXT
-        setText(if (remember) inputDrafts[hintText] ?: initialValue else initialValue)
-        if (remember) addTextChangedListener(object : TextWatcher {
+        if (isPassword) inputDrafts.remove(hintText)
+        setText(if (remember && !isPassword) inputDrafts[hintText] ?: initialValue else initialValue)
+        if (remember && !isPassword) addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { inputDrafts[hintText] = s.toString() }
             override fun afterTextChanged(s: Editable?) {}

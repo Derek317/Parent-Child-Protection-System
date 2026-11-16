@@ -26,7 +26,7 @@ class ConversationIngestionTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     private var original:ProxySelector?=null
     @Before fun reset(){
-        ctx.deleteDatabase("family_evidence.db");val p=ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE);p.edit().clear().commit()
+        ctx.deleteDatabase("family_evidence.db");val p=LocalVault.preferences(ctx);p.edit().clear().commit()
         GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")
         val key=FamilySecurity.newSigningIdentity();val id=UUID.randomUUID().toString()
         p.edit().putString("parent_command_public_key",key.publicKey).putString("capture_policy_id",id).putString("capture_local_ack_id",id).commit()

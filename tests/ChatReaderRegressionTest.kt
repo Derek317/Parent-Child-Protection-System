@@ -38,7 +38,7 @@ class ChatReaderRegressionTest {
     private var original:ProxySelector?=null
     @Before fun reset(){
         ctx.deleteDatabase("family_evidence.db")
-        val p=ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE);p.edit().clear().commit()
+        val p=LocalVault.preferences(ctx);p.edit().clear().commit()
         GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")
         val id=UUID.randomUUID().toString()
         p.edit().putLong("next_heartbeat_at_ms",System.currentTimeMillis()+3_600_000L)
@@ -145,7 +145,7 @@ class ChatReaderRegressionTest {
             c.get().onAccessibilityEvent(AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED).apply{packageName="com.instagram.android"})
             GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString())
             val id=UUID.randomUUID().toString()
-            ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey)
+            LocalVault.preferences(ctx).edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey)
                 .putString("capture_policy_id",id).putString("capture_local_ack_id",id).commit()
             shadowOf(Looper.getMainLooper()).idleFor(600,TimeUnit.MILLISECONDS)
             assertTrue(rows().isEmpty())
@@ -195,14 +195,14 @@ class ChatReaderRegressionTest {
         assertEquals(listOf("hello"),rows().map{it.optString("text")})
     }
     @Test fun incomingOnlyModeUsesRealRoomWithoutSilentlyEnablingOutgoing(){
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().remove("capture_local_ack_id").commit()
+        LocalVault.preferences(ctx).edit().remove("capture_local_ack_id").commit()
         scan(screen(body=listOf(node("incoming"),node("child outgoing",600,900,950,960,"outgoing_message"))))
         assertEquals(listOf("incoming"),rows().map{it.optString("text")})
         assertEquals("Alice",rows().single().optString("sender"))
         assertFalse(GuardEngine.fullCaptureEnabled(ctx))
     }
     @Test fun incomingOnlyModeNeverMislabelsTextInsideAnOutgoingBubble(){
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().remove("capture_local_ack_id").commit()
+        LocalVault.preferences(ctx).edit().remove("capture_local_ack_id").commit()
         val explicit=node(x=100,y=800,r=950,b=910,id="outgoing_message")
         shadowOf(explicit).addChild(node("private sent text",130,825,500,880,"message_text"))
         val geometric=node(x=100,y=1100,r=950,b=1210,id="message_container")

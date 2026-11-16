@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 @Config(sdk=[28])
 class RotationTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
-    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit();GuardEngine.setRole(ctx,"parent")}
+    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit();GuardEngine.setRole(ctx,"parent")}
     private fun rotateAndAwait():String {
         val done=CountDownLatch(1)
         val next=GuardEngine.rotateKeyAndNotifyChild(ctx,false){success->assertFalse(success);done.countDown()}
@@ -48,7 +48,7 @@ class RotationTest {
         FamilyEvidence(ctx).use{assertEquals(0,it.pendingCount(scope))}
         // The preserved original command also moves the child to that exact token.
         GuardEngine.setFamilyToken(ctx,old);GuardEngine.setRole(ctx,"child")
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_command_public_key",publicKey).commit()
+        LocalVault.preferences(ctx).edit().putString("parent_command_public_key",publicKey).commit()
         for((index,frame) in frames.withIndex()){
             val line=org.json.JSONObject().put("event","message").put("id","rotation-child-$index").put("message",frame.wire).toString()
             assertEquals(RelayConsumption.CONSUMED,GuardEngine.processIncomingRelayLine(ctx,line,"child",null))

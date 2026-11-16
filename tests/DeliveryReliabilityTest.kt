@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
 @Config(sdk=[28])
 class DeliveryReliabilityTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
-    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit();GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")}
+    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit();GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")}
     @Test fun failedSendLeavesCompleteEncryptedTextDurableForRetry(){
         val completed=CountDownLatch(1);var delivered=true
             val text="廣東話🙂長訊息\n".repeat(180)

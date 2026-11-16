@@ -26,10 +26,10 @@ class CloudRelayTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     private lateinit var authority:FamilySecurity.SigningIdentity
     @Before fun reset(){
-        ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit()
+        ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit()
         GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")
         authority=FamilySecurity.newSigningIdentity()
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_command_public_key",authority.publicKey).commit()
+        LocalVault.preferences(ctx).edit().putString("parent_command_public_key",authority.publicKey).commit()
     }
     @Test fun realWebSocketPublishUsesFamilyCapabilityAndWaitsForServerAcceptance() {
         val server=MockWebServer();val sent=CountDownLatch(1);val completed=CountDownLatch(1)
@@ -134,7 +134,7 @@ class CloudRelayTest {
             connection.publish("event:0",GuardEngine.encryptPayload(token,"{}"),"urgent"){completedAt=System.currentTimeMillis();done.countDown()}
             assertTrue(done.await(5,TimeUnit.SECONDS))
             val room=FamilyRelay.room(authority.publicKey,GuardEngine.getChannelTopic(ctx))
-            val retryAt=ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).getLong("relay_cooldown_child_$room",0)
+            val retryAt=LocalVault.preferences(ctx).getLong("relay_cooldown_child_$room",0)
             assertTrue("A short hint is a minimum, not permission to reset backoff",retryAt-completedAt>=1900)
         }finally{connection.close();server.shutdown()}
     }

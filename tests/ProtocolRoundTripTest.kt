@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 @Config(sdk=[28])
 class ProtocolRoundTripTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
-    private val prefs get()=ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE)
+    private val prefs get()=LocalVault.preferences(ctx)
     @Before fun reset(){prefs.edit().clear().commit();GuardEngine.pauseTamperUntilMs=0}
     private fun pairedChild():Pair<String,String> {
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")

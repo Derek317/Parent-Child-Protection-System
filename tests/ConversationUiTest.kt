@@ -31,7 +31,7 @@ class ConversationUiTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     private var original:ProxySelector?=null
     @Before fun reset(){
-        ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit()
+        ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit()
         GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"parent")
         original=ProxySelector.getDefault();ProxySelector.setDefault(object:ProxySelector(){
             override fun select(u:URI)=if(u.host=="ntfy.sh")listOf(Proxy(Proxy.Type.HTTP,InetSocketAddress("127.0.0.1",9)))else original?.select(u)?:listOf(Proxy.NO_PROXY)
@@ -75,7 +75,7 @@ class ConversationUiTest {
     }
     @Test fun childScopeNoticeExplainsBothDirectionsAndNeedsAnExplicitLocalAction(){
         GuardEngine.setRole(ctx,"child")
-        val prefs=ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE)
+        val prefs=LocalVault.preferences(ctx)
         prefs.edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey).putString("capture_policy_id",UUID.randomUUID().toString()).commit()
         val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a,"permissions")
         views(a).single{it.tag=="full_capture_setup"}.performClick()

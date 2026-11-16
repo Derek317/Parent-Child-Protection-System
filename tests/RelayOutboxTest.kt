@@ -14,7 +14,7 @@ import org.robolectric.annotation.Config
 @Config(sdk=[28])
 class RelayOutboxTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
-    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit()}
+    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit()}
 
     @Test fun manualRetryCannotResetAcceptedFramesOrProviderCooldown() {
         FamilyEvidence(ctx).use { db ->
@@ -66,7 +66,7 @@ class RelayOutboxTest {
     }
     @Test fun providerMigrationRequeuesOldCiphertextOnceWithoutResettingSubsequentReceiptWaits() {
         GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey).commit()
+        LocalVault.preferences(ctx).edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey).commit()
         val token=GuardEngine.getOrCreateFamilyToken(ctx);val scope=GuardEngine.getChannelTopic(ctx);val now=System.currentTimeMillis()
         val original=org.json.JSONObject().put("type","alert").put("event_id","old").put("text","old queued record").put("receipt_requested",false)
         FamilyEvidence(ctx).use { db ->
@@ -86,7 +86,7 @@ class RelayOutboxTest {
     }
     @Test fun anUnreadableMigratedFrameCompletesTheCallerWithoutDiscardingEitherRecord() {
         GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey).commit()
+        LocalVault.preferences(ctx).edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey).commit()
         val scope=GuardEngine.getChannelTopic(ctx)
         FamilyEvidence(ctx).use{db->db.enqueue(scope,"old:0","unreadable ciphertext");db.writableDatabase.execSQL("UPDATE outbox SET relay_version=0 WHERE scope=?",arrayOf(scope))}
         val done=java.util.concurrent.CountDownLatch(1);var accepted=true

@@ -18,6 +18,7 @@ s=s.replace('${{ github.run_number }}','1')
 (out/'generate.sh').write_text(s)
 shutil.copyfile(repo/'MainActivity.kt',out/'MainActivity.kt')
 shutil.copyfile(repo/'FamilySecurity.kt',out/'FamilySecurity.kt')
+shutil.copyfile(repo/'LocalVault.kt',out/'LocalVault.kt')
 shutil.copyfile(repo/'FamilyEvidence.kt',out/'FamilyEvidence.kt')
 shutil.copyfile(repo/'ConversationCapture.kt',out/'ConversationCapture.kt')
 shutil.copyfile(repo/'FamilyRelay.kt',out/'FamilyRelay.kt')
@@ -31,7 +32,9 @@ PY
 cd "$build_dir"
 bash generate.sh
 mkdir -p app/src/test/java/app/family/igguard
-cp "$repo_dir"/tests/*Test.kt app/src/test/java/app/family/igguard/
+cp "$repo_dir"/tests/*.kt app/src/test/java/app/family/igguard/
+mkdir -p app/src/test/resources
+printf 'application=app.family.igguard.VaultTestApplication\n' > app/src/test/resources/robolectric.properties
 cat >> app/build.gradle <<'GRADLE'
 android { testOptions {
     unitTests.includeAndroidResources = true

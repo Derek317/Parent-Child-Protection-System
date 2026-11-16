@@ -24,7 +24,7 @@ import org.robolectric.Shadows.shadowOf
 class PermissionUiTest {
     private val ctx: Application get() = RuntimeEnvironment.getApplication()
     @Before fun reset() {
-        ctx.getSharedPreferences("ig_guard_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        LocalVault.preferences(ctx).edit().clear().commit()
         GuardEngine.pauseTamperUntilMs = 0
     }
     private fun invoke(a: MainActivity, name: String, value: String) = MainActivity::class.java.getDeclaredMethod(name,String::class.java).apply { isAccessible=true }.invoke(a,value)

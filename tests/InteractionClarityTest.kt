@@ -30,7 +30,7 @@ class InteractionClarityTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     private var original:ProxySelector?=null
     @Before fun reset(){
-        ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit()
+        ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit()
         RuntimeEnvironment.setFontScale(1f)
         GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"parent")
         original=ProxySelector.getDefault();ProxySelector.setDefault(object:ProxySelector(){

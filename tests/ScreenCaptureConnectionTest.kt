@@ -37,7 +37,7 @@ class ScreenCaptureConnectionTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     private var original:ProxySelector?=null
     @Before fun reset(){
-        ctx.deleteDatabase("family_evidence.db");val p=ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE);p.edit().clear().commit()
+        ctx.deleteDatabase("family_evidence.db");val p=LocalVault.preferences(ctx);p.edit().clear().commit()
         GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")
         p.edit().putLong("next_heartbeat_at_ms",System.currentTimeMillis()+3_600_000L).commit()
         ctx.resources.displayMetrics.apply{widthPixels=1000;heightPixels=2000}
@@ -53,7 +53,7 @@ class ScreenCaptureConnectionTest {
     private fun captureRows(header:String,composerY:Int,feed:Boolean=false,body:String="hello from the other person",draft:String="",full:Boolean=false,hint:String="Message...",beforeFlush:(()->Unit)?=null):List<JSONObject>{
         if(full) {
             val id=UUID.randomUUID().toString()
-            ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit()
+            LocalVault.preferences(ctx).edit()
                 .putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey)
                 .putString("capture_policy_id",id).putString("capture_local_ack_id",id).commit()
         }
@@ -128,7 +128,7 @@ class ScreenCaptureConnectionTest {
         val rows=captureRows("Story",1700,body="",draft="family A private reply",full=true,hint="Reply...",beforeFlush={
             GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString())
             val id=UUID.randomUUID().toString()
-            ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit()
+            LocalVault.preferences(ctx).edit()
                 .putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey)
                 .putString("capture_policy_id",id).putString("capture_local_ack_id",id).commit()
         })

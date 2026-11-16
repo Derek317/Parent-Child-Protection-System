@@ -20,7 +20,7 @@ import java.io.File
 class RenderTest {
     @Test fun realEmptyStateRendersBothThemesAndChildPermissions() {
         val ctx=RuntimeEnvironment.getApplication()
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit()
+        LocalVault.preferences(ctx).edit().clear().commit()
         GuardEngine.setRole(ctx,"unconfigured")
         render("role","native-role",390,844)
         for (bright in listOf(true,false)) {

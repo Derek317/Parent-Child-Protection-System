@@ -100,7 +100,7 @@ jobs:
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/values
           cp -R ui-res/. app/src/main/res/
-          cp FamilySecurity.kt FamilyEvidence.kt ConversationCapture.kt FamilyRelay.kt CloudRelay.kt app/src/main/java/app/family/igguard/
+          cp FamilySecurity.kt LocalVault.kt FamilyEvidence.kt ConversationCapture.kt FamilyRelay.kt CloudRelay.kt app/src/main/java/app/family/igguard/
           python3 scripts/relay-config.py --output app/relay-config.json
 
           if [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
@@ -162,7 +162,7 @@ jobs:
                   minSdk 26
                   targetSdk 34
                   versionCode $VER_CODE
-                  versionName "4.9-beta.1"
+                  versionName "4.9-beta.2"
               }
 
               signingConfigs {
@@ -288,7 +288,9 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -p 'check_*.py'
           mkdir -p app/src/test/java/app/family/igguard
-          cp tests/*Test.kt app/src/test/java/app/family/igguard/
+          cp tests/*.kt app/src/test/java/app/family/igguard/
+          mkdir -p app/src/test/resources
+          printf 'application=app.family.igguard.VaultTestApplication\n' > app/src/test/resources/robolectric.properties
           cat >> app/build.gradle <<'EOF'
           android { testOptions {
               unitTests.includeAndroidResources = true
@@ -365,7 +367,7 @@ jobs:
             test "$certificate" = "0eb6f30787c2d6dc23136a28cfd7a08a7956e5fe0565ba142f6711be38ca3f0e"
             "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
             grep -q "name='app.family.igguard'" "$RUNNER_TEMP/apk-badging.txt"
-            grep -q "versionName='4.9-beta.1'" "$RUNNER_TEMP/apk-badging.txt"
+            grep -q "versionName='4.9-beta.2'" "$RUNNER_TEMP/apk-badging.txt"
             code="$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" "$RUNNER_TEMP/apk-badging.txt" | head -1)"
             test "$code" -gt 150
             if grep -q '^application-debuggable' "$RUNNER_TEMP/apk-badging.txt"; then

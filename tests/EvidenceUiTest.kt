@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
 @Config(sdk=[28])
 class EvidenceUiTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
-    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit();GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString());GuardEngine.setRole(ctx,"parent")}
+    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit();GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString());GuardEngine.setRole(ctx,"parent")}
     private fun all(v:View):List<View> = listOf(v)+if(v is ViewGroup)(0 until v.childCount).flatMap{all(v.getChildAt(it))}else emptyList()
     private fun views(a:MainActivity):List<View> {
         val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5)
@@ -51,7 +51,7 @@ class EvidenceUiTest {
         c.destroy()
     }
     @Test fun legacyInboxMigratesWhenOpeningAlertsDirectly(){
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_alerts_json","[${event(1)}]").commit()
+        LocalVault.preferences(ctx).edit().putString("parent_alerts_json","[${event(1)}]").commit()
         val c=Robolectric.buildActivity(MainActivity::class.java).create();nav(c.get())
         assertTrue(views(c.get()).any{it.tag=="evidence_contact_person"})
         c.destroy()

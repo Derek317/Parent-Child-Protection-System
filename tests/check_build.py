@@ -11,6 +11,16 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 SECRETS = ('APK_KEYSTORE_BASE64', 'APK_KEYSTORE_PASSWORD', 'APK_KEY_ALIAS', 'APK_KEY_PASSWORD')
 
+class SigningMaterialExposure(unittest.TestCase):
+    def test_workflow_contains_secret_references_not_embedded_signing_material(self):
+        text = (REPO / '.github/workflows/build-apk.yml').read_text()
+        # Report location only: never echo the matched secret in a failed CI assertion.
+        for number, line in enumerate(text.splitlines(), 1):
+            if re.search(r'[A-Za-z0-9+/]{1024,}={0,2}', line):
+                self.fail(f'Embedded signing/container material in workflow line {number}')
+            if re.search(r'''\b(?:storePassword|keyPassword)\s+["'][^"']+["']''', line):
+                self.fail(f'Literal signing password in workflow line {number}')
+
 class Packaging(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

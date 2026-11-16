@@ -19,10 +19,10 @@ class DeliveryReceiptTest {
     private lateinit var authority:FamilySecurity.SigningIdentity
     private val scope get()=GuardEngine.getChannelTopic(ctx)
     @Before fun reset(){
-        ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit()
+        ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit()
         GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")
         authority=FamilySecurity.newSigningIdentity()
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_command_public_key",authority.publicKey).commit()
+        LocalVault.preferences(ctx).edit().putString("parent_command_public_key",authority.publicKey).commit()
     }
     private fun receipt(id:String,time:Long=System.currentTimeMillis(),signed:Boolean=true,channel:String=scope,outcome:String="stored"){
         val inner=JSONObject().put("type","alert_receipt").put("outcome",outcome).put("event_id",id).put("scope",channel).put("command_id",UUID.randomUUID().toString()).put("ts_ms",time)

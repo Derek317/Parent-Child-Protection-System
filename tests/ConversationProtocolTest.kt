@@ -21,7 +21,7 @@ class ConversationProtocolTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     private lateinit var authority:FamilySecurity.SigningIdentity
     private var original:ProxySelector?=null
-    private val prefs get()=ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE)
+    private val prefs get()=LocalVault.preferences(ctx)
     @Before fun reset(){
         ctx.deleteDatabase("family_evidence.db");prefs.edit().clear().commit()
         GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")

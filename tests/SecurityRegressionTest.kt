@@ -20,7 +20,7 @@ class SecurityRegressionTest {
     private val ctx: Application get() = RuntimeEnvironment.getApplication()
     private val now get() = System.currentTimeMillis()
     @Before fun reset() {
-        ctx.getSharedPreferences("ig_guard_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        LocalVault.preferences(ctx).edit().clear().commit()
         GuardEngine.pauseTamperUntilMs = 0
     }
     private fun receive(inner: JSONObject, encrypted: Boolean = true) {
@@ -66,7 +66,7 @@ class SecurityRegressionTest {
         GuardEngine.setRole(ctx,"child");GuardEngine.getOrCreateFamilyToken(ctx)
         GuardEngine.setTrustedHandles(ctx,listOf("old_friend"));GuardEngine.setChildSelfHandle(ctx,"old_child")
         GuardEngine.grantTemporaryUnlock(ctx,60_000)
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit()
+        LocalVault.preferences(ctx).edit()
             .putString("synced_15m_code","234ABC").putLong("synced_15m_exp",now+60_000)
             .putLong("last_control_ts_ms",now).commit()
         GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString())

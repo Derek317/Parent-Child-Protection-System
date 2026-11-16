@@ -16,7 +16,7 @@ import java.util.UUID
 @Config(sdk=[28])
 class RelayConsumptionTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
-    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit();GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"parent")}
+    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit();GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"parent")}
     private fun alert()=JSONObject().put("type","alert").put("event_id",UUID.randomUUID().toString()).put("reason","stranger_message").put("sender","contact").put("text","complete record").put("ts_ms",System.currentTimeMillis()).put("receipt_requested",true)
     private fun outer(payload:JSONObject)=JSONObject().put("event","message").put("id",UUID.randomUUID().toString()).put("message",GuardEngine.encryptPayload(GuardEngine.getOrCreateFamilyToken(ctx),payload.toString())).toString()
 
@@ -45,7 +45,7 @@ class RelayConsumptionTest {
     @Test fun longSignedParentCommandsReassembleWithoutBecomingEvidenceOrLosingAuthority() {
         val parent=FamilySecurity.newSigningIdentity()
         GuardEngine.setRole(ctx,"child")
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_command_public_key",parent.publicKey).commit()
+        LocalVault.preferences(ctx).edit().putString("parent_command_public_key",parent.publicKey).commit()
         val id=UUID.randomUUID().toString();val scope=GuardEngine.getChannelTopic(ctx)
         val contacts=(0..299).map{"friend_$it"}
         val command=JSONObject().put("type","sync_trusted").put("scope",scope).put("command_id",id).put("ts_ms",System.currentTimeMillis()).put("trusted_csv",contacts.joinToString(","))

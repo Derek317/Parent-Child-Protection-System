@@ -16,7 +16,7 @@ import org.robolectric.annotation.Config
 @Config(sdk=[28])
 class ConversationArchiveTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
-    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit()}
+    @Before fun reset(){ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit()}
     private fun record(i:Int,partner:String="friend",direction:String="incoming",text:String="text $i",account:String="child")=
         ConversationCapture.record(CapturedText(partner,text,direction,author=if(direction=="outgoing")"child" else partner,account=account,messageTime=1000L+i),2000L+i,true,false).put("event_id","message-$i")
     @Test fun versionTwoUpgradeKeepsPayloadReviewBookmarksAndEncryptedQueue(){

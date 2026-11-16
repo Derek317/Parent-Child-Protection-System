@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config
 @Config(sdk=[28])
 class EvidenceStoreTest {
     private val ctx: Application get()=RuntimeEnvironment.getApplication()
-    @Before fun reset(){ ctx.deleteDatabase("family_evidence.db");ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().clear().commit() }
+    @Before fun reset(){ ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit() }
     private fun event(i:Int,body:String="message $i",sender:String="contact",reason:String="stranger_message")=JSONObject().put("event_id","event-$i").put("type","alert").put("sender",sender).put("reason",reason).put("text",body).put("ts_ms",1_700_000_000_000L+i)
     @Test fun archiveRetainsOldMessagesBeyondInboxPageAndFullUnicodeText(){
         val long="中文🙂\n\"quoted\" ".repeat(800)
@@ -108,11 +108,11 @@ class EvidenceStoreTest {
     @Test fun replacingFamilyPreservesLegacyJsonAndMalformedRawUnderOldScope(){
         GuardEngine.setRole(ctx,"parent")
         val original=GuardEngine.getChannelTopic(ctx)
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_alerts_json","[${event(1)}]").commit()
+        LocalVault.preferences(ctx).edit().putString("parent_alerts_json","[${event(1)}]").commit()
         GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString())
         FamilyEvidence(ctx).use{assertEquals("message 1",it.messages(original,EvidenceQuery(filter="any")).single().getString("text"))}
         val second=GuardEngine.getChannelTopic(ctx)
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_alerts_json","malformed old evidence").commit()
+        LocalVault.preferences(ctx).edit().putString("parent_alerts_json","malformed old evidence").commit()
         GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString())
         FamilyEvidence(ctx).use{assertEquals("malformed old evidence",it.messages(second,EvidenceQuery(filter="any")).single().getString("text"))}
         assertTrue(GuardEngine.getParentAlerts(ctx).isEmpty())
@@ -120,7 +120,7 @@ class EvidenceStoreTest {
     @Test fun deletingUpgradedInboxPreservesPreviouslyUninitializedStatistics(){
         GuardEngine.setRole(ctx,"parent")
         val row=event(1).put("ts_ms",System.currentTimeMillis())
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_alerts_json","[$row]").commit()
+        LocalVault.preferences(ctx).edit().putString("parent_alerts_json","[$row]").commit()
         GuardEngine.clearParentAlerts(ctx)
         assertTrue(GuardEngine.getParentAlerts(ctx).isEmpty())
         assertEquals(1L,GuardEngine.getParentStatistics(ctx).dailyTotals().sum())
@@ -130,7 +130,7 @@ class EvidenceStoreTest {
         val oldToken=GuardEngine.getOrCreateFamilyToken(ctx);val oldScope=GuardEngine.getChannelTopic(ctx)
         val newToken=java.util.UUID.randomUUID().toString();val newScope=GuardEngine.getChannelTopicForToken(newToken)
         FamilyEvidence(ctx).use{db->db.append(oldScope,"event-1",event(1));db.enqueue(oldScope,"event-1:0",GuardEngine.encryptPayload(oldToken,"{\"type\":\"alert\"}"))}
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("evidence_transition_json",JSONObject().put("old_token",oldToken).put("new_token",newToken).toString()).commit()
+        LocalVault.preferences(ctx).edit().putString("evidence_transition_json",JSONObject().put("old_token",oldToken).put("new_token",newToken).toString()).commit()
         if(afterMove)FamilyEvidence(ctx).use{it.rotate(oldScope,newScope){wire->GuardEngine.encryptPayload(newToken,GuardEngine.decryptPayload(oldToken,wire)!!.toString())}}
         assertEquals(newToken,GuardEngine.getOrCreateFamilyToken(ctx))
         FamilyEvidence(ctx).use{db->
@@ -205,13 +205,13 @@ class EvidenceStoreTest {
     }
     @Test fun engineMigrationKeepsLegacyTextAndDoesNotDuplicateOnRepeatedRead(){
         GuardEngine.setRole(ctx,"parent")
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_alerts_json","[${event(1)}]").commit()
+        LocalVault.preferences(ctx).edit().putString("parent_alerts_json","[${event(1)}]").commit()
         assertEquals(1,GuardEngine.getParentAlerts(ctx).size);assertEquals(1,GuardEngine.getParentAlerts(ctx).size)
         assertTrue(GuardEngine.getParentAlerts(ctx).single().getBoolean("_legacy_partial"))
     }
     @Test fun malformedLegacyRecordIsPreservedForRecovery(){
         GuardEngine.setRole(ctx,"parent")
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("parent_alerts_json","corrupt-but-retain").commit()
+        LocalVault.preferences(ctx).edit().putString("parent_alerts_json","corrupt-but-retain").commit()
         val retained=GuardEngine.getParentAlerts(ctx)
         assertEquals("corrupt-but-retain",retained.single().getString("text"))
         assertEquals("archive_recovery",retained.single().getString("reason"))
@@ -221,7 +221,7 @@ class EvidenceStoreTest {
         GuardEngine.setRole(ctx,"parent")
         val alert=event(1).put("ts_ms",System.currentTimeMillis())
         val stats=AlertStatistics(JSONObject(),System.currentTimeMillis());stats.record("relay:old",alert);stats.state.put("initialized",true)
-        ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE).edit().putString("weekly_stats_json",stats.state.toString()).putString("parent_alerts_json","[$alert]").commit()
+        LocalVault.preferences(ctx).edit().putString("weekly_stats_json",stats.state.toString()).putString("parent_alerts_json","[$alert]").commit()
         assertEquals(1,GuardEngine.getParentAlerts(ctx).size)
         assertFalse(GuardEngine.recordParentAlert(ctx,alert,"relay:new"))
         assertEquals(1L,GuardEngine.getParentStatistics(ctx).dailyTotals().sum())
