@@ -5,6 +5,8 @@
 
 Current consent beta: **4.9-beta.3**, dated **16 November 2026 (Hong Kong)**. See the [beta notes](docs/releases/4.9-beta.3.md) and [changelog](CHANGELOG.md). This documentation does not announce a published APK.
 
+Public review references **E01/E02** are available in the [dated evidence index](docs/reviews/2026-11-16/evidence/README.md). These are release-verification and prior cleanup records with stated limits, not a legal certification or a claim that the app has no flaws.
+
 ## Purpose & Core Objectives
 
 1. **Approved-Contact DM Alerts:** A parent-controlled approved-friends list is independent of Instagram follow status. Captured incoming messages from unapproved account labels generate encrypted alerts. An unapproved label does not establish a sender's age, identity or intent, and capture is not comprehensive.
