@@ -1,4 +1,4 @@
-# Local storage security — 4.9-beta.2
+# Local storage security — 4.9-beta.3
 
 Updated 16 November 2026 (Hong Kong).
 
@@ -10,6 +10,7 @@ Preference strings and captured archive content are encrypted at rest using AES-
 - Archive message bodies, original payloads, sender/conversation/account labels, fragment data and capture-window state are separately authenticated and encrypted. Purpose/record/family binding prevents ciphertext from being moved between different fields or family scopes without detection.
 - Sender and conversation lookup columns use Keystore HMAC indexes. Timestamps, alert categories, directions, opaque record/family IDs and workflow flags remain clear metadata. This is field encryption in SQLite, not encryption of the complete database file.
 - Keyword search decrypts candidate rows inside the app. It does not create a persistent plaintext search index. Search cost grows with the candidate archive; this is a deliberate privacy/performance tradeoff.
+- The first-launch receipt is stored separately in `ig_guard_consent`, sealed with the same device-bound AES-GCM facility and a distinct authenticated purpose. It records the three acknowledgments, original Terms revision and SHA-256, app version and acceptance time. It is local and is not a relay/support upload. Normal family-setting changes and archive deletion do not remove it; clearing app data/uninstallation does. Ordinary updates preserve the original receipt rather than recording agreement to a new revision. Unreadable receipts leave capture and relay disabled and are not silently replaced.
 
 ## Existing installations and recovery
 

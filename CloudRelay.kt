@@ -27,6 +27,7 @@ object CloudRelay {
     @Volatile private var parentAlert:((JSONObject)->Unit)?=null
 
     private fun connection(ctx:Context,token:String):Connection {
+        check(AppConsent.hasAccepted(ctx)) { "Initial consent is required" }
         val session=GuardEngine.captureRelaySession(ctx)
         require(session.first!="unconfigured")
         if(token!=session.second)require(session.first=="parent")
@@ -41,7 +42,7 @@ object CloudRelay {
     fun connect(ctx:Context,onParentAlert:((JSONObject)->Unit)?=null) {
         executor.execute {
             if(onParentAlert!=null)parentAlert=onParentAlert
-            if(GuardEngine.getRole(ctx)=="unconfigured")return@execute
+            if(!AppConsent.hasAccepted(ctx) || GuardEngine.getRole(ctx)=="unconfigured")return@execute
             try{connection(ctx,GuardEngine.getOrCreateFamilyToken(ctx)).start()}
             catch(_:Exception){
                 val status="中繼設定或家長驗證金鑰未完成 · 請更新兩部手機及配對資料"
@@ -55,6 +56,7 @@ object CloudRelay {
     }
     }
     fun publishBlocking(ctx:Context,token:String,id:String,wire:String,kind:String):PublishResult {
+        if(!AppConsent.hasAccepted(ctx))return PublishResult(false,"尚未同意使用條款，轉傳未啟用")
         val completed=CountDownLatch(1)
         var result=PublishResult(false,"尚未連線 · 加密記錄保留在手機")
         try {
@@ -90,7 +92,7 @@ object CloudRelay {
         private data class Pending(val json:JSONObject,val callback:(PublishResult)->Unit,var sent:Boolean=false,var timeout:ScheduledFuture<*>?=null)
         private val pending=linkedMapOf<String,Pending>()
         private fun current():Boolean {
-            if(closed || GuardEngine.captureRelaySession(ctx)!=origin)return false
+            if(closed || !AppConsent.hasAccepted(ctx) || GuardEngine.captureRelaySession(ctx)!=origin)return false
             return try{FamilyRelay.room(GuardEngine.relayPublicKey(ctx),GuardEngine.getChannelTopicForToken(token))==room}catch(_:Exception){false}
         }
         private fun state(text:String) {

@@ -575,7 +575,8 @@ object GuardEngine {
             val legacyPassword = prefs(ctx).getString("parent_master_password", null)
             if (!legacyPassword.isNullOrBlank()) storeChildVerifier(ctx, FamilySecurity.passwordVerifier(legacyPassword))
         }
-        val state = if (isChildMode(ctx)) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        // Preserve existing Android grants while the independent consent gate blocks all events.
+        val state = if (getRole(ctx) == "child") PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             else PackageManager.COMPONENT_ENABLED_STATE_DISABLED
         for (service in listOf(IgNotificationListener::class.java, IgAccessibilityService::class.java)) {
             val name = ComponentName(ctx, service)
@@ -604,8 +605,8 @@ object GuardEngine {
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
         try { manager.notify(7001, notification) } catch (_: SecurityException) { /* Permission changed while posting. */ }
     }
-    fun isChildMode(ctx: Context): Boolean = getRole(ctx) == "child"
-    fun isParentMode(ctx: Context): Boolean = getRole(ctx) == "parent"
+    fun isChildMode(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && getRole(ctx) == "child"
+    fun isParentMode(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && getRole(ctx) == "parent"
 
     private fun recoverEvidenceTransition(ctx: Context) {
         val raw=prefs(ctx).getString("evidence_transition_json",null) ?: return
@@ -739,7 +740,7 @@ object GuardEngine {
     }
 
     fun applyPairing(ctx: Context, invite: FamilySecurity.Invite): Boolean = synchronized(pollLock) {
-        if (!FamilySecurity.validToken(invite.token) || !FamilySecurity.isVerifier(invite.passwordVerifier) ||
+        if (!AppConsent.hasAccepted(ctx) || !FamilySecurity.validToken(invite.token) || !FamilySecurity.isVerifier(invite.passwordVerifier) ||
             (invite.parentPublicKey.isNotEmpty() && !FamilySecurity.validPublicKey(invite.parentPublicKey)) ||
             (isChildMode(ctx) && !isTemporarilyUnlocked(ctx))) return@synchronized false
         setFamilyToken(ctx, invite.token)
@@ -998,6 +999,9 @@ object GuardEngine {
         expectedSession: Triple<String,String,Int>? = null,
         onComplete: ((Boolean, String) -> Unit)? = null
     ) {
+        if (!AppConsent.hasAccepted(ctx)) {
+            completeAlertCallback(onComplete, false, "尚未同意使用條款，擷取及轉傳未啟用"); return
+        }
         if(expectedSession!=null && captureRelaySession(ctx)!=expectedSession) {
             completeAlertCallback(onComplete,false,"家庭配對已變更，原擷取已停止");return
         }
@@ -1163,7 +1167,7 @@ object GuardEngine {
         if(rotation)completePendingRotation(ctx)
     }
     fun retryPendingAlerts(ctx: Context, force: Boolean = false) {
-        if (getRole(ctx)=="unconfigured") return
+        if (!AppConsent.hasAccepted(ctx) || getRole(ctx)=="unconfigured") return
         try{prepareRelayOutbox(ctx)}catch(_:Exception){
             cpLastHttpStatus="加密佇列需要復原 · 已保留原有片段，請保留 App 資料"
             val origin=captureRelaySession(ctx)
@@ -1176,17 +1180,17 @@ object GuardEngine {
         val session=captureRelaySession(app)
         thread {
             try {
-                deliveryLoop@ while(captureRelaySession(app)==session) {
+                deliveryLoop@ while(AppConsent.hasAccepted(app) && captureRelaySession(app)==session) {
                     val next=relayRouteTokens(app).firstNotNullOfOrNull{token->
                         val scope=getChannelTopicForToken(token)
                         val batch=FamilyEvidence(app).use{it.due(scope,System.currentTimeMillis(),session.first)}
                         if(batch.isEmpty())null else Triple(token,scope,batch)
                     } ?: break
                     for(frame in next.third) {
-                        if(captureRelaySession(app)!=session)break@deliveryLoop
+                        if(!AppConsent.hasAccepted(app) || captureRelaySession(app)!=session)break@deliveryLoop
                         val result=CloudRelay.publishBlocking(app,next.first,frame.id,frame.wire,frame.kind)
                         synchronized(pollLock) {
-                        if(captureRelaySession(app)!=session)return@thread
+                        if(!AppConsent.hasAccepted(app) || captureRelaySession(app)!=session)return@thread
                         if(result.accepted)recordRelayAcceptance(app,next.second,frame)
                         else FamilyEvidence(app).use{it.failed(next.second,frame.id,System.currentTimeMillis(),session.first,if(result.contextFull)"data" else null)}
                         }
@@ -1201,15 +1205,16 @@ object GuardEngine {
                 }
             } finally {
                 deliveryInFlight.set(false)
-                finishDeliveryCallbacks(app)
+                if(AppConsent.hasAccepted(app))finishDeliveryCallbacks(app)
                 app.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(app.packageName))
                 // A new capture arriving as the worker exits must not be stranded.
-                if(captureRelaySession(app)==session && relayRouteTokens(app).any{token->FamilyEvidence(app).use{it.due(getChannelTopicForToken(token),System.currentTimeMillis(),session.first).isNotEmpty()}})retryPendingAlerts(app)
+                if(AppConsent.hasAccepted(app) && captureRelaySession(app)==session && relayRouteTokens(app).any{token->FamilyEvidence(app).use{it.due(getChannelTopicForToken(token),System.currentTimeMillis(),session.first).isNotEmpty()}})retryPendingAlerts(app)
             }
         }
     }
 
     fun pollChannelOnce(ctx: Context, since: String = "all", onNewAlertForParent: ((JSONObject) -> Unit)? = null) {
+        if (!AppConsent.hasAccepted(ctx)) return
         // Existing callers now request one shared socket/replay, never a second polling transport.
         CloudRelay.connect(ctx,onNewAlertForParent)
         retryPendingAlerts(ctx)
@@ -1224,7 +1229,7 @@ object GuardEngine {
         expectedGeneration: Int? = null
     ): RelayConsumption = synchronized(pollLock) {
         try {
-        if (role != getRole(ctx) || role == "unconfigured") return RelayConsumption.RETRY
+        if (!AppConsent.hasAccepted(ctx) || role != getRole(ctx) || role == "unconfigured") return RelayConsumption.RETRY
         if (expectedGeneration != null && expectedGeneration != relayGeneration) return RelayConsumption.RETRY
         if (expectedToken != null && expectedToken != getOrCreateFamilyToken(ctx)) return RelayConsumption.RETRY
         val outer = try { JSONObject(line) } catch (_: Exception) { return RelayConsumption.REJECTED }
@@ -1761,10 +1766,11 @@ class IgAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        if (!GuardEngine.isChildMode(this)) {
+        if (GuardEngine.getRole(this) != "child") {
             disableSelf()
             return
         }
+        if (!AppConsent.hasAccepted(this)) return
         GuardEngine.cpAccConnected = true
         GuardEngine.refreshMonitoringDisclosure(this)
         GuardEngine.scheduleNextRandomHeartbeat(this)
@@ -2347,6 +2353,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         try {
             LocalVault.preferences(this).all
+            if (AppConsent.receipt(this) == null) { showInitialConsent(); return }
             FamilyEvidence(this).use { it.readableDatabase }
             storageReady = true
             applyTheme()
@@ -2400,7 +2407,7 @@ class MainActivity : Activity() {
         handleDeepLinkIntent(intent)
     }
     override fun onSaveInstanceState(outState: Bundle) {
-        if (!storageReady) { super.onSaveInstanceState(outState); return }
+        if (!storageReady || consentVisible) { super.onSaveInstanceState(outState); return }
         outState.putInt("private_storage_state_version",1)
         outState.putString("section", section); outState.putString("rendered_role", renderedRole)
         outState.putString("entry_role", selectedEntryRole); outState.putString("chart_mode", chartMode)
@@ -2419,6 +2426,7 @@ class MainActivity : Activity() {
     }
     @Deprecated("Activity back navigation")
     override fun onBackPressed() {
+        if (consentVisible) { AppConsent.leaveToHome(this); return }
         if (!storageReady) { finish(); return }
         when {
             section == "alerts" && evidenceSender != null -> { evidenceSender = null;evidenceConversationKey=null;evidenceDirection="all"; evidencePage = 0; renderUi(animate = true) }
@@ -2428,7 +2436,11 @@ class MainActivity : Activity() {
             else -> navigateTo("role")
         }
     }
-    override fun onNewIntent(intent: Intent?) { super.onNewIntent(intent); if(storageReady)handleDeepLinkIntent(intent) }
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent != null) setIntent(intent)
+        if(storageReady && !consentVisible && AppConsent.hasAccepted(this)) handleDeepLinkIntent(intent)
+    }
     private fun handleDeepLinkIntent(incoming: Intent?) {
         if (incoming?.action == "app.family.igguard.OPEN_EVIDENCE") { handleEvidenceNotification(incoming); return }
         val data = incoming?.data ?: return
@@ -2465,7 +2477,8 @@ class MainActivity : Activity() {
     }
     override fun onResume() {
         super.onResume()
-        if (!storageReady) return
+        if (!storageReady || consentVisible) return
+        if (!AppConsent.hasAccepted(this)) { showInitialConsent(); return }
         activityVisible = true
         val filter = IntentFilter(GuardEngine.ACTION_UI_REFRESH)
         // The flag protects Android 13+; the signature permission protects earlier releases.
@@ -2532,7 +2545,7 @@ class MainActivity : Activity() {
         }
     }
     private fun renderUi(animate: Boolean = false) {
-        if (!storageReady) return
+        if (!storageReady || consentVisible || !AppConsent.hasAccepted(this)) return
         try { renderProtectedUi(animate) }
         catch (_: SecurityException) { showStorageFailure() }
         catch (_: android.database.sqlite.SQLiteException) { showStorageFailure() }
@@ -3298,6 +3311,11 @@ class MainActivity : Activity() {
         }
         rootContainer.addView(modes)
         sectionTitle("保護與通知", t)
+        rootContainer.addView(row("info", "使用條款與同意記錄", "查看此版本的完整條款及最初同意記錄", t) {
+            showSheet("使用條款與同意記錄") { _ ->
+                addView(label(AppConsent.reviewText(this@MainActivity), 14f, t.textPrimary).apply { setTextIsSelectable(true) })
+            }
+        }.apply { tag = "terms_review" })
         rootContainer.addView(row("bell-simple", if (GuardEngine.isParentMode(this)) "家長警報通知" else "監察狀態通知", "管理系統通知的顯示方式", t) { requestAppNotifications() })
         rootContainer.addView(row("shield", "權限與相容性", "了解 Android 授權及銀行 App 提醒", t) {
             showSheet("清楚了解，每一份授權。") { dialog ->
@@ -3378,6 +3396,18 @@ class MainActivity : Activity() {
     }
     private var activeSheet: Dialog? = null
     private var storageReady = false
+    private var consentVisible = false
+    private fun showInitialConsent() {
+        storageReady = false
+        consentVisible = true
+        activityVisible = false
+        uiHandler.removeCallbacksAndMessages(null)
+        dismissUiDialogs()
+        CloudRelay.disconnect()
+        stopService(Intent(this, ParentAlertService::class.java))
+        GuardEngine.syncChildComponents(this)
+        setContentView(AppConsent.page(this) { recreate() })
+    }
     private fun showStorageFailure() {
         storageReady = false
         activityVisible = false

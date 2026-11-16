@@ -18,6 +18,28 @@ import java.io.File
 @Config(sdk = [28], qualifiers = "w390dp-h844dp-mdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class RenderTest {
+    @Test fun firstLaunchConsentRendersTheDisclosuresAndChoiceOnPhone() {
+        val ctx=RuntimeEnvironment.getApplication()
+        ctx.getSharedPreferences("ig_guard_consent", Context.MODE_PRIVATE).edit().clear().commit()
+        LocalVault.preferences(ctx).edit().clear().commit()
+        val controller=Robolectric.buildActivity(MainActivity::class.java).create().start().visible()
+        val page=controller.get().findViewById<View>(android.R.id.content)
+        val width=390;val height=844
+        page.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY))
+        page.layout(0,0,width,height)
+        fun save(name:String) {
+            val bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888)
+            page.draw(Canvas(bitmap))
+            val out=File("build/test-screenshots/$name.png");out.parentFile?.mkdirs()
+            out.outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
+        }
+        save("native-consent-disclosures")
+        val scroll=page.findViewWithTag<android.widget.ScrollView>("first_launch_consent")
+        scroll.scrollTo(0,scroll.getChildAt(0).height)
+        save("native-consent-choice")
+        assertNotNull(page.findViewWithTag<View>("consent_accept"))
+        controller.stop().destroy()
+    }
     @Test fun realEmptyStateRendersBothThemesAndChildPermissions() {
         val ctx=RuntimeEnvironment.getApplication()
         LocalVault.preferences(ctx).edit().clear().commit()

@@ -3,7 +3,7 @@
 
 **IG Teen Guard** is a single-APK Android family safeguarding app for Instagram users who meet Instagram's applicable minimum age: at least 13, or higher where required. It helps a parent or legal guardian review captured text and selected risk signals. It does not guarantee safety, complete capture or detection of every harmful interaction.
 
-Current security beta: **4.9-beta.2**, dated **16 November 2026 (Hong Kong)**. See the [beta notes](docs/releases/4.9-beta.2.md) and [changelog](CHANGELOG.md). This documentation does not announce a published APK.
+Current consent beta: **4.9-beta.3**, dated **16 November 2026 (Hong Kong)**. See the [beta notes](docs/releases/4.9-beta.3.md) and [changelog](CHANGELOG.md). This documentation does not announce a published APK.
 
 ## Purpose & Core Objectives
 
@@ -13,7 +13,11 @@ Current security beta: **4.9-beta.2**, dated **16 November 2026 (Hong Kong)**. S
 
 ## Family use and message privacy
 
-IG Guard is intended for authorized private parent–child use. It provides no school administration console or developer-operated plaintext family message archive.
+IG Guard is restricted to authorised private parent–child safeguarding. Do not use it to monitor strangers, partners, employees, students or for commercial/institutional surveillance. Hong Kong Cap.486 s52 is a limited exemption for qualifying personal data held by an individual for personal/family/household affairs or recreational purposes; it does not automatically exempt the developer or Cloudflare, grant Meta permission or authorise every family use.
+
+On first launch on **each phone**, a native offline page displays the exact [Terms of Service](docs/ig-guard-terms-of-service.md) bundled from this repository. Three unticked acknowledgments explain the Terms, conditional child-mode message transfer to the verified paired parent/legal guardian, and the family-only purpose. Capture, pairing and relay delivery remain off until acceptance, including after upgrading an older configured phone. Decline or Back returns to Android Home without recording acceptance; existing data is retained and queued transfers are held. Acceptance is saved as a device-bound encrypted receipt with revision, SHA-256 and UTC time. Ordinary launches and updates do not repeat the initial page; Settings → 使用條款與同意記錄 provides review. Clear app data or reinstall and acceptance is required again. Initial acceptance does **not** enable expanded two-way capture or grant Android permissions. Material new processing scope requires separate consent; an old receipt is not rewritten as agreement to new Terms.
+
+There is no school administration console or developer-operated plaintext family message archive.
 
 **The developer-deployed Cloudflare relay handles ciphertext and delivery metadata; it is not supplied the family decryption key.** Captures are encrypted on the child phone and decrypted and archived on the paired parent phone. Connected phones normally exchange encrypted packets through the relay immediately; undelivered packets and critical controls use temporary encrypted cloud mailboxes. There is no developer plaintext-message dashboard or key escrow. APK signing does not provide family encryption keys. The original 4.8 APK uses ntfy; both phones need the verified Cloudflare hotfix build to migrate.
 

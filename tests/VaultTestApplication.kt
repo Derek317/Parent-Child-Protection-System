@@ -27,6 +27,9 @@ class VaultTestApplication : Application() {
                 put("KeyGenerator.HmacSHA256", HmacTestKeys::class.java.name)
             }
         })
+        // Existing regression scenarios describe configured, explicitly consenting installations.
+        // Fresh-install consent tests clear this separate receipt before exercising production gates.
+        AppConsent.accept(this, AppConsent.acknowledgments)
     }
 }
 
