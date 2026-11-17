@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node test/protocol.test.js && node test/relay.test.js && node test/load.test.js && node test/smoke.test.js",
+    "test": "node test/protocol.test.js && node test/relay.test.js && node test/retention.test.js && node test/load.test.js && node test/smoke.test.js",
     "deploy": "wrangler deploy",
     "smoke": "node --use-env-proxy scripts/smoke.js",
     "dev": "wrangler dev"

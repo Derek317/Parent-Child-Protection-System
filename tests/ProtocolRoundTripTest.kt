@@ -22,7 +22,7 @@ class ProtocolRoundTripTest {
     private fun pairedChild():Pair<String,String> {
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
         val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
-        val privateKey=prefs.getString("parent_signing_private",null)!!
+        val privateKey=FamilySecurity.loadOrCreateParentIdentity(ctx,null,invite.parentPublicKey).privateKey
         assertTrue(GuardEngine.applyPairing(ctx,invite))
         return privateKey to invite.token
     }

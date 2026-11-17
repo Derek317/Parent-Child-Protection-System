@@ -7,7 +7,9 @@ export ANDROID_HOME="${ANDROID_HOME:-/workspace/.android-dev/sdk}"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-/workspace/.android-dev/gradle-home}"
 export IG_GUARD_SOURCE="$repo_dir"
 export IG_GUARD_BUILD="$build_dir"
-mkdir -p "$build_dir"
+export IG_GUARD_TEST_HOME="${IG_GUARD_TEST_HOME:-/workspace/.android-dev/test-home}"
+export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$IG_GUARD_TEST_HOME/.android}"
+mkdir -p "$build_dir" "$IG_GUARD_TEST_HOME" "$ANDROID_USER_HOME"
 python3 - <<'PY'
 from pathlib import Path
 import os,re,shutil
@@ -16,16 +18,9 @@ s=(repo/'.github/workflows/build-apk.yml').read_text().split('      - name: Asse
 s='\n'.join(x[10:] if x.startswith('          ') else x for x in s.splitlines())+'\n'
 s=s.replace('${{ github.run_number }}','1')
 (out/'generate.sh').write_text(s)
-shutil.copyfile(repo/'MainActivity.kt',out/'MainActivity.kt')
-shutil.copyfile(repo/'AppConsent.kt',out/'AppConsent.kt')
+for source in repo.glob('*.kt'): shutil.copyfile(source,out/source.name)
 (out/'docs').mkdir(exist_ok=True)
 shutil.copyfile(repo/'docs/ig-guard-terms-of-service.md',out/'docs/ig-guard-terms-of-service.md')
-shutil.copyfile(repo/'FamilySecurity.kt',out/'FamilySecurity.kt')
-shutil.copyfile(repo/'LocalVault.kt',out/'LocalVault.kt')
-shutil.copyfile(repo/'FamilyEvidence.kt',out/'FamilyEvidence.kt')
-shutil.copyfile(repo/'ConversationCapture.kt',out/'ConversationCapture.kt')
-shutil.copyfile(repo/'FamilyRelay.kt',out/'FamilyRelay.kt')
-shutil.copyfile(repo/'CloudRelay.kt',out/'CloudRelay.kt')
 (out/'scripts').mkdir(exist_ok=True)
 shutil.copyfile(repo/'scripts/relay-config.py',out/'scripts/relay-config.py')
 (out/'relay').mkdir(exist_ok=True)
@@ -46,6 +41,7 @@ android { testOptions {
         ['https.proxyHost','https.proxyPort','http.proxyHost','http.proxyPort'].each { key ->
             if (System.getProperty(key)) systemProperty key, System.getProperty(key)
         }
+        systemProperty 'user.home', System.getenv('IG_GUARD_TEST_HOME')
         systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
         systemProperty 'igguard.protocol.vector', System.getenv('IG_GUARD_SOURCE') + '/relay/test/protocol-vector.json'
     }
@@ -64,4 +60,4 @@ if [[ -n "${HTTPS_PROXY:-}" ]]; then
     read -r proxy_host proxy_port < <(python3 -c 'import os,urllib.parse; p=urllib.parse.urlparse(os.environ["HTTPS_PROXY"]); print(p.hostname,p.port or 80)')
     proxy_args=("-Dhttps.proxyHost=$proxy_host" "-Dhttps.proxyPort=$proxy_port" "-Dhttp.proxyHost=$proxy_host" "-Dhttp.proxyPort=$proxy_port")
 fi
-exec "${GRADLE_BIN:-/workspace/.android-dev/gradle-8.7/bin/gradle}" --no-daemon --max-workers=2 -Pandroid.useAndroidX=true "${proxy_args[@]}" "${@:-testDebugUnitTest}"
+exec "${GRADLE_BIN:-/workspace/.android-dev/gradle-8.7/bin/gradle}" --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process -Pandroid.useAndroidX=true "${proxy_args[@]}" "${@:-testDebugUnitTest}"

@@ -188,13 +188,14 @@ class ConversationIngestionTest {
         }finally{c.destroy()}
     }
     private fun deliverGroupFixture(group:Boolean,text:String,author:String="friend",id:Int=30,label:String="friend"){
-        val b=android.os.Bundle().apply{putCharSequence("text",text);putCharSequence("sender",author);putLong("time",1000L+id)}
+        val stamp=System.currentTimeMillis()+id
+        val b=android.os.Bundle().apply{putCharSequence("text",text);putCharSequence("sender",author);putLong("time",stamp)}
         val n=Notification.Builder(ctx,"test").setSmallIcon(android.R.drawable.ic_lock_idle_lock).setContentTitle("[child] $label").build()
         n.extras.putCharSequence(Notification.EXTRA_CONVERSATION_TITLE,label)
         n.extras.putBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION,group)
         n.extras.putParcelableArray(Notification.EXTRA_MESSAGES,arrayOf(b))
         val c=Robolectric.buildService(IgNotificationListener::class.java).create()
-        try{c.get().onNotificationPosted(StatusBarNotification("com.instagram.android","com.instagram.android",id,null,0,0,0,n,android.os.UserHandle.getUserHandleForUid(0),1000L+id))}
+        try{c.get().onNotificationPosted(StatusBarNotification("com.instagram.android","com.instagram.android",id,null,0,0,0,n,android.os.UserHandle.getUserHandleForUid(0),stamp))}
         finally{c.destroy()}
     }
     private fun capturedRows():List<JSONObject> = FamilyEvidence(ctx).use{db->

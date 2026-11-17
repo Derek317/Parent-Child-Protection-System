@@ -52,7 +52,7 @@ class InteractionClarityTest {
         nav(a,"alerts");views(a).single{it.tag=="evidence_contact_friend"}.performClick();views(a)
     }
     @Test fun navigationRowsAnnounceButtonRoleAndOpenTheirAction(){
-        val c=Robolectric.buildActivity(MainActivity::class.java).create().start().visible();val a=c.get();nav(a,"settings")
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a,"settings")
         try {
             val row=views(a).single{it.isClickable && it.contentDescription?.toString()?.startsWith("連接與診斷。")==true}
             assertEquals("android.widget.Button",row.createAccessibilityNodeInfo().className.toString())
@@ -62,7 +62,7 @@ class InteractionClarityTest {
     }
     @Test fun roleCardsExposeTheirChoiceAndSelectionToAccessibility(){
         GuardEngine.setRole(ctx,"unconfigured")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create().start().visible();val a=c.get();nav(a,"role")
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a,"role")
         try {
             val choice=views(a).single{it.tag=="entry_parent"}
             assertTrue(choice.createAccessibilityNodeInfo().isCheckable)
@@ -73,7 +73,7 @@ class InteractionClarityTest {
     }
     @Test fun messageDetailsHaveAVisibleCueAndOpenUntruncatedEvidence(){
         val body="long message ".repeat(40)+"FINAL EVIDENCE"
-        val c=Robolectric.buildActivity(MainActivity::class.java).create().start().visible();val a=c.get()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         try {
             thread(a,body);val bubble=views(a).single{it.tag=="evidence_interaction-message"}
             assertTrue(all(bubble).filterIsInstance<TextView>().any{it.text.toString()=="查看完整記錄"})
@@ -84,7 +84,7 @@ class InteractionClarityTest {
     }
     @Test fun narrowLargeTextFiltersStayInAtMostTwoColumnsAndRemainOperable(){
         RuntimeEnvironment.setFontScale(1.5f)
-        val c=Robolectric.buildActivity(MainActivity::class.java).create().start().visible();val a=c.get()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         try {
             thread(a)
             val shell=MainActivity::class.java.getDeclaredField("screenShell").apply{isAccessible=true}.get(a) as View
@@ -100,7 +100,7 @@ class InteractionClarityTest {
         }finally{c.stop().destroy()}
     }
     @Test fun shorterThreadIntroductionKeepsOrderingLimitationsAvailable(){
-        val c=Robolectric.buildActivity(MainActivity::class.java).create().start().visible();val a=c.get()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         try {
             thread(a);button(a,"排序與擷取說明").performClick()
             val text=all(ShadowDialog.getLatestDialog().window!!.decorView).filterIsInstance<TextView>().joinToString(" "){it.text}
@@ -110,7 +110,7 @@ class InteractionClarityTest {
     }
     @Test fun appearanceButtonsExposeTheCurrentTheme(){
         GuardEngine.setBrightTheme(ctx,true)
-        val c=Robolectric.buildActivity(MainActivity::class.java).create().start().visible();val a=c.get();nav(a,"settings")
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a,"settings")
         try {
             assertTrue(button(a,"淺色模式").createAccessibilityNodeInfo().isSelected)
             button(a,"深色模式").performClick()

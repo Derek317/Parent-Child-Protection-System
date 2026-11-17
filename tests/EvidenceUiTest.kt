@@ -42,7 +42,7 @@ class EvidenceUiTest {
     private fun event(i:Int,sender:String="person",text:String="captured text $i",reason:String="stranger_message")=JSONObject().put("type","alert").put("event_id","event-$i").put("sender",sender).put("text",text).put("reason",reason).put("ts_ms",System.currentTimeMillis()+i)
     @Test fun contactListIsPagedAndSearchFindsOlderEvidence(){
         for(i in 0..65)GuardEngine.recordParentAlert(ctx,event(i,"person-$i",if(i==0)"oldneedle" else "ordinary"),"event-$i")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         assertEquals(30,views(a).count{it.tag?.toString()?.startsWith("evidence_contact_")==true})
         views(a).filterIsInstance<EditText>().single{it.tag=="evidence_search"}.setText("oldneedle")
         shadowOf(Looper.getMainLooper()).idleFor(400,TimeUnit.MILLISECONDS)
@@ -52,14 +52,14 @@ class EvidenceUiTest {
     }
     @Test fun legacyInboxMigratesWhenOpeningAlertsDirectly(){
         LocalVault.preferences(ctx).edit().putString("parent_alerts_json","[${event(1)}]").commit()
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();nav(c.get())
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();nav(c.get())
         assertTrue(views(c.get()).any{it.tag=="evidence_contact_person"})
         c.destroy()
     }
     @Test fun contactDetailShowsPreviewButSheetKeepsCompleteTextAndSavedFlag(){
         val full="很長的訊息🙂".repeat(200)
         GuardEngine.recordParentAlert(ctx,event(1,text=full),"event-1")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         views(a).single{it.tag=="evidence_contact_person"}.performClick()
         assertTrue(views(a).filterIsInstance<TextView>().none{it.text.toString()==full})
         (views(a).find{it.tag=="evidence_event-1"} ?: error("Missing event; tags="+views(a).mapNotNull{it.tag})).performClick()
@@ -71,7 +71,7 @@ class EvidenceUiTest {
     }
     @Test fun adviceIsShownOnceForNewKeywordAlertsAndCanBeReopenedFromDetails(){
         GuardEngine.recordParentAlert(ctx,event(1,reason="sexual_or_grooming_content"),"event-1")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         MainActivity::class.java.getDeclaredField("activityVisible").apply{isAccessible=true}.setBoolean(a,true)
         val method=MainActivity::class.java.getDeclaredMethod("maybeShowSafetyAdvice").apply{isAccessible=true}
         method.invoke(a)
@@ -83,11 +83,11 @@ class EvidenceUiTest {
     }
     @Test fun searchAndSelectedContactSurviveRecreation(){
         GuardEngine.recordParentAlert(ctx,event(1),"event-1")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         views(a).single{it.tag=="evidence_contact_person"}.performClick()
         views(a).filterIsInstance<EditText>().single{it.tag=="evidence_search"}.setText("captured")
         val saved=Bundle();c.saveInstanceState(saved);c.destroy()
-        val restored=Robolectric.buildActivity(MainActivity::class.java).create(saved)
+        val restored=Robolectric.buildActivity(MainActivity::class.java).setup(saved)
         nav(restored.get())
         assertEquals("captured",views(restored.get()).filterIsInstance<EditText>().single{it.tag=="evidence_search"}.text.toString())
         assertTrue("Restored tags: "+views(restored.get()).mapNotNull{it.tag},views(restored.get()).any{it.tag=="evidence_event-1"})
@@ -109,7 +109,7 @@ class EvidenceUiTest {
         GuardEngine.recordParentAlert(ctx,event(1),"event-1")
         val scope=GuardEngine.getChannelTopic(ctx)
         val intent=Intent("app.family.igguard.OPEN_EVIDENCE",Uri.parse("igguard://evidence/$scope/event-1"))
-        val c=Robolectric.buildActivity(MainActivity::class.java,intent).create()
+        val c=Robolectric.buildActivity(MainActivity::class.java,intent).setup()
         assertEquals("alerts",MainActivity::class.java.getDeclaredField("section").apply{isAccessible=true}.get(c.get()))
         c.destroy()
     }
@@ -117,10 +117,10 @@ class EvidenceUiTest {
         GuardEngine.recordParentAlert(ctx,event(1,reason="sexual_or_grooming_content"),"event-1")
         val scope=GuardEngine.getChannelTopic(ctx)
         val intent=Intent("app.family.igguard.OPEN_EVIDENCE",Uri.parse("igguard://evidence/$scope/event-1"))
-        val c=Robolectric.buildActivity(MainActivity::class.java,intent).create();val a=c.get()
+        val c=Robolectric.buildActivity(MainActivity::class.java,intent).setup();val a=c.get()
         MainActivity::class.java.getDeclaredMethod("openPendingEvidence").apply{isAccessible=true}.invoke(a)
         val state=Bundle();c.saveInstanceState(state);val consumed=a.intent;c.destroy()
-        val restored=Robolectric.buildActivity(MainActivity::class.java,consumed).create(state)
+        val restored=Robolectric.buildActivity(MainActivity::class.java,consumed).setup(state)
         assertNull(MainActivity::class.java.getDeclaredField("pendingEvidenceId").apply{isAccessible=true}.get(restored.get()))
         restored.destroy()
     }
@@ -129,7 +129,7 @@ class EvidenceUiTest {
         val oldScope=GuardEngine.getChannelTopic(ctx)
         GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString());GuardEngine.setRole(ctx,"parent")
         val intent=Intent("app.family.igguard.OPEN_EVIDENCE",Uri.parse("igguard://evidence/$oldScope/event-1"))
-        val c=Robolectric.buildActivity(MainActivity::class.java,intent).create();nav(c.get())
+        val c=Robolectric.buildActivity(MainActivity::class.java,intent).setup();nav(c.get())
         assertFalse(views(c.get()).any{it.tag=="evidence_event-1"})
         c.destroy()
     }

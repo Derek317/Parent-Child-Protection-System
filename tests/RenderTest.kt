@@ -22,7 +22,7 @@ class RenderTest {
         val ctx=RuntimeEnvironment.getApplication()
         ctx.getSharedPreferences("ig_guard_consent", Context.MODE_PRIVATE).edit().clear().commit()
         LocalVault.preferences(ctx).edit().clear().commit()
-        val controller=Robolectric.buildActivity(MainActivity::class.java).create().start().visible()
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
         val page=controller.get().findViewById<View>(android.R.id.content)
         val width=390;val height=844
         page.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY))
@@ -54,7 +54,7 @@ class RenderTest {
         render("unlock","native-child-unlock",390,844)
     }
     private fun render(section: String, name: String, width: Int, height: Int) {
-        val c=Robolectric.buildActivity(MainActivity::class.java).create().start().visible();val a=c.get()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         MainActivity::class.java.getDeclaredMethod("navigateTo",String::class.java).apply{isAccessible=true}.invoke(a,section)
         val shell=MainActivity::class.java.getDeclaredField("screenShell").apply{isAccessible=true}.get(a) as View
         shell.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY));shell.layout(0,0,width,height)

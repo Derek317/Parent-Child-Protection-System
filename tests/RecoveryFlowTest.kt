@@ -37,7 +37,7 @@ class RecoveryFlowTest {
     private fun inviteIntent()=Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?token=01234567-89ab-cdef-0123-456789abcdef&pw="+FamilySecurity.encode("ParentPassword928!")))
     @Test fun externalInviteRequiresExplicitAcceptanceAndIsConsumed() {
         GuardEngine.setRole(ctx,"parent")
-        val c=Robolectric.buildActivity(MainActivity::class.java,inviteIntent()).create()
+        val c=Robolectric.buildActivity(MainActivity::class.java,inviteIntent()).setup()
         val a=c.get();assertEquals("parent",GuardEngine.getRole(ctx))
         assertNull(a.intent.data)
         val d=ShadowDialog.getLatestDialog()
@@ -53,7 +53,7 @@ class RecoveryFlowTest {
         GuardEngine.setRole(ctx,"unconfigured")
         GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString())
         val previous=GuardEngine.getOrCreateFamilyToken(ctx)
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         MainActivity::class.java.getDeclaredMethod("navigateTo",String::class.java).apply{isAccessible=true}.invoke(a,"child_setup")
         all(a.window.decorView).filterIsInstance<android.widget.EditText>().first().setText(text)
         all(a.window.decorView).filterIsInstance<Button>().first{it.text.toString()=="連結家庭"}.performClick()
@@ -68,7 +68,7 @@ class RecoveryFlowTest {
     @Test fun unrelatedExternalUriCannotReplaceFamily() {
         GuardEngine.setRole(ctx,"parent");val token=GuardEngine.getOrCreateFamilyToken(ctx)
         val bad=inviteIntent().setData(Uri.parse(inviteIntent().dataString!!.replace("igguard://pair","https://other.invalid/pair")))
-        val c=Robolectric.buildActivity(MainActivity::class.java,bad).create()
+        val c=Robolectric.buildActivity(MainActivity::class.java,bad).setup()
         assertEquals("parent",GuardEngine.getRole(ctx));assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
         c.destroy()
     }

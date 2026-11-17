@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.9-beta.4 — 18 November 2026 (Hong Kong) — source draft
+
+- Add native Android biometric/device-credential gating for parent UI and sensitive actions, relock on background, secure-window flags and generic private notifications. Parent background receipt, archiving and signed acknowledgments continue while the UI is locked. Explicit app copies are marked sensitive and get best-effort cleanup after 60 seconds if still current.
+- Move production parent signing to non-exportable Android Keystore identities. Verified legacy import preserves the public key already trusted by the child and removes the encoded private-key preference afterward; unavailable keys do not silently replace established trust. Add separate fresh, locally verified compromise re-pairing with authenticated old-room purge or an explicitly confirmed offline path without purge assurance; routine old-channel rotation remains separate.
+- Add persistent child capture/transfer withdrawal with hold/discard choices and separate outgoing/trusted-context choices. Explicit resume discards old pending content and restarts incoming alerts; expansion needs renewed child acknowledgment. Saving scope choices discards old pending content, and widening scope clears acknowledgment. Composer drafts remain excluded.
+- Assign new archives a default 30-day expiry and pending outboxes/incomplete assemblies 72-hour deadlines. Add an explicit one-time 90-day preservation action in record details and preview/confirmation before legacy archives adopt retention. Ordinary saving does not extend retention; cleanup runs during app activity rather than promising instant deletion while stopped.
+- Bound relay-source packets to 72 hours, registrations to 90 days without qualifying activity, and retirement markers to a further 90 days after authenticated retirement/purge or idle retirement. Provider logs, regions and backups remain unverified; this update does not deploy those source changes.
+- Update bundled bilingual Terms, privacy, deletion and storage guidance. Preserve the existing feature set subject to deliberate security gates. No new model runs in the stable app; synthetic-data model experiments remain separate. Packaging/revision synchronization and final implementation verification remain outstanding.
+
+See [draft beta notes and integration limits](docs/releases/4.9-beta.4.md). Earlier entries describe their historical versions.
+
 ## 4.9-beta.3 — 16 November 2026 (Hong Kong)
 
 - Require first-launch acceptance on each phone before pairing, capture or relay transfer. Display the exact bilingual Terms published in this repository, with three unticked acknowledgments of Terms, encrypted message transfer to the verified paired parent and the family-only purpose.

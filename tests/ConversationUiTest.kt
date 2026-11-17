@@ -30,7 +30,9 @@ import java.util.UUID
 class ConversationUiTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     private var original:ProxySelector?=null
+    private var fixtureTime=0L
     @Before fun reset(){
+        fixtureTime=System.currentTimeMillis()-10_000L
         ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit()
         GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"parent")
         original=ProxySelector.getDefault();ProxySelector.setDefault(object:ProxySelector(){
@@ -47,12 +49,12 @@ class ConversationUiTest {
     }
     private fun nav(a:MainActivity,to:String="alerts")=MainActivity::class.java.getDeclaredMethod("navigateTo",String::class.java).apply{isAccessible=true}.invoke(a,to)
     private fun add(i:Int,partner:String="friend",direction:String="incoming",body:String="message $i") : JSONObject {
-        val r=ConversationCapture.record(CapturedText(partner,body,direction,if(direction=="outgoing")"child" else partner,"child",messageTime=1000L+i),2000L+i,true,false).put("event_id","ui-$i")
+        val r=ConversationCapture.record(CapturedText(partner,body,direction,if(direction=="outgoing")"child" else partner,"child",messageTime=fixtureTime+i),fixtureTime+1000L+i,true,false).put("event_id","ui-$i")
         GuardEngine.recordParentAlert(ctx,r,"ui-$i");return r
     }
     @Test fun dmStyleListGroupsByPartnerAndThreadShowsBothAuthorsInTimeOrder(){
         add(3,direction="outgoing");add(1);add(2);add(4,"another")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         val contactTags=views(a).mapNotNull{it.tag?.toString()}.filter{it.startsWith("evidence_contact_")}
         assertEquals(listOf("evidence_contact_another","evidence_contact_friend"),contactTags)
         views(a).single{it.tag=="evidence_contact_friend"}.performClick()
@@ -63,7 +65,7 @@ class ConversationUiTest {
     }
     @Test fun reviewQueueHidesOrdinaryContextButOpeningThreadRetainsIt(){
         add(1);add(2,body="send nudes")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         views(a).filterIsInstance<Button>().single{it.text.toString()=="需要跟進"}.performClick()
         views(a).single{it.tag=="evidence_contact_friend"}.performClick()
         assertTrue(views(a).any{it.tag=="evidence_ui-1"});assertTrue(views(a).any{it.tag=="evidence_ui-2"})
@@ -77,7 +79,7 @@ class ConversationUiTest {
         GuardEngine.setRole(ctx,"child")
         val prefs=LocalVault.preferences(ctx)
         prefs.edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey).putString("capture_policy_id",UUID.randomUUID().toString()).commit()
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a,"permissions")
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a,"permissions")
         views(a).single{it.tag=="full_capture_setup"}.performClick()
         val d=ShadowDialog.getLatestDialog();val text=all(d.window!!.decorView).filterIsInstance<TextView>().joinToString(" "){it.text}
         assertTrue(text.contains("傳出"));assertTrue(text.contains("信任"));assertFalse(GuardEngine.fullCaptureEnabled(ctx))
@@ -86,7 +88,7 @@ class ConversationUiTest {
     }
     @Test fun childWithoutParentPolicySeesIncomingOnlyModeAndExactNextSteps(){
         GuardEngine.setRole(ctx,"child")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a,"permissions")
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a,"permissions")
         try {
             val page=views(a).filterIsInstance<TextView>().joinToString(" "){it.text}
             assertTrue(page.contains("只擷取傳入警報"))
@@ -98,7 +100,7 @@ class ConversationUiTest {
     }
     @Test fun newArrivalsDoNotShiftOlderConversationPagesOrRepeatBoundaryMessages(){
         (1..65).forEach{add(it)}
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         try {
             fun rows()=views(a).mapNotNull{it.tag?.toString()}.filter{it.startsWith("evidence_ui-")}
             fun older()=views(a).filterIsInstance<Button>().single{it.text.toString()=="較早訊息"}.performClick()
@@ -113,7 +115,7 @@ class ConversationUiTest {
     }
     @Test fun burstRefreshesCoalesceInsteadOfStartingAQueryPerMessage(){
         add(1)
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a);views(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a);views(a)
         MainActivity::class.java.getDeclaredField("activityVisible").apply{isAccessible=true}.setBoolean(a,true)
         a.currentFocus?.clearFocus()
         val root=MainActivity::class.java.getDeclaredField("rootContainer").apply{isAccessible=true}
@@ -129,11 +131,11 @@ class ConversationUiTest {
     }
     @Test fun olderThreadPagesKeepTheirBoundariesAfterActivityRecreation(){
         (1..65).forEach{add(it)}
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         views(a).single{it.tag=="evidence_contact_friend"}.performClick()
         repeat(2){views(a).filterIsInstance<Button>().single{it.text.toString()=="較早訊息"}.performClick();views(a)}
         val saved=Bundle();c.saveInstanceState(saved);c.destroy();add(66)
-        val restored=Robolectric.buildActivity(MainActivity::class.java).create(saved);val b=restored.get();nav(b)
+        val restored=Robolectric.buildActivity(MainActivity::class.java).setup(saved);val b=restored.get();nav(b)
         try {
             fun rows()=views(b).mapNotNull{it.tag?.toString()}.filter{it.startsWith("evidence_ui-")}
             assertEquals((1..5).map{"evidence_ui-$it"},rows())
@@ -145,15 +147,15 @@ class ConversationUiTest {
     }
     @Test fun screenOrderBeforeTheFirstObservedMessageSurvivesRecreation(){
         for(i in 0..64) {
-            val r=ConversationCapture.record(CapturedText("friend","screen message $i","incoming"),2000,true,false)
-                .put("event_id","screen-$i").put("screen_anchor_ms",1000).put("screen_order",i-40)
+            val r=ConversationCapture.record(CapturedText("friend","screen message $i","incoming"),fixtureTime+1000L,true,false)
+                .put("event_id","screen-$i").put("screen_anchor_ms",fixtureTime).put("screen_order",i-40)
             GuardEngine.recordParentAlert(ctx,r,"screen-$i")
         }
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         views(a).single{it.tag=="evidence_contact_friend"}.performClick()
         views(a).filterIsInstance<Button>().single{it.text.toString()=="較早訊息"}.performClick();views(a)
         val saved=Bundle();c.saveInstanceState(saved);c.destroy()
-        val restored=Robolectric.buildActivity(MainActivity::class.java).create(saved);val b=restored.get();nav(b)
+        val restored=Robolectric.buildActivity(MainActivity::class.java).setup(saved);val b=restored.get();nav(b)
         try {
             val ids=views(b).mapNotNull{it.tag?.toString()}.filter{it.startsWith("evidence_screen-")}
             assertEquals((5..34).map{"evidence_screen-$it"},ids)
@@ -161,7 +163,7 @@ class ConversationUiTest {
     }
     @Test fun displayNameCannotBeSilentlyTruncatedIntoATrustedUsername(){
         add(1,partner="Alex Chan",body="send nudes")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         try {
             views(a).single{it.tag=="evidence_contact_alex chan"}.performClick()
             views(a).single{it.tag=="evidence_ui-1"}.performClick()
@@ -172,7 +174,7 @@ class ConversationUiTest {
     }
     @Test fun canonicalIncomingHandleRetainsTheExplicitTrustAction(){
         add(1,partner="actual_handle",body="send nudes")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get();nav(a)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();nav(a)
         try {
             views(a).single{it.tag=="evidence_contact_actual_handle"}.performClick()
             views(a).single{it.tag=="evidence_ui-1"}.performClick()

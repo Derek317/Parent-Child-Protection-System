@@ -43,7 +43,6 @@ class ConversationProtocolTest {
     @Test fun realQueuedPolicyAndChildAcknowledgmentCompleteTheTwoWayHandshake(){
         GuardEngine.setRole(ctx,"parent")
         val publicKey=GuardEngine.relayPublicKey(ctx)
-        val privateKey=prefs.getString("parent_signing_private","")!!
         GuardEngine.requestFullCapture(ctx)
         val id=GuardEngine.pendingCapturePolicy(ctx);val scope=GuardEngine.getChannelTopic(ctx)
         val token=GuardEngine.getOrCreateFamilyToken(ctx)
@@ -61,7 +60,7 @@ class ConversationProtocolTest {
         val acks=FamilyEvidence(ctx).use{it.due(scope,Long.MAX_VALUE,"child")}
         assertTrue(acks.isNotEmpty())
         GuardEngine.setRole(ctx,"parent")
-        prefs.edit().putString("parent_signing_public",publicKey).putString("parent_signing_private",privateKey).commit()
+        prefs.edit().putString("parent_signing_public",publicKey).commit()
         deliver(acks,"parent")
         assertTrue(GuardEngine.parentFullCaptureConfirmed(ctx));assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
     }

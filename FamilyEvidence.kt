@@ -20,10 +20,16 @@ data class EvidenceContact(val sender: String, val count: Int, val important: In
 data class ConversationSummary(val key:String,val label:String,val account:String,val count:Int,val unreviewed:Int,val latest:Long,val preview:String,val categories:List<String> = emptyList(),val kind:String="unknown",val unidentified:Boolean=false)
 data class PendingEvidence(val id: String, val wire: String, val waitForReceipt: Boolean, val kind:String="urgent")
 data class CaptureWindow(val tokens:List<String> = emptyList(),val anchor:Long=0,val start:Long=0)
+data class RetentionPreview(val retentionDays:Int,val legacyCount:Int,val legacyExpiredCount:Int,
+    val expiredCount:Int,val pendingExpiredCount:Int,val preservedCount:Int)
 
 /** Content is encrypted; scopes, opaque IDs, timestamps, reasons and workflow flags remain clear. */
-class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 5), java.io.Closeable {
-    companion object { private val openLock=Any() }
+class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 6), java.io.Closeable {
+    companion object {
+        private val openLock=Any()
+        private const val DAY=86_400_000L
+        private const val PENDING_TTL=3*DAY
+    }
     private val app=ctx.applicationContext
     private val privateColumns=listOf("sender","conversation_key","conversation_label","account_label","body","payload")
     // Fetch the duplicate body separately so encrypted 1 MiB events still fit a CursorWindow.
@@ -86,6 +92,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         upgradeScreenOrder(db)
         upgradeRelayOutbox(db)
         encryptedSchema(db)
+        retentionSchema(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if(oldVersion<2)upgradeConversationSchema(db)
@@ -106,6 +113,71 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             }
             db.execSQL("INSERT INTO archive_maintenance VALUES(1)")
         }
+        if(oldVersion<6)retentionSchema(db)
+    }
+    private fun retentionSchema(db:SQLiteDatabase) {
+        // NULL marks existing archives for preview and explicit adoption, never first-open erasure.
+        db.execSQL("ALTER TABLE evidence ADD COLUMN retention_base INTEGER")
+        db.execSQL("ALTER TABLE evidence ADD COLUMN expires INTEGER")
+        db.execSQL("ALTER TABLE evidence ADD COLUMN preserved_until INTEGER")
+        db.execSQL("ALTER TABLE fragments ADD COLUMN expires INTEGER")
+        db.execSQL("CREATE TABLE retention_settings(scope TEXT PRIMARY KEY,days INTEGER NOT NULL)")
+        // Content-free event deadlines survive acknowledgments, retries and scope rotation.
+        db.execSQL("CREATE TABLE outbox_lifetimes(scope TEXT NOT NULL,id TEXT NOT NULL,expires INTEGER NOT NULL,blocked INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id))")
+        val expiry=System.currentTimeMillis()+PENDING_TTL
+        db.execSQL("INSERT INTO outbox_lifetimes(scope,id,expires) SELECT scope,event_id,? FROM outbox GROUP BY scope,event_id",arrayOf(expiry))
+        db.execSQL("UPDATE fragments SET expires=?",arrayOf(expiry))
+        db.execSQL("CREATE INDEX evidence_expiry ON evidence(scope,expires)")
+    }
+    private fun retentionDays(scope:String):Int = readableDatabase.rawQuery("SELECT days FROM retention_settings WHERE scope=?",arrayOf(scope)).use{if(it.moveToFirst())it.getInt(0) else 30}
+    fun retentionPreview(scope:String,now:Long=System.currentTimeMillis()):RetentionPreview {
+        val days=retentionDays(scope)
+        return readableDatabase.rawQuery("SELECT COUNT(CASE WHEN expires IS NULL THEN 1 END),COUNT(CASE WHEN expires IS NULL AND stamp<=? THEN 1 END),COUNT(CASE WHEN expires<=? THEN 1 END),COUNT(CASE WHEN preserved_until>? THEN 1 END) FROM evidence WHERE scope=?",
+            arrayOf((now-days*DAY).toString(),now.toString(),now.toString(),scope)).use { c ->
+            c.moveToFirst()
+            val pending=readableDatabase.rawQuery("SELECT COUNT(*) FROM outbox o JOIN outbox_lifetimes l ON l.scope=o.scope AND l.id=o.event_id WHERE o.scope=? AND l.expires<=?",arrayOf(scope,now.toString())).use{it.moveToFirst();it.getInt(0)}
+            RetentionPreview(days,c.getInt(0),c.getInt(1),c.getInt(2),pending,c.getInt(3))
+        }
+    }
+    fun applyRetentionToLegacy(scope:String,now:Long=System.currentTimeMillis()):Int {
+        val db=writableDatabase
+        db.beginTransaction()
+        try {
+            val count=retentionPreview(scope,now).legacyCount
+            db.execSQL("UPDATE evidence SET retention_base=MIN(stamp,?),expires=MIN(stamp,?)+? WHERE scope=? AND expires IS NULL",arrayOf(now,now,retentionDays(scope)*DAY,scope))
+            db.setTransactionSuccessful();return count
+        }finally{db.endTransaction()}
+    }
+    fun setRetentionDays(scope:String,days:Int) {
+        require(days in 1..30)
+        val db=writableDatabase;db.beginTransaction()
+        try {
+            db.execSQL("INSERT OR REPLACE INTO retention_settings(scope,days) VALUES(?,?)",arrayOf(scope,days))
+            db.execSQL("UPDATE evidence SET expires=MIN(expires,retention_base+?) WHERE scope=? AND preserved_until IS NULL",arrayOf(days*DAY,scope))
+            db.setTransactionSuccessful()
+        }finally{db.endTransaction()}
+    }
+    fun preserveForReview(scope:String,id:String,now:Long=System.currentTimeMillis()):Boolean {
+        val db=writableDatabase
+        return db.update("evidence",ContentValues().apply{put("preserved_until",now+90*DAY);put("expires",now+90*DAY)},
+            "scope=? AND id=? AND preserved_until IS NULL AND (expires IS NULL OR expires>?)",arrayOf(scope,id,now.toString()))>0
+    }
+    fun pruneExpired(scope:String,now:Long=System.currentTimeMillis()):Int {
+        val db=writableDatabase;db.beginTransaction()
+        try {
+            db.execSQL("INSERT OR IGNORE INTO seen SELECT scope,id FROM evidence WHERE scope=? AND expires<=?",arrayOf(scope,now))
+            db.execSQL("INSERT OR IGNORE INTO seen SELECT scope,id FROM fragments WHERE scope=? AND expires<=?",arrayOf(scope,now))
+            db.execSQL("INSERT OR IGNORE INTO capture_seen SELECT scope,id FROM outbox_lifetimes WHERE scope=? AND expires<=?",arrayOf(scope,now))
+            db.execSQL("INSERT OR IGNORE INTO seen SELECT l.scope,l.id FROM outbox_lifetimes l WHERE l.scope=? AND l.expires<=? AND NOT EXISTS(SELECT 1 FROM evidence e WHERE e.scope=l.scope AND e.id=l.id)",arrayOf(scope,now))
+            db.execSQL("UPDATE outbox_lifetimes SET expires=MIN(expires,?) WHERE scope=? AND id IN (SELECT id FROM evidence WHERE scope=? AND expires<=? UNION SELECT id FROM fragments WHERE scope=? AND expires<=?)",arrayOf(now,scope,scope,now,scope,now))
+            db.execSQL("UPDATE outbox_lifetimes SET blocked=1 WHERE scope=? AND expires<=?",arrayOf(scope,now))
+            val evidence=db.delete("evidence","scope=? AND expires<=?",arrayOf(scope,now.toString()))
+            val fragments=db.delete("fragments","scope=? AND (expires<=? OR id IN (SELECT id FROM seen WHERE scope=? AND id NOT IN (SELECT id FROM evidence WHERE scope=?)))",arrayOf(scope,now.toString(),scope,scope))
+            val outbox=db.delete("outbox","scope=? AND event_id IN (SELECT id FROM outbox_lifetimes WHERE scope=? AND expires<=?)",arrayOf(scope,scope,now.toString()))
+            val windows=db.delete("capture_windows",if(evidence+fragments+outbox>0)"scope=?" else "scope=? AND updated<=?",
+                if(evidence+fragments+outbox>0)arrayOf(scope) else arrayOf(scope,(now-PENDING_TTL).toString()))
+            db.setTransactionSuccessful();return evidence+fragments+outbox+windows
+        }finally{db.endTransaction()}
     }
     private fun transformRows(db:SQLiteDatabase,table:String,scope:String?=null,transform:(Cursor)->ContentValues) {
         var after=Long.MIN_VALUE
@@ -194,6 +266,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 put("sort_stamp",if(captured && alert.has("screen_anchor_ms"))alert.getLong("screen_anchor_ms") else getAsLong("stamp"))
                 put("sort_order",if(captured && alert.has("screen_order"))alert.getLong("screen_order") else getAsLong("capture_order"))
                 put("body",alert.optString("text"));put("payload",payload.toString());put("legacy",if(legacy)1 else 0);put("help_seen",if(legacy)1 else 0)
+                if(!legacy) {
+                    val base=minOf(getAsLong("stamp"),System.currentTimeMillis())
+                    put("retention_base",base);put("expires",base+retentionDays(scope)*DAY)
+                }
             }
             db.insertOrThrow("evidence",null,protect(scope,id,row))
             db.delete("fragments","scope=? AND id=?",arrayOf(scope,id))
@@ -325,26 +401,50 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         val db=writableDatabase;db.beginTransaction()
         try {
             db.execSQL("INSERT OR IGNORE INTO seen(scope,id) SELECT DISTINCT scope,id FROM fragments WHERE scope=?",arrayOf(scope))
-            db.delete("evidence","scope=?",arrayOf(scope));db.delete("fragments","scope=?",arrayOf(scope));db.setTransactionSuccessful()
+            db.execSQL("INSERT OR IGNORE INTO seen(scope,id) SELECT scope,id FROM evidence WHERE scope=?",arrayOf(scope))
+            discardPending(scope,"child","data");discardPending(scope,"child","urgent")
+            db.delete("evidence","scope=?",arrayOf(scope));db.delete("fragments","scope=?",arrayOf(scope))
+            db.delete("capture_windows","scope=?",arrayOf(scope));db.setTransactionSuccessful()
         }
         finally { db.endTransaction() }
     }
-    fun deleteMessage(scope: String,id: String) { writableDatabase.delete("evidence","scope=? AND id=?",arrayOf(scope,id)) }
+    fun deleteMessage(scope: String,id: String) {
+        val db=writableDatabase;db.beginTransaction()
+        try {
+            db.execSQL("INSERT OR IGNORE INTO seen(scope,id) VALUES(?,?)",arrayOf(scope,id))
+            db.execSQL("INSERT OR IGNORE INTO capture_seen(scope,id) VALUES(?,?)",arrayOf(scope,id))
+            db.execSQL("UPDATE outbox_lifetimes SET blocked=1 WHERE scope=? AND id=?",arrayOf(scope,id))
+            for(table in listOf("evidence","fragments"))db.delete(table,"scope=? AND id=?",arrayOf(scope,id))
+            db.delete("outbox","scope=? AND event_id=?",arrayOf(scope,id))
+            db.delete("capture_windows","scope=?",arrayOf(scope));db.setTransactionSuccessful()
+        }finally{db.endTransaction()}
+    }
     fun otherArchiveCount(scope: String): Int = readableDatabase.rawQuery(
         "SELECT (SELECT COUNT(*) FROM evidence WHERE scope<>?)+(SELECT COUNT(DISTINCT scope||':'||id) FROM fragments WHERE scope<>?)",arrayOf(scope,scope)).use{it.moveToFirst();it.getInt(0)}
     fun deleteOtherArchives(scope: String) {
         val db=writableDatabase;db.beginTransaction()
         try {
-            db.execSQL("INSERT OR IGNORE INTO seen(scope,id) SELECT DISTINCT scope,id FROM fragments WHERE scope<>?",arrayOf(scope))
-            for(table in listOf("evidence","fragments"))db.delete(table,"scope<>?",arrayOf(scope));db.setTransactionSuccessful()
+            val scopes=db.rawQuery("SELECT scope FROM evidence WHERE scope<>? UNION SELECT scope FROM fragments WHERE scope<>? UNION SELECT scope FROM capture_windows WHERE scope<>? UNION SELECT scope FROM outbox WHERE scope<>? AND role='child' AND relay_kind IN ('data','urgent')",arrayOf(scope,scope,scope,scope)).use{c->buildList{while(c.moveToNext())add(c.getString(0))}}
+            for(old in scopes)deleteArchive(old)
+            db.setTransactionSuccessful()
         }
         finally { db.endTransaction() }
     }
     fun enqueue(scope: String,id: String,wire: String,role:String="child",kind:String="urgent") {
         require(role in setOf("parent","child") && kind in setOf("data","urgent","receipt","control"))
         val db=writableDatabase
+        db.beginTransaction()
+        try {
+        val event=id.substringBeforeLast(':',id)
+        if(kind in setOf("data","urgent") && hasSeen(scope,event) && find(scope,event)==null){db.setTransactionSuccessful();return}
+        val now=System.currentTimeMillis()
+        db.execSQL("INSERT OR IGNORE INTO outbox_lifetimes(scope,id,expires) VALUES(?,?,?)",arrayOf(scope,event,now+PENDING_TTL))
+        val expired=db.rawQuery("SELECT 1 FROM outbox_lifetimes WHERE scope=? AND id=? AND (expires<=? OR blocked=1)",arrayOf(scope,event,now.toString())).use{it.moveToFirst()}
+        if(expired){db.setTransactionSuccessful();return}
         val retry=db.rawQuery("SELECT retry_at,attempts FROM outbox WHERE scope=? AND role=? AND relay_kind=? AND relay_version=1 AND accepted=0 AND attempts>0 ORDER BY retry_at LIMIT 1",arrayOf(scope,role,kind)).use{if(it.moveToFirst())it.getLong(0) to it.getInt(1) else 0L to 0}
         db.insertWithOnConflict("outbox",null,ContentValues().apply{put("scope",scope);put("id",id);put("event_id",id.substringBeforeLast(':',id));put("wire",wire);put("retry_at",retry.first);put("attempts",retry.second);put("role",role);put("relay_kind",kind);put("relay_version",1)},SQLiteDatabase.CONFLICT_IGNORE)
+        db.setTransactionSuccessful()
+        }finally{db.endTransaction()}
     }
     fun enqueueBatch(scope: String,frames: List<Pair<String,String>>,waitForReceipt: Boolean = false,role:String="child",kind:String="urgent") {
         require(frames.isNotEmpty() && frames.all { it.first.isNotBlank() && it.second.toByteArray(Charsets.UTF_8).size < 4096 })
@@ -361,6 +461,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     fun enqueueCaptured(scope:String,id:String,frames:List<Pair<String,String>>,waitForReceipt:Boolean,priority:Int):Boolean {
         val db=writableDatabase;db.beginTransaction()
         try {
+            if(hasSeen(scope,id) && find(scope,id)==null){db.setTransactionSuccessful();return false}
             val inserted=db.insertWithOnConflict("capture_seen",null,ContentValues().apply{put("scope",scope);put("id",id)},SQLiteDatabase.CONFLICT_IGNORE)
             if(inserted == -1L){db.setTransactionSuccessful();return false}
             enqueueBatch(scope,frames,waitForReceipt,kind=if(priority>0)"urgent" else "data")
@@ -388,12 +489,14 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     fun hasQueuedEvent(scope:String,id:String):Boolean = readableDatabase.rawQuery(
         "SELECT 1 FROM outbox WHERE scope=? AND event_id=?",arrayOf(scope,id)).use{it.moveToFirst()}
     fun due(scope: String,now: Long,role:String="child"): List<PendingEvidence> {
-        fun rows(condition:String,limit:Int)=readableDatabase.rawQuery("SELECT id,wire,receipt,relay_kind FROM outbox WHERE scope=? AND role=? AND retry_at<=? AND $condition ORDER BY accepted ASC,priority DESC,rowid LIMIT ?",arrayOf(scope,role,now.toString(),limit.toString())).use { c -> buildList { while(c.moveToNext())add(PendingEvidence(c.getString(0),c.getString(1),c.getInt(2)==1,c.getString(3))) } }
+        // now is the caller's retry horizon (including Long.MAX_VALUE in archive/export callers).
+        val expiryNow=System.currentTimeMillis()
+        fun rows(condition:String,limit:Int)=readableDatabase.rawQuery("SELECT id,wire,receipt,relay_kind FROM outbox WHERE scope=? AND role=? AND retry_at<=? AND EXISTS(SELECT 1 FROM outbox_lifetimes l WHERE l.scope=outbox.scope AND l.id=outbox.event_id AND l.expires>? AND l.blocked=0) AND $condition ORDER BY accepted ASC,priority DESC,rowid LIMIT ?",arrayOf(scope,role,now.toString(),expiryNow.toString(),limit.toString())).use { c -> buildList { while(c.moveToNext())add(PendingEvidence(c.getString(0),c.getString(1),c.getInt(2)==1,c.getString(3))) } }
         val high=rows("priority>0",24);val context=rows("priority=0",32-high.size)
         return if(context.isEmpty())rows("priority>0",32) else high+context
     }
     fun pendingCount(scope: String): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM outbox WHERE scope=?",arrayOf(scope)).use{it.moveToFirst();it.getInt(0)}
-    fun pendingEvent(scope:String,id:String):Boolean = readableDatabase.rawQuery("SELECT 1 FROM outbox WHERE scope=? AND id=?",arrayOf(scope,id)).use{it.moveToFirst()}
+    fun pendingEvent(scope:String,id:String):Boolean = readableDatabase.rawQuery("SELECT 1 FROM outbox WHERE scope=? AND id=? AND EXISTS(SELECT 1 FROM outbox_lifetimes l WHERE l.scope=outbox.scope AND l.id=outbox.event_id AND l.expires>? AND l.blocked=0)",arrayOf(scope,id,System.currentTimeMillis().toString())).use{it.moveToFirst()}
     fun controlConsumed(scope:String,id:String) {
         val db=writableDatabase;db.beginTransaction()
         try{db.execSQL("INSERT OR IGNORE INTO seen(scope,id) VALUES(?,?)",arrayOf(scope,id));db.delete("fragments","scope=? AND id=?",arrayOf(scope,id));db.setTransactionSuccessful()}
@@ -412,11 +515,28 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         writableDatabase.execSQL("UPDATE outbox SET accepted=1,retry_at=?+MIN(3600000,30000*(1 << MIN(attempts,7))),attempts=attempts+1 WHERE scope=? AND id=?",arrayOf(now,scope,id))
     }
     fun acknowledgeEvent(scope: String,id: String) { writableDatabase.delete("outbox","scope=? AND event_id=?",arrayOf(scope,id)) }
-    fun eventDue(scope: String,id: String,now: Long): Boolean = readableDatabase.rawQuery("SELECT 1 FROM outbox WHERE scope=? AND event_id=? AND accepted=0 AND retry_at<=? LIMIT 1",arrayOf(scope,id,now.toString())).use{it.moveToFirst()}
+    fun eventDue(scope: String,id: String,now: Long): Boolean = readableDatabase.rawQuery("SELECT 1 FROM outbox WHERE scope=? AND event_id=? AND accepted=0 AND retry_at<=? AND EXISTS(SELECT 1 FROM outbox_lifetimes l WHERE l.scope=outbox.scope AND l.id=outbox.event_id AND l.expires>? AND l.blocked=0) LIMIT 1",arrayOf(scope,id,now.toString(),System.currentTimeMillis().toString())).use{it.moveToFirst()}
     fun failed(scope: String,id: String,now: Long,role:String="child",kindOnly:String?=null) { writableDatabase.execSQL("UPDATE outbox SET retry_at=?+MIN(900000,30000*(1 << MIN(attempts,5))),attempts=attempts+1 WHERE scope=? AND role=? AND retry_at<=? AND (? IS NULL OR relay_kind=?) AND EXISTS(SELECT 1 FROM outbox WHERE scope=? AND id=?)",arrayOf(now,scope,role,now,kindOnly,kindOnly,scope,id)) }
     // A manual first attempt must never cancel an issued backoff or a parent-receipt wait.
     fun retryNow(scope: String) { writableDatabase.execSQL("UPDATE outbox SET retry_at=0 WHERE scope=? AND accepted=0 AND attempts=0",arrayOf(scope)) }
-    fun discardPending(scope: String) { writableDatabase.delete("outbox","scope=?",arrayOf(scope)) }
+    fun discardPending(scope:String) { discardPendingRows(scope,null,null) }
+    fun discardPending(scope:String,role:String) { discardPendingRows(scope,role,null) }
+    fun discardPending(scope:String,role:String,kind:String) { discardPendingRows(scope,role,kind) }
+    private fun discardPendingRows(scope:String,role:String?,kind:String?) {
+        require(role==null || role in setOf("parent","child"))
+        require(kind==null || kind in setOf("data","urgent","receipt","control"))
+        val db=writableDatabase;db.beginTransaction()
+        try {
+            val where="scope=?"+(if(role==null)"" else " AND role=?")+(if(kind==null)"" else " AND relay_kind=?")
+            val args=(listOf(scope)+listOfNotNull(role,kind)).toTypedArray()
+            db.execSQL("INSERT OR IGNORE INTO capture_seen(scope,id) SELECT scope,event_id FROM outbox WHERE $where",args)
+            db.execSQL("INSERT OR IGNORE INTO seen(scope,id) SELECT scope,event_id FROM outbox WHERE $where AND relay_kind IN ('data','urgent')",args)
+            db.execSQL("UPDATE outbox_lifetimes SET blocked=1 WHERE scope=? AND id IN (SELECT event_id FROM outbox WHERE $where)",arrayOf(scope)+args)
+            db.execSQL("DELETE FROM fragments WHERE scope=? AND id IN (SELECT event_id FROM outbox WHERE $where)",arrayOf(scope)+args)
+            db.delete("outbox",where,args)
+            db.delete("capture_windows","scope=?",arrayOf(scope));db.setTransactionSuccessful()
+        }finally{db.endTransaction()}
+    }
     fun rotate(old: String,new: String,rekey: (String)->String) {
         if(old==new)return
         val db=writableDatabase;db.beginTransaction()
@@ -425,6 +545,9 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 while(c.moveToNext())add(ContentValues().apply{put("scope",new);put("id",c.getString(0));put("wire",rekey(c.getString(1)));put("attempts",0);put("retry_at",0);put("receipt",c.getInt(2));put("accepted",0);put("event_id",c.getString(3));put("priority",c.getInt(4));put("role",c.getString(5));put("relay_kind",c.getString(6));put("relay_version",c.getInt(7))})
             } }
             for(row in pending)db.insertWithOnConflict("outbox",null,row,SQLiteDatabase.CONFLICT_IGNORE)
+            db.execSQL("INSERT OR IGNORE INTO outbox_lifetimes(scope,id,expires,blocked) SELECT ?,id,expires,blocked FROM outbox_lifetimes WHERE scope=?",arrayOf(new,old))
+            db.execSQL("UPDATE outbox_lifetimes SET expires=MIN(expires,COALESCE((SELECT expires FROM outbox_lifetimes old WHERE old.scope=? AND old.id=outbox_lifetimes.id),expires)),blocked=MAX(blocked,COALESCE((SELECT blocked FROM outbox_lifetimes old WHERE old.scope=? AND old.id=outbox_lifetimes.id),blocked)) WHERE scope=?",arrayOf(old,old,new))
+            db.execSQL("INSERT OR IGNORE INTO retention_settings(scope,days) SELECT ?,days FROM retention_settings WHERE scope=?",arrayOf(new,old))
             db.delete("outbox","scope=? AND role='child'",arrayOf(old))
             // Authenticate with the old scope before moving any row; failures roll back the move.
             transformRows(db,"evidence",old) { c ->
@@ -462,6 +585,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         if(bytes.isEmpty() || bytes.size>1024 || (index<count-1 && bytes.size!=1024))return null
         val db=writableDatabase;db.beginTransaction()
         try {
+            if(hasSeen(scope,id)){db.setTransactionSuccessful();return find(scope,id)}
             db.rawQuery("SELECT parts,digest FROM fragments WHERE scope=? AND id=? LIMIT 1",arrayOf(scope,id)).use {
                 if(it.moveToFirst() && (it.getInt(0)!=count || it.getString(1)!=digest))return null
             }
@@ -471,7 +595,12 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             // Bound incomplete authenticated input; completed evidence is not subject to this cap.
             val incomplete=incompleteCount(scope)
             if(incomplete>=100 && !db.rawQuery("SELECT 1 FROM fragments WHERE scope=? AND id=?",arrayOf(scope,id)).use{it.moveToFirst()})return null
-            db.insertWithOnConflict("fragments",null,ContentValues().apply{put("scope",scope);put("id",id);put("part",index);put("parts",count);put("digest",digest);put("data",seal(scope,"fragments",id,index.toString(),encoded))},SQLiteDatabase.CONFLICT_IGNORE)
+            val expiry=db.rawQuery("SELECT MIN(expires) FROM fragments WHERE scope=? AND id=?",arrayOf(scope,id)).use{it.moveToFirst();if(it.isNull(0))System.currentTimeMillis()+PENDING_TTL else it.getLong(0)}
+            if(expiry<=System.currentTimeMillis()) {
+                db.execSQL("INSERT OR IGNORE INTO seen(scope,id) VALUES(?,?)",arrayOf(scope,id))
+                db.delete("fragments","scope=? AND id=?",arrayOf(scope,id));db.setTransactionSuccessful();return null
+            }
+            db.insertWithOnConflict("fragments",null,ContentValues().apply{put("scope",scope);put("id",id);put("part",index);put("parts",count);put("digest",digest);put("data",seal(scope,"fragments",id,index.toString(),encoded));put("expires",expiry)},SQLiteDatabase.CONFLICT_IGNORE)
             var result: JSONObject?=null
             db.rawQuery("SELECT part,data FROM fragments WHERE scope=? AND id=? ORDER BY part",arrayOf(scope,id)).use { c ->
                 if(c.count==count){

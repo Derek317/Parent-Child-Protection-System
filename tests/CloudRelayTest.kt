@@ -31,6 +31,11 @@ class CloudRelayTest {
         authority=FamilySecurity.newSigningIdentity()
         LocalVault.preferences(ctx).edit().putString("parent_command_public_key",authority.publicKey).commit()
     }
+    private fun publish(connection:CloudRelay.Connection,id:String,wire:String,kind:String,
+        token:String=GuardEngine.getOrCreateFamilyToken(ctx),callback:(CloudRelay.PublishResult)->Unit) {
+        FamilyEvidence(ctx).use{it.enqueue(GuardEngine.getChannelTopicForToken(token),id,wire,role=GuardEngine.getRole(ctx),kind=kind)}
+        connection.publish(id,wire,kind,callback)
+    }
     @Test fun realWebSocketPublishUsesFamilyCapabilityAndWaitsForServerAcceptance() {
         val server=MockWebServer();val sent=CountDownLatch(1);val completed=CountDownLatch(1)
         server.enqueue(MockResponse().withWebSocketUpgrade(object:WebSocketListener(){
@@ -44,7 +49,7 @@ class CloudRelayTest {
         val connection=CloudRelay.Connection(ctx,GuardEngine.captureRelaySession(ctx),GuardEngine.getOrCreateFamilyToken(ctx),server.url("/").toString())
         try {
             var accepted=false
-            connection.publish("event:0",GuardEngine.encryptPayload(GuardEngine.getOrCreateFamilyToken(ctx),"{\"type\":\"alert\"}"),"urgent"){accepted=it.accepted;completed.countDown()}
+            publish(connection,"event:0",GuardEngine.encryptPayload(GuardEngine.getOrCreateFamilyToken(ctx),"{\"type\":\"alert\"}"),"urgent"){accepted=it.accepted;completed.countDown()}
             assertTrue(sent.await(5,TimeUnit.SECONDS));assertTrue(completed.await(5,TimeUnit.SECONDS));assertTrue(accepted)
             val request=server.takeRequest(5,TimeUnit.SECONDS)!!
             val auth=JSONObject(String(java.util.Base64.getUrlDecoder().decode(request.getHeader("Authorization")!!.removePrefix("IGGuard "))))
@@ -94,7 +99,7 @@ class CloudRelayTest {
         }));server.start()
         val connection=CloudRelay.Connection(ctx,GuardEngine.captureRelaySession(ctx),oldToken,server.url("/").toString(),temporary=true)
         try {
-            connection.publish("rotation:0",GuardEngine.encryptPayload(oldToken,"{}"),"control"){accepted=it.accepted;completed.countDown()}
+            publish(connection,"rotation:0",GuardEngine.encryptPayload(oldToken,"{}"),"control",token=oldToken){accepted=it.accepted;completed.countDown()}
             assertTrue(completed.await(5,TimeUnit.SECONDS));assertTrue(accepted);assertEquals(0,consumed.get())
             assertTrue(GuardEngine.getParentAlerts(ctx).isEmpty())
         }finally{connection.close();server.shutdown()}
@@ -115,9 +120,9 @@ class CloudRelayTest {
         val token=GuardEngine.getOrCreateFamilyToken(ctx)
         val connection=CloudRelay.Connection(ctx,GuardEngine.captureRelaySession(ctx),token,server.url("/").toString())
         try {
-            connection.publish("context:0",GuardEngine.encryptPayload(token,"{}"),"data"){contextFull=it.contextFull;contextDone.countDown()}
+            publish(connection,"context:0",GuardEngine.encryptPayload(token,"{}"),"data"){contextFull=it.contextFull;contextDone.countDown()}
             assertTrue(contextDone.await(5,TimeUnit.SECONDS));assertTrue(contextFull)
-            connection.publish("urgent:0",GuardEngine.encryptPayload(token,"{}"),"urgent"){urgentAccepted=it.accepted;urgentDone.countDown()}
+            publish(connection,"urgent:0",GuardEngine.encryptPayload(token,"{}"),"urgent"){urgentAccepted=it.accepted;urgentDone.countDown()}
             assertTrue(urgentDone.await(5,TimeUnit.SECONDS));assertTrue(urgentAccepted);assertEquals(1,server.requestCount)
         }finally{connection.close();server.shutdown()}
     }
@@ -131,7 +136,7 @@ class CloudRelayTest {
         val token=GuardEngine.getOrCreateFamilyToken(ctx);var completedAt=0L
         val connection=CloudRelay.Connection(ctx,GuardEngine.captureRelaySession(ctx),token,server.url("/").toString())
         try {
-            connection.publish("event:0",GuardEngine.encryptPayload(token,"{}"),"urgent"){completedAt=System.currentTimeMillis();done.countDown()}
+            publish(connection,"event:0",GuardEngine.encryptPayload(token,"{}"),"urgent"){completedAt=System.currentTimeMillis();done.countDown()}
             assertTrue(done.await(5,TimeUnit.SECONDS))
             val room=FamilyRelay.room(authority.publicKey,GuardEngine.getChannelTopic(ctx))
             val retryAt=LocalVault.preferences(ctx).getLong("relay_cooldown_child_$room",0)
