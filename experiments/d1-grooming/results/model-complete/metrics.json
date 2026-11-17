@@ -1,0 +1,444 @@
+{
+  "backend": "model",
+  "groups": {
+    "development/all": {
+      "total": 18,
+      "gold_counts": {
+        "benign": 6,
+        "risk": 6,
+        "review": 6
+      },
+      "forced_binary": {
+        "n": 12,
+        "tp": 5,
+        "fp": 5,
+        "tn": 1,
+        "fn": 1,
+        "precision": 0.5,
+        "recall": 0.8333333333333334,
+        "false_positive_rate": 0.8333333333333334,
+        "false_negative_rate": 0.16666666666666666
+      },
+      "selective_binary": {
+        "n": 9,
+        "tp": 4,
+        "fp": 5,
+        "tn": 0,
+        "fn": 0,
+        "precision": 0.4444444444444444,
+        "recall": 1.0,
+        "false_positive_rate": 1.0,
+        "false_negative_rate": 0.0
+      },
+      "binary_coverage": 0.75,
+      "abstentions": 7,
+      "abstentions_by_gold": {
+        "benign": 1,
+        "risk": 2,
+        "review": 4
+      },
+      "errors": 0,
+      "gold_review_total": 6,
+      "gold_review_abstained": 4,
+      "risk_not_cleared": 6,
+      "wall_seconds_p50": 7.784868961500251,
+      "wall_seconds_p95": 16.425712113999907,
+      "false_positive_ids": [
+        "d01-zh-Hant-yue",
+        "d01-mixed",
+        "d02-en",
+        "d02-zh-Hant-yue",
+        "d02-mixed"
+      ],
+      "false_negative_ids": [
+        "d03-mixed"
+      ]
+    },
+    "development/en": {
+      "total": 6,
+      "gold_counts": {
+        "benign": 2,
+        "risk": 2,
+        "review": 2
+      },
+      "forced_binary": {
+        "n": 4,
+        "tp": 2,
+        "fp": 1,
+        "tn": 1,
+        "fn": 0,
+        "precision": 0.6666666666666666,
+        "recall": 1.0,
+        "false_positive_rate": 0.5,
+        "false_negative_rate": 0.0
+      },
+      "selective_binary": {
+        "n": 2,
+        "tp": 1,
+        "fp": 1,
+        "tn": 0,
+        "fn": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "false_positive_rate": 1.0,
+        "false_negative_rate": 0.0
+      },
+      "binary_coverage": 0.5,
+      "abstentions": 3,
+      "abstentions_by_gold": {
+        "benign": 1,
+        "risk": 1,
+        "review": 1
+      },
+      "errors": 0,
+      "gold_review_total": 2,
+      "gold_review_abstained": 1,
+      "risk_not_cleared": 2,
+      "wall_seconds_p50": 7.337901028000488,
+      "wall_seconds_p95": 9.340255994000472,
+      "false_positive_ids": [
+        "d02-en"
+      ],
+      "false_negative_ids": []
+    },
+    "development/zh-Hant-yue": {
+      "total": 6,
+      "gold_counts": {
+        "benign": 2,
+        "risk": 2,
+        "review": 2
+      },
+      "forced_binary": {
+        "n": 4,
+        "tp": 2,
+        "fp": 2,
+        "tn": 0,
+        "fn": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "false_positive_rate": 1.0,
+        "false_negative_rate": 0.0
+      },
+      "selective_binary": {
+        "n": 4,
+        "tp": 2,
+        "fp": 2,
+        "tn": 0,
+        "fn": 0,
+        "precision": 0.5,
+        "recall": 1.0,
+        "false_positive_rate": 1.0,
+        "false_negative_rate": 0.0
+      },
+      "binary_coverage": 1.0,
+      "abstentions": 1,
+      "abstentions_by_gold": {
+        "review": 1
+      },
+      "errors": 0,
+      "gold_review_total": 2,
+      "gold_review_abstained": 1,
+      "risk_not_cleared": 2,
+      "wall_seconds_p50": 8.911489338999672,
+      "wall_seconds_p95": 16.03753738800151,
+      "false_positive_ids": [
+        "d01-zh-Hant-yue",
+        "d02-zh-Hant-yue"
+      ],
+      "false_negative_ids": []
+    },
+    "development/mixed": {
+      "total": 6,
+      "gold_counts": {
+        "benign": 2,
+        "risk": 2,
+        "review": 2
+      },
+      "forced_binary": {
+        "n": 4,
+        "tp": 1,
+        "fp": 2,
+        "tn": 0,
+        "fn": 1,
+        "precision": 0.3333333333333333,
+        "recall": 0.5,
+        "false_positive_rate": 1.0,
+        "false_negative_rate": 0.5
+      },
+      "selective_binary": {
+        "n": 3,
+        "tp": 1,
+        "fp": 2,
+        "tn": 0,
+        "fn": 0,
+        "precision": 0.3333333333333333,
+        "recall": 1.0,
+        "false_positive_rate": 1.0,
+        "false_negative_rate": 0.0
+      },
+      "binary_coverage": 0.75,
+      "abstentions": 3,
+      "abstentions_by_gold": {
+        "risk": 1,
+        "review": 2
+      },
+      "errors": 0,
+      "gold_review_total": 2,
+      "gold_review_abstained": 2,
+      "risk_not_cleared": 2,
+      "wall_seconds_p50": 7.477838830500332,
+      "wall_seconds_p95": 16.425712113999907,
+      "false_positive_ids": [
+        "d01-mixed",
+        "d02-mixed"
+      ],
+      "false_negative_ids": [
+        "d03-mixed"
+      ]
+    },
+    "heldout_style/all": {
+      "total": 72,
+      "gold_counts": {
+        "benign": 30,
+        "risk": 30,
+        "review": 12
+      },
+      "forced_binary": {
+        "n": 60,
+        "tp": 27,
+        "fp": 26,
+        "tn": 4,
+        "fn": 3,
+        "precision": 0.5094339622641509,
+        "recall": 0.9,
+        "false_positive_rate": 0.8666666666666667,
+        "false_negative_rate": 0.1
+      },
+      "selective_binary": {
+        "n": 46,
+        "tp": 23,
+        "fp": 21,
+        "tn": 1,
+        "fn": 1,
+        "precision": 0.5227272727272727,
+        "recall": 0.9583333333333334,
+        "false_positive_rate": 0.9545454545454546,
+        "false_negative_rate": 0.041666666666666664
+      },
+      "binary_coverage": 0.7666666666666667,
+      "abstentions": 19,
+      "abstentions_by_gold": {
+        "benign": 8,
+        "risk": 6,
+        "review": 5
+      },
+      "errors": 0,
+      "gold_review_total": 12,
+      "gold_review_abstained": 5,
+      "risk_not_cleared": 29,
+      "wall_seconds_p50": 0.6204505374953442,
+      "wall_seconds_p95": 6.717224952000834,
+      "false_positive_ids": [
+        "h01-en",
+        "h01-zh-Hant-yue",
+        "h01-mixed",
+        "h02-en",
+        "h02-zh-Hant-yue",
+        "h02-mixed",
+        "h03-en",
+        "h03-zh-Hant-yue",
+        "h03-mixed",
+        "h04-zh-Hant-yue",
+        "h04-mixed",
+        "h05-zh-Hant-yue",
+        "h05-mixed",
+        "h06-en",
+        "h06-zh-Hant-yue",
+        "h06-mixed",
+        "h07-en",
+        "h07-zh-Hant-yue",
+        "h07-mixed",
+        "h08-en",
+        "h08-mixed",
+        "h09-en",
+        "h09-zh-Hant-yue",
+        "h09-mixed",
+        "h10-en",
+        "h10-zh-Hant-yue"
+      ],
+      "false_negative_ids": [
+        "h12-en",
+        "h20-zh-Hant-yue",
+        "h20-mixed"
+      ]
+    },
+    "heldout_style/en": {
+      "total": 24,
+      "gold_counts": {
+        "benign": 10,
+        "risk": 10,
+        "review": 4
+      },
+      "forced_binary": {
+        "n": 20,
+        "tp": 9,
+        "fp": 8,
+        "tn": 2,
+        "fn": 1,
+        "precision": 0.5294117647058824,
+        "recall": 0.9,
+        "false_positive_rate": 0.8,
+        "false_negative_rate": 0.1
+      },
+      "selective_binary": {
+        "n": 13,
+        "tp": 8,
+        "fp": 5,
+        "tn": 0,
+        "fn": 0,
+        "precision": 0.6153846153846154,
+        "recall": 1.0,
+        "false_positive_rate": 1.0,
+        "false_negative_rate": 0.0
+      },
+      "binary_coverage": 0.65,
+      "abstentions": 10,
+      "abstentions_by_gold": {
+        "benign": 5,
+        "risk": 2,
+        "review": 3
+      },
+      "errors": 0,
+      "gold_review_total": 4,
+      "gold_review_abstained": 3,
+      "risk_not_cleared": 10,
+      "wall_seconds_p50": 0.5605756759978249,
+      "wall_seconds_p95": 6.82093710800109,
+      "false_positive_ids": [
+        "h01-en",
+        "h02-en",
+        "h03-en",
+        "h06-en",
+        "h07-en",
+        "h08-en",
+        "h09-en",
+        "h10-en"
+      ],
+      "false_negative_ids": [
+        "h12-en"
+      ]
+    },
+    "heldout_style/zh-Hant-yue": {
+      "total": 24,
+      "gold_counts": {
+        "benign": 10,
+        "risk": 10,
+        "review": 4
+      },
+      "forced_binary": {
+        "n": 20,
+        "tp": 9,
+        "fp": 9,
+        "tn": 1,
+        "fn": 1,
+        "precision": 0.5,
+        "recall": 0.9,
+        "false_positive_rate": 0.9,
+        "false_negative_rate": 0.1
+      },
+      "selective_binary": {
+        "n": 16,
+        "tp": 8,
+        "fp": 7,
+        "tn": 0,
+        "fn": 1,
+        "precision": 0.5333333333333333,
+        "recall": 0.8888888888888888,
+        "false_positive_rate": 1.0,
+        "false_negative_rate": 0.1111111111111111
+      },
+      "binary_coverage": 0.8,
+      "abstentions": 4,
+      "abstentions_by_gold": {
+        "benign": 3,
+        "risk": 1
+      },
+      "errors": 0,
+      "gold_review_total": 4,
+      "gold_review_abstained": 0,
+      "risk_not_cleared": 9,
+      "wall_seconds_p50": 0.6759252174997528,
+      "wall_seconds_p95": 5.442714791999606,
+      "false_positive_ids": [
+        "h01-zh-Hant-yue",
+        "h02-zh-Hant-yue",
+        "h03-zh-Hant-yue",
+        "h04-zh-Hant-yue",
+        "h05-zh-Hant-yue",
+        "h06-zh-Hant-yue",
+        "h07-zh-Hant-yue",
+        "h09-zh-Hant-yue",
+        "h10-zh-Hant-yue"
+      ],
+      "false_negative_ids": [
+        "h20-zh-Hant-yue"
+      ]
+    },
+    "heldout_style/mixed": {
+      "total": 24,
+      "gold_counts": {
+        "benign": 10,
+        "risk": 10,
+        "review": 4
+      },
+      "forced_binary": {
+        "n": 20,
+        "tp": 9,
+        "fp": 9,
+        "tn": 1,
+        "fn": 1,
+        "precision": 0.5,
+        "recall": 0.9,
+        "false_positive_rate": 0.9,
+        "false_negative_rate": 0.1
+      },
+      "selective_binary": {
+        "n": 17,
+        "tp": 7,
+        "fp": 9,
+        "tn": 1,
+        "fn": 0,
+        "precision": 0.4375,
+        "recall": 1.0,
+        "false_positive_rate": 0.9,
+        "false_negative_rate": 0.0
+      },
+      "binary_coverage": 0.85,
+      "abstentions": 5,
+      "abstentions_by_gold": {
+        "risk": 3,
+        "review": 2
+      },
+      "errors": 0,
+      "gold_review_total": 4,
+      "gold_review_abstained": 2,
+      "risk_not_cleared": 10,
+      "wall_seconds_p50": 0.5983186619996559,
+      "wall_seconds_p95": 4.792585766001139,
+      "false_positive_ids": [
+        "h01-mixed",
+        "h02-mixed",
+        "h03-mixed",
+        "h04-mixed",
+        "h05-mixed",
+        "h06-mixed",
+        "h07-mixed",
+        "h08-mixed",
+        "h09-mixed"
+      ],
+      "false_negative_ids": [
+        "h20-mixed"
+      ]
+    }
+  }
+}

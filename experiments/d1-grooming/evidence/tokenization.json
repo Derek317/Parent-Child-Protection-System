@@ -1,0 +1,465 @@
+{
+  "checked_utc": "2026-11-17T18:44:45.189895+00:00",
+  "model_revision": "02b55d7076f15129e59ab3f94783f32c4b088674",
+  "method": "Local verified tokenizer and unchanged reviewed prompt.encode; no inference or downloads",
+  "question_tokens": 53,
+  "question_budget_excluding_marker": 95,
+  "option_tokens": [
+    13,
+    14
+  ],
+  "option_budget_each": 45,
+  "model_max_length": 16384,
+  "rows": [
+    {
+      "id": "d01-en",
+      "expected_input_tokens": 140,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d01-zh-Hant-yue",
+      "expected_input_tokens": 155,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d01-mixed",
+      "expected_input_tokens": 145,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d02-en",
+      "expected_input_tokens": 138,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d02-zh-Hant-yue",
+      "expected_input_tokens": 150,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d02-mixed",
+      "expected_input_tokens": 148,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d03-en",
+      "expected_input_tokens": 136,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d03-zh-Hant-yue",
+      "expected_input_tokens": 145,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d03-mixed",
+      "expected_input_tokens": 136,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d04-en",
+      "expected_input_tokens": 148,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d04-zh-Hant-yue",
+      "expected_input_tokens": 174,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d04-mixed",
+      "expected_input_tokens": 151,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d05-en",
+      "expected_input_tokens": 114,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d05-zh-Hant-yue",
+      "expected_input_tokens": 121,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d05-mixed",
+      "expected_input_tokens": 116,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d06-en",
+      "expected_input_tokens": 115,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d06-zh-Hant-yue",
+      "expected_input_tokens": 120,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "d06-mixed",
+      "expected_input_tokens": 118,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h01-en",
+      "expected_input_tokens": 147,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h01-zh-Hant-yue",
+      "expected_input_tokens": 160,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h01-mixed",
+      "expected_input_tokens": 148,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h02-en",
+      "expected_input_tokens": 148,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h02-zh-Hant-yue",
+      "expected_input_tokens": 162,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h02-mixed",
+      "expected_input_tokens": 157,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h03-en",
+      "expected_input_tokens": 145,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h03-zh-Hant-yue",
+      "expected_input_tokens": 167,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h03-mixed",
+      "expected_input_tokens": 149,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h04-en",
+      "expected_input_tokens": 154,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h04-zh-Hant-yue",
+      "expected_input_tokens": 176,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h04-mixed",
+      "expected_input_tokens": 152,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h05-en",
+      "expected_input_tokens": 144,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h05-zh-Hant-yue",
+      "expected_input_tokens": 156,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h05-mixed",
+      "expected_input_tokens": 148,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h06-en",
+      "expected_input_tokens": 143,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h06-zh-Hant-yue",
+      "expected_input_tokens": 152,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h06-mixed",
+      "expected_input_tokens": 145,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h07-en",
+      "expected_input_tokens": 153,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h07-zh-Hant-yue",
+      "expected_input_tokens": 166,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h07-mixed",
+      "expected_input_tokens": 150,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h08-en",
+      "expected_input_tokens": 151,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h08-zh-Hant-yue",
+      "expected_input_tokens": 161,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h08-mixed",
+      "expected_input_tokens": 151,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h09-en",
+      "expected_input_tokens": 160,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h09-zh-Hant-yue",
+      "expected_input_tokens": 177,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h09-mixed",
+      "expected_input_tokens": 154,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h10-en",
+      "expected_input_tokens": 151,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h10-zh-Hant-yue",
+      "expected_input_tokens": 175,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h10-mixed",
+      "expected_input_tokens": 154,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h11-en",
+      "expected_input_tokens": 157,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h11-zh-Hant-yue",
+      "expected_input_tokens": 170,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h11-mixed",
+      "expected_input_tokens": 151,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h12-en",
+      "expected_input_tokens": 156,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h12-zh-Hant-yue",
+      "expected_input_tokens": 169,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h12-mixed",
+      "expected_input_tokens": 153,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h13-en",
+      "expected_input_tokens": 152,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h13-zh-Hant-yue",
+      "expected_input_tokens": 172,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h13-mixed",
+      "expected_input_tokens": 157,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h14-en",
+      "expected_input_tokens": 151,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h14-zh-Hant-yue",
+      "expected_input_tokens": 177,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h14-mixed",
+      "expected_input_tokens": 157,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h15-en",
+      "expected_input_tokens": 150,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h15-zh-Hant-yue",
+      "expected_input_tokens": 162,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h15-mixed",
+      "expected_input_tokens": 150,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h16-en",
+      "expected_input_tokens": 146,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h16-zh-Hant-yue",
+      "expected_input_tokens": 170,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h16-mixed",
+      "expected_input_tokens": 150,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h17-en",
+      "expected_input_tokens": 158,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h17-zh-Hant-yue",
+      "expected_input_tokens": 170,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h17-mixed",
+      "expected_input_tokens": 154,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h18-en",
+      "expected_input_tokens": 157,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h18-zh-Hant-yue",
+      "expected_input_tokens": 177,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h18-mixed",
+      "expected_input_tokens": 150,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h19-en",
+      "expected_input_tokens": 154,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h19-zh-Hant-yue",
+      "expected_input_tokens": 166,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h19-mixed",
+      "expected_input_tokens": 153,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h20-en",
+      "expected_input_tokens": 170,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h20-zh-Hant-yue",
+      "expected_input_tokens": 190,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h20-mixed",
+      "expected_input_tokens": 169,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h21-en",
+      "expected_input_tokens": 114,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h21-zh-Hant-yue",
+      "expected_input_tokens": 118,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h21-mixed",
+      "expected_input_tokens": 115,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h22-en",
+      "expected_input_tokens": 116,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h22-zh-Hant-yue",
+      "expected_input_tokens": 128,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h22-mixed",
+      "expected_input_tokens": 120,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h23-en",
+      "expected_input_tokens": 120,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h23-zh-Hant-yue",
+      "expected_input_tokens": 126,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h23-mixed",
+      "expected_input_tokens": 121,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h24-en",
+      "expected_input_tokens": 120,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h24-zh-Hant-yue",
+      "expected_input_tokens": 126,
+      "no_state_or_question_or_option_truncation": true
+    },
+    {
+      "id": "h24-mixed",
+      "expected_input_tokens": 122,
+      "no_state_or_question_or_option_truncation": true
+    }
+  ]
+}

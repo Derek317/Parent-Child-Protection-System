@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "frozen_before_inference": true,
+  "model_revision": "02b55d7076f15129e59ab3f94783f32c4b088674",
+  "binary_threshold": 0.5,
+  "review_low": 0.35,
+  "review_high": 0.65,
+  "threads": 4,
+  "dtype": "float32",
+  "device": "cpu",
+  "batch_size": 1,
+  "design": "Hand-authored synthetic feasibility sample. Family-disjoint development and heldout_style splits. Translations share a family and split. No fitting or threshold search. Gold review cases are excluded from binary metrics and reported separately. Not validated, representative, independently annotated or calibrated for this task.",
+  "score_meaning": "Model yes-option score conditional on the supplied question and options; not an offender probability or a probability of abuse.",
+  "review_policy": "Scores in the inclusive [0.35,0.65] band, invalid input, or inference errors abstain to human review. Outside this band scores are provisional content triage only; high scores never establish offender identity. Report forced binary and selective metrics separately."
+}

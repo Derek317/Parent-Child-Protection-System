@@ -1,0 +1,13 @@
+test_abstentions_do_not_disappear (test_harness.HarnessTests.test_abstentions_do_not_disappear) ... ok
+test_android_transport_schema_with_local_stub (test_harness.HarnessTests.test_android_transport_schema_with_local_stub) ... ok
+test_baseline_literal_and_matching (test_harness.HarnessTests.test_baseline_literal_and_matching) ... ok
+test_fixture_family_isolation_and_counts (test_harness.HarnessTests.test_fixture_family_isolation_and_counts) ... ok
+test_hand_computed_metrics (test_harness.HarnessTests.test_hand_computed_metrics) ... ok
+test_progress_survives_closed_pipe (test_harness.HarnessTests.test_progress_survives_closed_pipe) ... ok
+test_resume_preserves_prefix_and_infers_only_missing_rows (test_harness.HarnessTests.test_resume_preserves_prefix_and_infers_only_missing_rows) ... ok
+test_review_boundaries_and_invalid_scores (test_harness.HarnessTests.test_review_boundaries_and_invalid_scores) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.699s
+
+OK

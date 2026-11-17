@@ -1,0 +1,9 @@
+{
+  "frozen_utc": "2026-11-17T15:15:33.197430+00:00",
+  "sha256": {
+    "synthetic.jsonl": "b5cbf9cc15e889f4f307511537dc7c102f6162a10aa597286a7bf40e569024b5",
+    "questions.json": "f4097ca86b5a3f2638453ad2415e03097a51c89916d818dc48aec3976573e661",
+    "protocol.json": "cf61f034cf892529e6afcb8b402232b59f3a980af07f72511885cfa2e9be5ace",
+    "baseline.json": "35f3022ed5d7602d77037dc52ba0788c8028c46546a9cda9fbd0b7e53f322d69"
+  }
+}

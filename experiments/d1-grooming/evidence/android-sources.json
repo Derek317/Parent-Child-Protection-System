@@ -1,0 +1,91 @@
+{
+  "retrieved_utc": "2026-11-17T15:18:46.787862+00:00",
+  "llama_cpp_revision": "ebc9fb933e774bb4ac0ba497a67948e16b7e5656",
+  "gguf_revision": "8eb2d2a1c5404bba8a34a88bd8e159c242197d51",
+  "sources": [
+    {
+      "url": "https://docs.liquid.ai/lfm/models/d1-omni-600m.md",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/d1-omni-600m.md",
+      "bytes": 6968,
+      "sha256": "763b15e5d249a5ad5d9bde928370be9c2e4e1b5a482ce9678a14a2d3c490117c"
+    },
+    {
+      "url": "https://docs.liquid.ai/lfm/models/decision-models.md",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/decision-models.md",
+      "bytes": 9815,
+      "sha256": "a1c03c2de4489cd3608b1ee5facb9cdb55e7bbf243fa9f86e4baa20727792c97"
+    },
+    {
+      "url": "https://docs.liquid.ai/deployment/on-device/llama-cpp/mobile.md",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/mobile.md",
+      "bytes": 14153,
+      "sha256": "c0455cbede2df1ed854e9422e2ede908bc66fd798ef05be68a1c17875c3b634a"
+    },
+    {
+      "url": "https://docs.liquid.ai/deployment/on-device/onnx.md",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/onnx.md",
+      "bytes": 8512,
+      "sha256": "43717b1ae3fd65d808b4d8969d1240f5ee558ed233dc7e510fe4394874c81b02"
+    },
+    {
+      "url": "https://docs.liquid.ai/deployment/on-device/sdk/overview.md",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/overview.md",
+      "bytes": 3063,
+      "sha256": "b3c353d511114e4eb6b5eb11eeb8a7882c5f2dacbed88fb3cbd301fb1387fee9"
+    },
+    {
+      "url": "https://docs.liquid.ai/lfm/models/complete-library.md",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/complete-library.md",
+      "bytes": 16720,
+      "sha256": "21d77639f366b3e7150153ec825441462f9a37b216a3328753093b1d3b6ea978"
+    },
+    {
+      "url": "https://huggingface.co/LiquidAI/d1-omni-600M-GGUF/resolve/8eb2d2a1c5404bba8a34a88bd8e159c242197d51/README.md",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/gguf-readme.md",
+      "bytes": 3974,
+      "sha256": "b53cb8c6cb6b8bd129190507d37a11928cacc3100a41ccddd2b77d6a3a00340a"
+    },
+    {
+      "url": "https://huggingface.co/LiquidAI/d1-omni-600M-GGUF/resolve/8eb2d2a1c5404bba8a34a88bd8e159c242197d51/LICENSE",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/gguf-LICENSE",
+      "bytes": 10572,
+      "sha256": "9953509cbd8c1c6ce7b06ddf74fcc204a892692316201dd8f7400a84790d4120"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/ebc9fb933e774bb4ac0ba497a67948e16b7e5656/docs/android.md",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/llama-android.md",
+      "bytes": 6431,
+      "sha256": "bc66f29afc8e081714be092363fdc64522933e42bb01f1dfb746aac483a33c32"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/ebc9fb933e774bb4ac0ba497a67948e16b7e5656/tools/server/server-decision.h",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/llama-server-decision.h",
+      "bytes": 8931,
+      "sha256": "b2badfb6dfa7514208875bdaa2fb52061d65e313bfc6c1c586cafbb2560a1710"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/ebc9fb933e774bb4ac0ba497a67948e16b7e5656/tools/server/server-decision.cpp",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/llama-server-decision.cpp",
+      "bytes": 75315,
+      "sha256": "129f922c4c69430233489b398a1c18e13019a3a27dbab19e3c68467144d5caa5"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/ebc9fb933e774bb4ac0ba497a67948e16b7e5656/tools/server/tests/unit/test_systemone.py",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/llama-test_systemone.py",
+      "bytes": 10698,
+      "sha256": "449e021b8379021119341472ec9c48998eae3651a288ca966d75ef3e480be752"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/ebc9fb933e774bb4ac0ba497a67948e16b7e5656/tools/server/server-context.cpp",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/llama-server-context.cpp",
+      "bytes": 305920,
+      "sha256": "618fa0048a8f73bf633ac1c3be83263627e0177418b5ec6309e3879f9b01d474"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/ebc9fb933e774bb4ac0ba497a67948e16b7e5656/tools/server/README.md",
+      "external_snapshot": "/workspace/private/d1-grooming/docs/llama-README.md",
+      "bytes": 141424,
+      "sha256": "98dcd527bb0ca9cae674c1d1d66933348dbda28b03313819c876a28792eef610"
+    }
+  ]
+}

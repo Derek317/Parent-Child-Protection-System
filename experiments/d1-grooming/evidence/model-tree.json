@@ -1,0 +1,80 @@
+[
+  {
+    "type": "file",
+    "oid": "a6344aac8c09253b3b630fb776ae94478aa0275b",
+    "size": 1519,
+    "path": ".gitattributes"
+  },
+  {
+    "type": "file",
+    "oid": "272d23491019471e6776d23ae995f41b164ea34c",
+    "size": 10572,
+    "path": "LICENSE"
+  },
+  {
+    "type": "file",
+    "oid": "4acf6c774720827a80e1faeed2bfd708d588c065",
+    "size": 10384,
+    "path": "README.md"
+  },
+  {
+    "type": "file",
+    "oid": "c85d77b72701c4e5e2e4d43cc6c6332ac1c2f1a6",
+    "size": 11829,
+    "path": "audio.py"
+  },
+  {
+    "type": "file",
+    "oid": "94ebfad78a9e7fdbbd80549b99a0480bef2e2e02",
+    "size": 1993,
+    "path": "config.json"
+  },
+  {
+    "type": "file",
+    "oid": "49711c6e2436dcbb09aea2d6206050eac38b3f74",
+    "size": 7732,
+    "path": "encoder.py"
+  },
+  {
+    "type": "file",
+    "oid": "94b34d334c2b89f0376c3659a223f31497f5aa57",
+    "size": 2348774500,
+    "lfs": {
+      "oid": "0713bb05270c2685ad106522f4092bceeeb3a93cf79b401f399a712296c911e1",
+      "size": 2348774500,
+      "pointerSize": 135
+    },
+    "xetHash": "d81757fa29a4e8539a3032429b5ac8a2e691976b84e26f6322acf2be6b15e224",
+    "path": "model.safetensors"
+  },
+  {
+    "type": "file",
+    "oid": "3c51b6d4d75480be1de79aaf8d306031ab5fda41",
+    "size": 8655,
+    "path": "modeling_d1.py"
+  },
+  {
+    "type": "file",
+    "oid": "e81db3661bf454a0579147070f0d7075538b6a38",
+    "size": 6309,
+    "path": "prompt.py"
+  },
+  {
+    "type": "file",
+    "oid": "53d5df363b01234edae97ee6e05139d2c067b31a",
+    "size": 4733371,
+    "path": "tokenizer.json"
+  },
+  {
+    "type": "file",
+    "oid": "35217dbb96b3356b37ab820ec7feef483c8c12dc",
+    "size": 259,
+    "path": "tokenizer_config.json"
+  },
+  {
+    "type": "file",
+    "oid": "bc9c35ba8450c02b364e9c26b909b4541c8f139a",
+    "size": 5233,
+    "path": "vision.py"
+  }
+]

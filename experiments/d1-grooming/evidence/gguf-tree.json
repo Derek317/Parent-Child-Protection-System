@@ -1,0 +1,92 @@
+[
+  {
+    "type": "file",
+    "oid": "bba5b5da1bc81ba8e70b76a90b9dd2a4ead6a829",
+    "size": 1892,
+    "path": ".gitattributes"
+  },
+  {
+    "type": "file",
+    "oid": "272d23491019471e6776d23ae995f41b164ea34c",
+    "size": 10572,
+    "path": "LICENSE"
+  },
+  {
+    "type": "file",
+    "oid": "187cd0a7f5d50fbe5159fdf713989043e9d54126",
+    "size": 3974,
+    "path": "README.md"
+  },
+  {
+    "type": "file",
+    "oid": "f65762ea08b558a9cb9323273550704a171e55b2",
+    "size": 764049056,
+    "lfs": {
+      "oid": "9bf4f344835f64264978907a0b0bc43c9f0e59804f15176f8b5630c930c3c9df",
+      "size": 764049056,
+      "pointerSize": 134
+    },
+    "xetHash": "f6d5071dac149fbfa1cd07b045d60f411bbc3a92e7ef5d979c7725c59ce12c7b",
+    "path": "d1-omni-600M-BF16.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "3dd92a36b2de059c3b038a983fbcc1b338d1606d",
+    "size": 764049056,
+    "lfs": {
+      "oid": "d5dca201170e98fad783ddf65c1dd94244accccbffce4a2746255cbd21b6a21c",
+      "size": 764049056,
+      "pointerSize": 134
+    },
+    "xetHash": "4c41f87a9576f14c00c4127d0e8f20ee54330a577a104854865d9909d05429db",
+    "path": "d1-omni-600M-F16.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "67fb9d41a1049147528ebcdc82f2c7f14250cb72",
+    "size": 407207584,
+    "lfs": {
+      "oid": "cd94463f4cac9c700ec6750df8df005bb6846de410e159d1f5e985e1171693d3",
+      "size": 407207584,
+      "pointerSize": 134
+    },
+    "xetHash": "c921011a76430ae7c5c1e052ddbfca6e85cbae6905ba025b4feb528aa9c414b5",
+    "path": "d1-omni-600M-Q8_0.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "5f6dd2fd9fe768b255505b6aec89f7d6ef9ab783",
+    "size": 442441792,
+    "lfs": {
+      "oid": "1aed7f0ff41f354c66cf3fa41c9eb43f1a76b3ea9453edd8e804567674a9041e",
+      "size": 442441792,
+      "pointerSize": 134
+    },
+    "xetHash": "0a22535a10372f45a8aa5bd0bc8a72720ea51ad05528d189a29a9aa60b750195",
+    "path": "mmproj-d1-omni-600M-BF16.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "f2f7253540b9cf6924e5a57420141d612e9dfc85",
+    "size": 441262144,
+    "lfs": {
+      "oid": "77e4a6b626847876a98fd242756921024b54e608e166b562f3f3596ff29eda53",
+      "size": 441262144,
+      "pointerSize": 134
+    },
+    "xetHash": "3361e39999eb835b714970062d58bf67249fd4fad0c837609db2c21b5bea8c66",
+    "path": "mmproj-d1-omni-600M-F16.gguf"
+  },
+  {
+    "type": "file",
+    "oid": "3d0a2f388719f1a52a3ac50d2123548f38a45c48",
+    "size": 262791232,
+    "lfs": {
+      "oid": "df887978550cdbb45f0f57d7b436a0f844689f9f561395a144ced500606c3a89",
+      "size": 262791232,
+      "pointerSize": 134
+    },
+    "xetHash": "57e2a2bb048e0655072970039a2b2f9f2f6348b1189c493c0183956306b9a84e",
+    "path": "mmproj-d1-omni-600M-Q8_0.gguf"
+  }
+]
