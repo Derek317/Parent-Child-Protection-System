@@ -82,7 +82,7 @@ class ConnectionRegressionTest {
         }finally{c.destroy()}
     }
     @Test fun manualConnectionButtonQueuesExplicitTestInsteadOfOnlyRoutineHeartbeat(){
-        val c=Robolectric.buildActivity(MainActivity::class.java).create();val a=c.get()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         try {
             MainActivity::class.java.getDeclaredMethod("navigateTo",String::class.java).apply{isAccessible=true}.invoke(a,"permissions")
             all(a.window.decorView).filterIsInstance<Button>().single{it.text.toString()=="立即發送測試及心跳回報"}.performClick()

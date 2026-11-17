@@ -59,7 +59,7 @@ class NativeDesignTest {
     }
     @Test fun configuredParentHasBottomNavigationAndLiveEmptyState() {
         GuardEngine.setRole(ctx,"parent")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
         invoke(c.get(),"navigateTo","overview")
         assertTrue(text(c.get()).contains("提醒"))
         assertTrue(text(c.get()).contains("家庭"))
@@ -83,7 +83,7 @@ class NativeDesignTest {
     }
     @Test fun pairingRoleChangeDismissesPrivilegedParentSheet() {
         GuardEngine.setRole(ctx,"parent")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
         val d=openParentKeySheet(c.get());assertTrue(d.isShowing)
         deliverPairing(c.get())
         assertEquals("child",GuardEngine.getRole(ctx));assertFalse(d.isShowing)
@@ -91,7 +91,7 @@ class NativeDesignTest {
     }
     @Test fun pairingRoleChangeDismissesNestedRescueConfirmation() {
         GuardEngine.setRole(ctx,"parent")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
         val d=openParentKeySheet(c.get())
         all(d.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="遠端解除子女保護並重設身份"}.performClick()
         val confirm=ShadowAlertDialog.getLatestAlertDialog();assertTrue(confirm.isShowing)
@@ -101,7 +101,7 @@ class NativeDesignTest {
     }
     @Test fun staleParentActionCannotReadNewChildPasswordBeforeRefresh() {
         GuardEngine.setRole(ctx,"parent")
-        val c=Robolectric.buildActivity(MainActivity::class.java).create()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
         val d=openParentKeySheet(c.get())
         val reveal=all(d.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="查看家長主密碼"}
         val secret=GuardEngine.generateRandomStrongPassword()
@@ -113,7 +113,7 @@ class NativeDesignTest {
         c.destroy()
     }
     @Test fun passwordSuggestionIsGeneratedWithoutCreatingFamily() {
-        val c=Robolectric.buildActivity(MainActivity::class.java).create()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
         invoke(c.get(),"navigateTo","parent_setup")
         val generate=all(root(c.get())).filterIsInstance<Button>().firstOrNull{it.text.toString()=="產生高強度密碼"}
         assertNotNull(generate);generate!!.performClick()

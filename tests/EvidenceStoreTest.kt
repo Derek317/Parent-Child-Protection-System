@@ -16,7 +16,7 @@ import org.robolectric.annotation.Config
 class EvidenceStoreTest {
     private val ctx: Application get()=RuntimeEnvironment.getApplication()
     @Before fun reset(){ ctx.deleteDatabase("family_evidence.db");LocalVault.preferences(ctx).edit().clear().commit() }
-    private fun event(i:Int,body:String="message $i",sender:String="contact",reason:String="stranger_message")=JSONObject().put("event_id","event-$i").put("type","alert").put("sender",sender).put("reason",reason).put("text",body).put("ts_ms",1_700_000_000_000L+i)
+    private fun event(i:Int,body:String="message $i",sender:String="contact",reason:String="stranger_message")=JSONObject().put("event_id","event-$i").put("type","alert").put("sender",sender).put("reason",reason).put("text",body).put("ts_ms",System.currentTimeMillis()+i)
     @Test fun archiveRetainsOldMessagesBeyondInboxPageAndFullUnicodeText(){
         val long="中文🙂\n\"quoted\" ".repeat(800)
         FamilyEvidence(ctx).use { db->

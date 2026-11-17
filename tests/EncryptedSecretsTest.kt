@@ -34,7 +34,8 @@ class EncryptedSecretsTest {
         GuardEngine.setRole(ctx, "parent")
         val publicKey = GuardEngine.relayPublicKey(ctx)
         val stored = raw.getString("parent_signing_private", "").orEmpty()
-        assertTrue("Stored signing key must be authenticated ciphertext", stored.startsWith("igv1:"))
+        assertTrue("Legacy private signing material must be removed", stored.isEmpty())
+        assertFalse(LocalVault.preferences(ctx).contains("parent_signing_private"))
         assertEquals(publicKey, GuardEngine.relayPublicKey(ctx))
     }
     @Test fun legacyPasswordMigratesWithoutChangingItsValue() {

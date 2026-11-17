@@ -59,6 +59,7 @@ import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -176,6 +177,40 @@ object GuardEngine {
 
     fun captureRelaySession(ctx: Context): Triple<String, String, Int> = synchronized(pollLock) {
         Triple(getRole(ctx), getOrCreateFamilyToken(ctx), relayGeneration)
+    }
+
+    fun collectionAllowed(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && !prefs(ctx).getBoolean("collection_withdrawn", false)
+    fun transferAllowed(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && (getRole(ctx) != "child" || collectionAllowed(ctx))
+    fun withdrawCollection(ctx: Context, discardPending: Boolean = true) = synchronized(pollLock) {
+        check(isChildMode(ctx))
+        check(prefs(ctx).edit().putBoolean("collection_withdrawn", true).remove("capture_local_ack_id").commit())
+        relayGeneration++; CloudRelay.disconnect()
+        if(discardPending) FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx)) }
+        refreshMonitoringDisclosure(ctx)
+    }
+    /** Resuming is an explicit fresh start: held old-scope records are not silently resent. */
+    fun resumeCollection(ctx: Context) = synchronized(pollLock) {
+        check(isChildMode(ctx))
+        FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx)) }
+        check(prefs(ctx).edit().putBoolean("collection_withdrawn", false).remove("capture_local_ack_id").commit())
+        relayGeneration++; CloudRelay.disconnect(); refreshMonitoringDisclosure(ctx)
+    }
+    fun setCaptureOptions(ctx: Context, allowOutgoing: Boolean, allowTrustedContext: Boolean) = synchronized(pollLock) {
+        check(isChildMode(ctx))
+        FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx)) }
+        val expands = allowOutgoing && !outgoingCaptureAllowed(ctx) || allowTrustedContext && !trustedContextAllowed(ctx)
+        val editor=prefs(ctx).edit().putBoolean("capture_outgoing", allowOutgoing).putBoolean("capture_trusted_context", allowTrustedContext)
+        if(expands)editor.remove("capture_local_ack_id")
+        check(editor.commit())
+        relayGeneration++; CloudRelay.disconnect(); refreshMonitoringDisclosure(ctx)
+    }
+    fun outgoingCaptureAllowed(ctx: Context) = prefs(ctx).getBoolean("capture_outgoing", true)
+    fun trustedContextAllowed(ctx: Context) = prefs(ctx).getBoolean("capture_trusted_context", true)
+    fun captureObservationAllowed(ctx: Context, observation: CapturedText, trusted: Boolean, flagged: Boolean): Boolean {
+        if(!collectionAllowed(ctx) || observation.source == "comment_story_draft") return false
+        if(observation.direction == "outgoing" && !outgoingCaptureAllowed(ctx)) return false
+        if(trusted && !trustedContextAllowed(ctx) && !ConversationCapture.actionable(ConversationCapture.record(observation,System.currentTimeMillis(),trusted,flagged))) return false
+        return true
     }
 
     // Live Checkpoint & Heartbeat States
@@ -396,12 +431,11 @@ object GuardEngine {
 
     private fun parentIdentity(ctx: Context): FamilySecurity.SigningIdentity {
         check(isParentMode(ctx))
-        val privateKey = prefs(ctx).getString("parent_signing_private", "") ?: ""
-        val publicKey = prefs(ctx).getString("parent_signing_public", "") ?: ""
-        if (privateKey.isNotEmpty() && FamilySecurity.validPublicKey(publicKey)) return FamilySecurity.SigningIdentity(privateKey, publicKey)
-        return FamilySecurity.newSigningIdentity().also {
-            prefs(ctx).edit().putString("parent_signing_private", it.privateKey).putString("parent_signing_public", it.publicKey).apply()
-        }
+        recoverFreshFamily(ctx)
+        val identity=FamilySecurity.loadOrCreateParentIdentity(ctx,prefs(ctx).getString("parent_signing_private",null),prefs(ctx).getString("parent_signing_public",null))
+        // Remove legacy exportable material only after the imported key and pinned trust verify.
+        check(prefs(ctx).edit().putString("parent_signing_public",identity.publicKey).remove("parent_signing_private").commit())
+        return identity
     }
 
     fun relayPublicKey(ctx:Context):String = synchronized(pollLock) {
@@ -513,6 +547,40 @@ object GuardEngine {
         postEncryptedToChannel(ctx, topic, token, plain, null)
     }
 
+    private fun recoverFreshFamily(ctx: Context) {
+        val raw=prefs(ctx).getString("fresh_family_recovery_json",null) ?: return
+        check(getRole(ctx)=="parent")
+        val change=JSONObject(raw);val old=change.getString("old_token");val fresh=change.getString("new_token")
+        require(FamilySecurity.validToken(old) && FamilySecurity.validToken(fresh) && old!=fresh)
+        val identity=FamilySecurity.SigningIdentity(change.getString("signing_ref"),change.getString("public_key"))
+        FamilyEvidence(ctx).use{it.discardPending(getChannelTopicForToken(old))}
+        FamilySecurity.activateParentIdentity(ctx,identity)
+        val editor=prefs(ctx).edit().putString("family_uuid_token",fresh).putString("parent_signing_public",identity.publicKey)
+        for(key in listOf("parent_signing_private","pending_rotation_json","evidence_transition_json","control_state_json","last_control_ts_ms",
+            "capture_policy_id","capture_local_ack_id","capture_child_ack_id","capture_sequence","parent_master_password","parent_share_verifier",
+            "parent_password_verifier","parent_command_public_key","trusted_csv","flagged_offenders_csv","child_self_handle","sent_setup_ok",
+            "parent_last_child_hb_ms","parent_last_child_hb_text","parent_hb_missing_alerted","weekly_stats_json","parent_alerts_json",
+            "synced_15m_code","synced_15m_exp","unlock_until_ms"))editor.remove(key)
+        check(editor.remove("fresh_family_recovery_json").commit())
+        pauseTamperUntilMs=0L;relayGeneration++;CloudRelay.disconnect()
+    }
+    /** Explicit authenticated UI recovery on clean devices; never a remote key-rotation message. */
+    fun createFreshFamilyForRecovery(ctx: Context): String = synchronized(pollLock) {
+        check(isParentMode(ctx))
+        val old=getOrCreateFamilyToken(ctx)
+        prepareParentArchive(ctx)
+        val identity=FamilySecurity.stageFreshParentIdentity(ctx)
+        val fresh=UUID.randomUUID().toString()
+        val change=JSONObject().put("old_token",old).put("new_token",fresh).put("signing_ref",identity.privateKey).put("public_key",identity.publicKey)
+        if(!prefs(ctx).edit().putString("fresh_family_recovery_json",change.toString()).commit()){
+            prefs(ctx).edit().remove("fresh_family_recovery_json").commit()
+            throw SecurityException("Fresh pairing recovery could not be journaled; old family was retained")
+        }
+        relayGeneration++;CloudRelay.disconnect()
+        recoverFreshFamily(ctx)
+        fresh
+    }
+
     // ================= 4. REMOTE KEY ROTATION & REMOTE CHILD UNLOCK/RESET =================
     fun rotateKeyAndNotifyChild(ctx: Context, resetChildToUnconfigured: Boolean, onComplete: ((Boolean) -> Unit)? = null): String = synchronized(pollLock) {
         val session = captureRelaySession(ctx)
@@ -570,6 +638,7 @@ object GuardEngine {
     }
 
     fun syncChildComponents(ctx: Context) {
+        try{ArchiveMaintenance.schedule(ctx)}catch(_:RuntimeException){android.util.Log.w("IGGuard","Archive maintenance could not be scheduled")}
         if (isChildMode(ctx)) {
             prefs(ctx).edit().remove("parent_signing_private").remove("parent_signing_public").apply()
             val legacyPassword = prefs(ctx).getString("parent_master_password", null)
@@ -591,17 +660,21 @@ object GuardEngine {
         refreshMonitoringDisclosure(ctx)
     }
 
+    fun captureScopeSummary(ctx:Context):String = "擴展擷取已啟用 · 傳入訊息" +
+        (if(outgoingCaptureAllowed(ctx))"、已送出的傳出訊息" else "；不含傳出訊息") +
+        (if(trustedContextAllowed(ctx))"；包含信任對象的一般脈絡" else "；不含信任對象的一般脈絡")
+
     fun refreshMonitoringDisclosure(ctx: Context) {
         val manager = ctx.getSystemService(NotificationManager::class.java) ?: return
         if (!isChildMode(ctx)) { manager.cancel(7001); return }
         manager.createNotificationChannel(NotificationChannel("child_disclosure", "子女模式監察提示", NotificationManager.IMPORTANCE_LOW))
         if (Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) return
         val open = PendingIntent.getActivity(ctx, 7001, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val active = isNotificationListenerEnabledStatic(ctx) || isAccessibilityEnabledStatic(ctx)
+        val active = collectionAllowed(ctx) && (isNotificationListenerEnabledStatic(ctx) || isAccessibilityEnabledStatic(ctx))
         val notification = Notification.Builder(ctx, "child_disclosure")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
-            .setContentTitle(if (active) "IG Guard · 子女監察模式" else "IG Guard · 子女模式等待設定")
-            .setContentText(if(fullCaptureEnabled(ctx))"IG 雙向擷取包含傳入、傳出及信任對象。點按查看範圍及狀態。" else "IG 警報會加密傳送給已配對的家長。點按查看權限及狀態。")
+            .setContentTitle(if (!collectionAllowed(ctx)) "IG Guard · 擷取及傳送已停止" else if (active) "IG Guard · 子女監察模式" else "IG Guard · 子女模式等待設定")
+            .setContentText(if(!collectionAllowed(ctx))"不擷取新內容，也不傳送待傳記錄。" else if(fullCaptureEnabled(ctx))captureScopeSummary(ctx) else "IG 警報會加密傳送給已配對的家長。點按查看權限及狀態。")
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
         try { manager.notify(7001, notification) } catch (_: SecurityException) { /* Permission changed while posting. */ }
     }
@@ -622,6 +695,7 @@ object GuardEngine {
         relayGeneration++
     }
     fun getOrCreateFamilyToken(ctx: Context): String = synchronized(pollLock) {
+        recoverFreshFamily(ctx)
         recoverEvidenceTransition(ctx)
         val existing = prefs(ctx).getString("family_uuid_token", null)
         if (!existing.isNullOrBlank()) return@synchronized existing
@@ -757,7 +831,7 @@ object GuardEngine {
     fun hasSecureParentCommands(ctx: Context): Boolean = FamilySecurity.validPublicKey(prefs(ctx).getString("parent_command_public_key", "") ?: "")
 
     fun pendingCapturePolicy(ctx:Context):String = prefs(ctx).getString("capture_policy_id","") ?: ""
-    fun fullCaptureEnabled(ctx:Context):Boolean = isChildMode(ctx) && hasSecureParentCommands(ctx) &&
+    fun fullCaptureEnabled(ctx:Context):Boolean = isChildMode(ctx) && collectionAllowed(ctx) && hasSecureParentCommands(ctx) &&
         pendingCapturePolicy(ctx).isNotEmpty() && prefs(ctx).getString("capture_local_ack_id","")==pendingCapturePolicy(ctx)
     fun parentFullCaptureConfirmed(ctx:Context):Boolean = isParentMode(ctx) && pendingCapturePolicy(ctx).isNotEmpty() &&
         prefs(ctx).getString("capture_child_ack_id","")==pendingCapturePolicy(ctx)
@@ -815,6 +889,7 @@ object GuardEngine {
                                 r.put("event_id","screen:"+AlertFrames.digest(JSONArray().put(windowKey).put(anchor).put(start+index).put(hashes[index]).toString().toByteArray(Charsets.UTF_8)))
                             }
                             if(c.sourceKey.isNotEmpty())r.put("event_id","capture:"+AlertFrames.digest(JSONArray().put(r.getString("conversation_key")).put(c.source).put(c.sourceKey).toString().toByteArray(Charsets.UTF_8)))
+                            if(!captureObservationAllowed(ctx,c,contact.isNotBlank() && isTrustedSender(ctx,contact,c.text),contact.isNotBlank() && isFlaggedOffender(ctx,contact)))continue
                             val stamp=r.getLong("ts_ms")
                             r.put("time",SimpleDateFormat("MM-dd HH:mm:ss",Locale.US).format(Date(stamp)))
                             r.put("receipt_requested",true)
@@ -999,7 +1074,7 @@ object GuardEngine {
         expectedSession: Triple<String,String,Int>? = null,
         onComplete: ((Boolean, String) -> Unit)? = null
     ) {
-        if (!AppConsent.hasAccepted(ctx)) {
+        if (!transferAllowed(ctx)) {
             completeAlertCallback(onComplete, false, "尚未同意使用條款，擷取及轉傳未啟用"); return
         }
         if(expectedSession!=null && captureRelaySession(ctx)!=expectedSession) {
@@ -1061,6 +1136,7 @@ object GuardEngine {
         onComplete: ((Boolean, String) -> Unit)?,
         expectedSession: Triple<String,String,Int>? = null
     ) {
+        if(!transferAllowed(ctx)){completeAlertCallback(onComplete,false,"擷取與待傳送已停止");return}
         val payload = JSONObject(plainJson)
         if (payload.optString("type") == "alert") {
             try {
@@ -1180,17 +1256,18 @@ object GuardEngine {
         val session=captureRelaySession(app)
         thread {
             try {
-                deliveryLoop@ while(AppConsent.hasAccepted(app) && captureRelaySession(app)==session) {
+                deliveryLoop@ while(transferAllowed(app) && captureRelaySession(app)==session) {
                     val next=relayRouteTokens(app).firstNotNullOfOrNull{token->
                         val scope=getChannelTopicForToken(token)
                         val batch=FamilyEvidence(app).use{it.due(scope,System.currentTimeMillis(),session.first)}
                         if(batch.isEmpty())null else Triple(token,scope,batch)
                     } ?: break
                     for(frame in next.third) {
-                        if(!AppConsent.hasAccepted(app) || captureRelaySession(app)!=session)break@deliveryLoop
+                        if(!transferAllowed(app) || captureRelaySession(app)!=session)break@deliveryLoop
+                        if(!FamilyEvidence(app).use{it.pendingEvent(next.second,frame.id)})continue
                         val result=CloudRelay.publishBlocking(app,next.first,frame.id,frame.wire,frame.kind)
                         synchronized(pollLock) {
-                        if(!AppConsent.hasAccepted(app) || captureRelaySession(app)!=session)return@thread
+                        if(!transferAllowed(app) || captureRelaySession(app)!=session)return@thread
                         if(result.accepted)recordRelayAcceptance(app,next.second,frame)
                         else FamilyEvidence(app).use{it.failed(next.second,frame.id,System.currentTimeMillis(),session.first,if(result.contextFull)"data" else null)}
                         }
@@ -1208,7 +1285,7 @@ object GuardEngine {
                 if(AppConsent.hasAccepted(app))finishDeliveryCallbacks(app)
                 app.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(app.packageName))
                 // A new capture arriving as the worker exits must not be stranded.
-                if(AppConsent.hasAccepted(app) && captureRelaySession(app)==session && relayRouteTokens(app).any{token->FamilyEvidence(app).use{it.due(getChannelTopicForToken(token),System.currentTimeMillis(),session.first).isNotEmpty()}})retryPendingAlerts(app)
+                if(transferAllowed(app) && captureRelaySession(app)==session && relayRouteTokens(app).any{token->FamilyEvidence(app).use{it.due(getChannelTopicForToken(token),System.currentTimeMillis(),session.first).isNotEmpty()}})retryPendingAlerts(app)
             }
         }
     }
@@ -1453,7 +1530,9 @@ object GuardEngine {
         if(state.optBoolean("initialized"))editor.putString("weekly_stats_json",state.toString())
         editor.commit()
     }
-    fun prepareParentArchive(ctx: Context) = synchronized(pollLock) { if(isParentMode(ctx))migrateEvidence(ctx) }
+    fun prepareParentArchive(ctx: Context) = synchronized(pollLock) {
+        if(isParentMode(ctx)){migrateEvidence(ctx);FamilyEvidence(ctx).use{it.pruneExpired(getChannelTopic(ctx))}}
+    }
     fun hasUnmigratedEvidence(ctx: Context): Boolean = prefs(ctx).contains("parent_alerts_json")
     fun recordParentAlert(ctx: Context, alertObj: JSONObject, eventId: String): Boolean = synchronized(pollLock) {
         if (!isParentMode(ctx)) return false
@@ -1462,6 +1541,7 @@ object GuardEngine {
             ?: if (eventId.startsWith("relay:")) legacyEvidenceId(alertObj) else eventId
         val scope = getChannelTopic(ctx)
         FamilyEvidence(ctx).use { db ->
+            db.pruneExpired(scope)
             if (db.hasSeen(scope, id) && db.find(scope, id) == null) return false
             val stats = loadParentStatistics(ctx)
             val inserted = db.append(scope, id, alertObj)
@@ -1474,7 +1554,7 @@ object GuardEngine {
     }
     fun getParentAlerts(ctx: Context): List<JSONObject> = synchronized(pollLock) {
         if (!isParentMode(ctx)) return emptyList()
-        migrateEvidence(ctx)
+        prepareParentArchive(ctx)
         FamilyEvidence(ctx).use { it.messages(getChannelTopic(ctx), EvidenceQuery(filter = "any"), limit = 60) }
     }
     fun clearParentAlerts(ctx: Context): Unit = synchronized(pollLock) {
@@ -1555,6 +1635,7 @@ class IgNotificationListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (!GuardEngine.isChildMode(this)) return
+        if(!GuardEngine.collectionAllowed(this))return
         val observationSession=GuardEngine.captureRelaySession(this)
         GuardEngine.checkAndSendChildHeartbeatIfDue(this)
 
@@ -1779,6 +1860,7 @@ class IgAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!GuardEngine.isChildMode(this)) return
+        if(!GuardEngine.collectionAllowed(this))return
         val observationSession=GuardEngine.captureRelaySession(this)
 
         val fullCapture=GuardEngine.fullCaptureEnabled(this)
@@ -2199,6 +2281,67 @@ class ParentAlertService : Service() {
 
 // Native family UI. Monitoring, cryptography and pairing remain in the existing engine.
 class MainActivity : Activity() {
+    private val parentAccess = ParentAccessSession()
+    private var parentAuthSession: Triple<String,String,Int>? = null
+    private var parentAuthPending = false
+    private var parentAuthAction: (() -> Unit)? = null
+    private var parentAuthSignal: android.os.CancellationSignal? = null
+    private var deferredParentIntent: Intent? = null
+    private val parentAuthRequest = 9031
+    private fun parentUnlocked(): Boolean = !GuardEngine.isParentMode(this) || parentAccess.isUnlocked(GuardEngine.captureRelaySession(this))
+
+    private fun renderParentLock() {
+        if(isDestroyed)return
+        val box=LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL;setPadding(dp(24),dp(48),dp(24),dp(24));tag="parent_privacy_lock"
+            isSaveFromParentEnabled=false
+        }
+        box.addView(TextView(this).apply {text="家長資料已鎖定\nParent data is locked";textSize=24f})
+        box.addView(TextView(this).apply {text="使用手機的生物辨識或螢幕鎖驗證後查看。背景接收仍會繼續；請勿與其他人共用手機解鎖憑證。\nAuthenticate with your device lock to view family records. Background delivery continues.";textSize=16f;setPadding(0,dp(20),0,dp(20))})
+        box.addView(Button(this).apply {text="驗證並開啟 / Authenticate";tag="parent_authenticate";setOnClickListener{requestParentAuthentication()}})
+        box.addView(Button(this).apply {text="設定手機螢幕鎖 / Set device lock";setOnClickListener{
+            try{startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))}catch(_:Exception){Toast.makeText(this@MainActivity,"請在 Android 設定啟用螢幕鎖。",Toast.LENGTH_LONG).show()}
+        }})
+        setContentView(box)
+    }
+    private fun requestParentAuthentication(action: (() -> Unit)? = null) {
+        if(!GuardEngine.isParentMode(this) || parentAuthPending)return
+        val keyguard=getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        if(keyguard?.isDeviceSecure != true){Toast.makeText(this,"請先設定 Android 螢幕鎖。",Toast.LENGTH_LONG).show();renderParentLock();return}
+        parentAuthSession=GuardEngine.captureRelaySession(this);parentAuthAction=action;parentAuthPending=true
+        try {
+            if(Build.VERSION.SDK_INT>=30) {
+                val signal=android.os.CancellationSignal();parentAuthSignal=signal
+                android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle("開啟 IG Guard 家長資料")
+                    .setAllowedAuthenticators(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                    .build().authenticate(signal,mainExecutor,object:android.hardware.biometrics.BiometricPrompt.AuthenticationCallback(){
+                        override fun onAuthenticationSucceeded(result:android.hardware.biometrics.BiometricPrompt.AuthenticationResult){completeParentAuthentication(true)}
+                        override fun onAuthenticationError(code:Int,message:CharSequence){completeParentAuthentication(false)}
+                    })
+            } else {
+                val request=keyguard.createConfirmDeviceCredentialIntent("IG Guard 家長資料","驗證後查看家庭記錄及配對設定。")
+                    ?: throw SecurityException("Device authentication is unavailable")
+                startActivityForResult(request,parentAuthRequest)
+            }
+        } catch(_:Exception){completeParentAuthentication(false)}
+    }
+    private fun completeParentAuthentication(success:Boolean) {
+        val expected=parentAuthSession;val action=parentAuthAction
+        parentAuthPending=false;parentAuthSession=null;parentAuthAction=null;parentAuthSignal=null
+        if(isDestroyed)return
+        if(!success || expected==null || expected!=GuardEngine.captureRelaySession(this) || !GuardEngine.isParentMode(this)){
+            parentAccess.lock();renderUi();return
+        }
+        parentAccess.authenticated(expected);renderUi()
+        val incoming=deferredParentIntent;deferredParentIntent=null
+        if(incoming!=null)handleDeepLinkIntent(incoming)
+        openPendingEvidence();action?.invoke()
+    }
+    @Deprecated("Native device credential result")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
+        super.onActivityResult(requestCode,resultCode,data)
+        if(requestCode==parentAuthRequest && parentAuthPending)completeParentAuthentication(resultCode==RESULT_OK)
+    }
     private lateinit var scrollView: ScrollView
     private lateinit var rootContainer: LinearLayout
     private lateinit var screenShell: LinearLayout
@@ -2351,6 +2494,7 @@ class MainActivity : Activity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         try {
             LocalVault.preferences(this).all
             if (AppConsent.receipt(this) == null) { showInitialConsent(); return }
@@ -2359,24 +2503,25 @@ class MainActivity : Activity() {
             applyTheme()
         } catch (_: SecurityException) { showStorageFailure(); return }
           catch (_: android.database.sqlite.SQLiteException) { showStorageFailure(); return }
+        val restoredState=try{restoreParentUiState(savedInstanceState)}catch(_:Exception){showStorageFailure();return}
         GuardEngine.syncChildComponents(this)
-        section = savedInstanceState?.getString("section") ?: "role"
-        renderedRole = savedInstanceState?.getString("rendered_role") ?: GuardEngine.getRole(this)
-        selectedEntryRole = savedInstanceState?.getString("entry_role") ?: ""
-        chartMode = savedInstanceState?.getString("chart_mode") ?: "trend"
-        alertFilter = savedInstanceState?.getString("alert_filter") ?: "all"
-        displayed15MinCode = savedInstanceState?.getString("unlock_code") ?: ""
-        if (savedInstanceState?.getString("draft_family") == GuardEngine.getChannelTopic(this) && renderedRole == GuardEngine.getRole(this)) {
-            evidenceSearch = savedInstanceState.getString("evidence_search") ?: ""
-            evidenceSender = savedInstanceState.getString("evidence_sender")
-            evidenceConversationKey=savedInstanceState.getString("evidence_conversation_key")
-            evidenceSection=savedInstanceState.getString("evidence_section")?:"conversations"
-            evidenceReview=savedInstanceState.getString("evidence_review")?:"new"
-            evidenceDirection=savedInstanceState.getString("evidence_direction")?:"all"
-            evidencePage = savedInstanceState.getInt("evidence_page").coerceAtLeast(0)
+        section = restoredState?.getString("section") ?: "role"
+        renderedRole = restoredState?.getString("rendered_role") ?: GuardEngine.getRole(this)
+        selectedEntryRole = restoredState?.getString("entry_role") ?: ""
+        chartMode = restoredState?.getString("chart_mode") ?: "trend"
+        alertFilter = restoredState?.getString("alert_filter") ?: "all"
+        displayed15MinCode = restoredState?.getString("unlock_code") ?: ""
+        if (restoredState?.getString("draft_family") == GuardEngine.getChannelTopic(this) && renderedRole == GuardEngine.getRole(this)) {
+            evidenceSearch = restoredState.getString("evidence_search") ?: ""
+            evidenceSender = restoredState.getString("evidence_sender")
+            evidenceConversationKey=restoredState.getString("evidence_conversation_key")
+            evidenceSection=restoredState.getString("evidence_section")?:"conversations"
+            evidenceReview=restoredState.getString("evidence_review")?:"new"
+            evidenceDirection=restoredState.getString("evidence_direction")?:"all"
+            evidencePage = restoredState.getInt("evidence_page").coerceAtLeast(0)
             if(evidenceSender!=null && evidencePage>0) {
                 try {
-                    val raw=savedInstanceState.getString("evidence_cursors")?:error("Missing page boundaries")
+                    val raw=restoredState.getString("evidence_cursors")?:error("Missing page boundaries")
                     require(raw.length<=64_000)
                     val cursors=JSONArray(raw)
                     for(i in 0 until cursors.length()) {
@@ -2388,12 +2533,12 @@ class MainActivity : Activity() {
                     require((1..evidencePage).all{evidenceCursors.containsKey(it)})
                 } catch(_:Exception) {evidenceCursors.clear();evidencePage=0}
             }
-            evidenceDays = savedInstanceState.getInt("evidence_days")
-            evidenceSaved = savedInstanceState.getBoolean("evidence_saved")
-            if(savedInstanceState.getInt("private_storage_state_version")==1)
-                savedInstanceState.getBundle("drafts")?.let { b -> for (key in b.keySet()) inputDrafts[key] = b.getString(key) ?: "" }
+            evidenceDays = restoredState.getInt("evidence_days")
+            evidenceSaved = restoredState.getBoolean("evidence_saved")
+            if(restoredState.getInt("private_storage_state_version")==1)
+                restoredState.getBundle("drafts")?.let { b -> for (key in b.keySet()) inputDrafts[key] = b.getString(key) ?: "" }
         }
-        screenShell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        screenShell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; isSaveFromParentEnabled = false }
         fixedHeader = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(4), dp(16), 0) }
         contentFrame = FrameLayout(this)
         bottomNav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -2406,8 +2551,26 @@ class MainActivity : Activity() {
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         handleDeepLinkIntent(intent)
     }
+    private fun restoreParentUiState(saved: Bundle?): Bundle? {
+        val sealed=saved?.getString("encrypted_parent_ui_state") ?: return saved
+        val raw=java.util.Base64.getDecoder().decode(LocalVault.open(this,"parent_ui_state_v1",sealed))
+        val parcel=android.os.Parcel.obtain()
+        return try{parcel.unmarshall(raw,0,raw.size);parcel.setDataPosition(0);parcel.readBundle(javaClass.classLoader)}finally{parcel.recycle()}
+    }
     override fun onSaveInstanceState(outState: Bundle) {
-        if (!storageReady || consentVisible) { super.onSaveInstanceState(outState); return }
+        if(!storageReady || consentVisible){super.onSaveInstanceState(outState);return}
+        if(GuardEngine.isParentMode(this)){
+            val privateState=Bundle();saveCurrentUiState(privateState)
+            val parcel=android.os.Parcel.obtain()
+            try {
+                parcel.writeBundle(privateState)
+                val raw=java.util.Base64.getEncoder().encodeToString(parcel.marshall())
+                outState.putString("encrypted_parent_ui_state",LocalVault.seal(this,"parent_ui_state_v1",raw))
+            } finally {parcel.recycle()}
+        } else saveCurrentUiState(outState)
+        super.onSaveInstanceState(outState)
+    }
+    private fun saveCurrentUiState(outState: Bundle) {
         outState.putInt("private_storage_state_version",1)
         outState.putString("section", section); outState.putString("rendered_role", renderedRole)
         outState.putString("entry_role", selectedEntryRole); outState.putString("chart_mode", chartMode)
@@ -2422,12 +2585,12 @@ class MainActivity : Activity() {
         else if(evidenceSender!=null)outState.putInt("evidence_page",0)
         outState.putString("draft_family", GuardEngine.getChannelTopic(this))
         outState.putBundle("drafts", Bundle().apply { for ((key, value) in inputDrafts) putString(key, value) })
-        super.onSaveInstanceState(outState)
     }
     @Deprecated("Activity back navigation")
     override fun onBackPressed() {
         if (consentVisible) { AppConsent.leaveToHome(this); return }
         if (!storageReady) { finish(); return }
+        if(!parentUnlocked()){AppConsent.leaveToHome(this);return}
         when {
             section == "alerts" && evidenceSender != null -> { evidenceSender = null;evidenceConversationKey=null;evidenceDirection="all"; evidencePage = 0; renderUi(animate = true) }
             section.endsWith("_setup") -> navigateTo("role")
@@ -2442,6 +2605,11 @@ class MainActivity : Activity() {
         if(storageReady && !consentVisible && AppConsent.hasAccepted(this)) handleDeepLinkIntent(intent)
     }
     private fun handleDeepLinkIntent(incoming: Intent?) {
+        if(!parentUnlocked()){
+            deferredParentIntent=incoming?.let{Intent(it)}
+            incoming?.let{setIntent(Intent(it).apply{action=Intent.ACTION_MAIN;data=null})}
+            renderParentLock();return
+        }
         if (incoming?.action == "app.family.igguard.OPEN_EVIDENCE") { handleEvidenceNotification(incoming); return }
         val data = incoming?.data ?: return
         setIntent(Intent(incoming).apply { this.data = null })
@@ -2497,9 +2665,13 @@ class MainActivity : Activity() {
     }
     override fun onPause() {
         super.onPause(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
+        parentAccess.lock()
+        if(storageReady && !consentVisible && GuardEngine.isParentMode(this)) {
+            dismissUiDialogs();inputDrafts.clear();displayed15MinCode="";renderParentLock()
+        }
         try { unregisterReceiver(refreshReceiver) } catch (_: Exception) {}
     }
-    override fun onDestroy() { activityVisible = false; uiHandler.removeCallbacksAndMessages(null); dismissUiDialogs(); super.onDestroy() }
+    override fun onDestroy() { parentAuthSignal?.cancel();parentAccess.lock(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null); dismissUiDialogs(); super.onDestroy() }
 
     private fun navigateTo(destination: String) {
         val role = GuardEngine.getRole(this)
@@ -2546,7 +2718,11 @@ class MainActivity : Activity() {
     }
     private fun renderUi(animate: Boolean = false) {
         if (!storageReady || consentVisible || !AppConsent.hasAccepted(this)) return
-        try { renderProtectedUi(animate) }
+        try {
+            if(!parentUnlocked()){renderParentLock();return}
+            if(::screenShell.isInitialized && screenShell.parent==null)setContentView(screenShell)
+            renderProtectedUi(animate)
+        }
         catch (_: SecurityException) { showStorageFailure() }
         catch (_: android.database.sqlite.SQLiteException) { showStorageFailure() }
     }
@@ -2863,7 +3039,7 @@ class MainActivity : Activity() {
     }
     private fun showPairingInvite(t: ThemeColors) {
         showSheet("讓家人，加入這份守護。") { dialog ->
-            addView(label("將家庭專屬邀請傳送到子女手機，並核對兩部手機上的安全圖案。", 14f, t.textSecondary, bottomPad = 20))
+            addView(label("邀請包含長期家庭秘密，只交予已核對的子女手機，並當面核對完整安全代碼。請勿放入公開連結或群組。剪貼簿自動清除不會刪除外部副本；懷疑外洩請使用重新安全配對。", 14f, t.textSecondary, bottomPad = 20))
             addView(label(GuardEngine.getSafetyEmojis(this@MainActivity), 30f, t.textPrimary, bottomPad = 22).apply { gravity = Gravity.CENTER })
             addView(label("安全代碼：${GuardEngine.getSafetyCode(this@MainActivity)}", 16f, t.textPrimary, true, bottomPad = 12))
             addView(label("請在家長手機查看並與子女手機核對完整安全代碼；代碼同時驗證家長金鑰及密碼設定。", 13f, t.textSecondary, bottomPad = 18))
@@ -3079,7 +3255,7 @@ class MainActivity : Activity() {
         if(!GuardEngine.isParentMode(this))return
         val scope = GuardEngine.getChannelTopic(this)
         val id = alert.optString("_id")
-        val stored = FamilyEvidence(this).use { it.find(scope,id) } ?: return
+        val stored = FamilyEvidence(this).use { it.pruneExpired(scope);it.find(scope,id) } ?: return
         val unidentified=ConversationCapture.unidentifiedLegacyLabel(stored)
         showSheet(if(stored.optString("type")=="captured_message")ConversationCapture.displayLabel(stored.optString("conversation_label"),unidentified)else alertTitle(stored.optString("reason"))) { dialog ->
             val reason = stored.optString("reason");val sender = stored.optString("sender","未識別來源")
@@ -3097,6 +3273,12 @@ class MainActivity : Activity() {
             actions(actionButton(if(stored.optBoolean("_saved"))"取消儲存" else "儲存此訊息",t.btnSecondaryBg,t.btnSecondaryText) {
                 FamilyEvidence(this@MainActivity).use{it.save(scope,id,!stored.optBoolean("_saved"))};dialog.dismiss();renderUi()
             },actionButton("複製完整記錄",t.btnSecondaryBg,t.btnSecondaryText) { copyText("IG Guard 證據","對話：$sender\n作者：${evidenceSpeaker(stored)}\n時間：${evidenceClock(stored)}\n來源：${evidenceSource(stored)}\n\n${stored.optString("text")}") })
+            addView(actionButton("明確保留供檢視（一次，90 天）",t.btnSecondaryBg,t.btnSecondaryText){
+                val kept=FamilyEvidence(this@MainActivity).use{it.preserveForReview(scope,id)}
+                Toast.makeText(this@MainActivity,if(kept)"已限期保留 90 天。" else "已保留或已到期；不會延長既有期限。",Toast.LENGTH_LONG).show()
+                dialog.dismiss();renderUi()
+            })
+            addView(label("收藏不會取消到期日；如需延長，請使用上方明確保留。",12f,t.textMuted,bottomPad=12))
             if(ConversationCapture.actionable(stored)) {
                 actions(*listOf("reviewed" to "標記已查看","follow_up" to "標記待跟進","new" to "標記為新記錄").map{(state,title)->
                     actionButton(title,t.btnSecondaryBg,t.btnSecondaryText) {
@@ -3134,6 +3316,7 @@ class MainActivity : Activity() {
         }
     }
     private fun maybeShowSafetyAdvice() {
+        if(!parentUnlocked())return
         if(!activityVisible || !GuardEngine.isParentMode(this) || section=="role" || activeSheet?.isShowing==true)return
         val alert = FamilyEvidence(this).use{it.nextAdvice(GuardEngine.getChannelTopic(this))} ?: return
         showSafetyAdvice(alert,currentTheme())
@@ -3165,6 +3348,7 @@ class MainActivity : Activity() {
         if(activityVisible){renderUi();openPendingEvidence()}
     }
     private fun openPendingEvidence() {
+        if(!parentUnlocked())return
         val id=pendingEvidenceId ?: return;pendingEvidenceId=null
         if(intent?.action=="app.family.igguard.OPEN_EVIDENCE")setIntent(Intent(intent).apply{action=Intent.ACTION_MAIN;data=null})
         if(!GuardEngine.isParentMode(this))return
@@ -3172,10 +3356,36 @@ class MainActivity : Activity() {
         if(alert.optString("reason")=="sexual_or_grooming_content")showSafetyAdvice(alert,currentTheme()) else showAlertDetails(alert,currentTheme())
     }
     private fun childCaptureStatus():String=when {
-        GuardEngine.fullCaptureEnabled(this)->"雙向擷取已啟用 · 傳入、傳出及信任對象的實際擷取內容。"
+        !GuardEngine.collectionAllowed(this)->"已停止擷取及傳送；Android 權限不會自動移除。"
+        GuardEngine.fullCaptureEnabled(this)->GuardEngine.captureScopeSummary(this)
         GuardEngine.pendingCapturePolicy(this).isNotEmpty()->"只擷取傳入警報 · 已收到家長設定，點按此處閱讀及確認雙向範圍。"
         else->"只擷取傳入警報 · 請家長先傳送雙向擷取設定，點按查看步驟。"
     }
+    private fun showCapturePrivacy(t: ThemeColors) {
+        showSheet("你的擷取範圍") { dialog ->
+            addView(label("停止會同時阻止新擷取與尚未送出的內容。已送達家長的副本需在家長手機另行刪除。重新開始不會自動恢復雙向擷取，也不會重傳舊範圍的待傳記錄。",14f,t.textSecondary,bottomPad=12))
+            if(!GuardEngine.collectionAllowed(this@MainActivity)) {
+                addView(actionButton("清除舊待傳記錄並重新開始傳入警報",t.btnPrimaryBg,t.btnPrimaryText){
+                    GuardEngine.resumeCollection(this@MainActivity);dialog.dismiss();syncRoleServices();renderUi()
+                })
+            } else {
+                val outgoing=CheckBox(this@MainActivity).apply{text="允許已送出的傳出訊息（不含草稿）";isChecked=GuardEngine.outgoingCaptureAllowed(this@MainActivity)}
+                val trusted=CheckBox(this@MainActivity).apply{text="允許信任對象的一般對話脈絡";isChecked=GuardEngine.trustedContextAllowed(this@MainActivity)}
+                addView(outgoing);addView(trusted)
+                addView(label("選項只在已確認的擴展模式生效。儲存會捨棄舊範圍的未傳送記錄；擴大範圍須重新閱讀及確認。",13f,t.textSecondary,bottomPad=12))
+                addView(actionButton("儲存範圍選擇",t.btnPrimaryBg,t.btnPrimaryText){
+                    GuardEngine.setCaptureOptions(this@MainActivity,outgoing.isChecked,trusted.isChecked);dialog.dismiss();renderUi()
+                })
+                addView(actionButton("停止擷取及傳送，並捨棄待傳內容",t.warningButtonBg,t.warningButtonText){
+                    GuardEngine.withdrawCollection(this@MainActivity,true);dialog.dismiss();renderUi()
+                })
+                addView(actionButton("停止擷取及傳送，暫存待傳內容",t.btnSecondaryBg,t.btnSecondaryText){
+                    GuardEngine.withdrawCollection(this@MainActivity,false);dialog.dismiss();renderUi()
+                })
+            }
+        }
+    }
+
     private fun renderChildOverview(t: ThemeColors) {
         rootContainer.addView(icon("plant", t.accentSeafoam, 42))
         heading("安心上網，\n自在成長。", "給你探索的空間，也給家人一份安心。", t)
@@ -3185,8 +3395,9 @@ class MainActivity : Activity() {
         card.addView(label(if (notification && screen) "你的保護已準備好" else "完成設定，讓保護正常運作。", 17f, t.textPrimary, true, bottomPad = 8))
         card.addView(label(if (notification && screen) "通知及畫面保護已連接。" else "通知讀取保護背景訊息；畫面保護處理對話、留言回覆及防靜音。", 14f, t.textSecondary))
         rootContainer.addView(card)
-        rootContainer.addView(label("僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整；警報會加密轉傳至配對家長。停止新擷取請在 Android 關閉通知存取及無障礙服務；已排隊或送達的記錄不會因此刪除。",13f,t.textSecondary,bottomPad=14))
+        rootContainer.addView(label("僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整；警報會加密轉傳至配對家長。可在「擷取範圍與停止」停止擷取及待傳送；Android 權限可另行關閉，已送達副本需另行刪除。",13f,t.textSecondary,bottomPad=14))
         rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)})
+        rootContainer.addView(row("shield-check","擷取範圍與停止",if(GuardEngine.collectionAllowed(this))"選擇範圍、停止新擷取與待傳送。" else "擷取及待傳送已停止。",t){showCapturePrivacy(t)})
         rootContainer.addView(actionButton("查看保護狀態", t.btnPrimaryBg, t.btnPrimaryText) { navigateTo("permissions") })
         rootContainer.addView(row("key", "需要暫時解鎖？", "輸入家長提供的解鎖碼", t) { navigateTo("unlock") })
         rootContainer.addView(textAction("裝置及家庭詳情") {
@@ -3203,7 +3414,7 @@ class MainActivity : Activity() {
         val scope=GuardEngine.getChannelTopic(this)
         showSheet("設定雙向對話擷取") { dialog ->
             addView(label("兩部手機均需更新。家長在此傳送設定，再在子女手機的「權限 → 雙向對話記錄」閱讀並確認範圍。請只為你有權監護的子女設定，並與孩子說明範圍。",15f,t.textPrimary,bottomPad=16))
-            addView(label("新版會保留實際擷取的傳入及傳出訊息，包括信任名單中的一般對話。一般內容不會逐則發出警報，家長可按對話對象及時間查看。",14f,t.textSecondary,bottomPad=14))
+            addView(label("擴展模式會保留實際擷取的傳入訊息；傳出訊息及信任對象的一般脈絡須符合子女手機的選項及確認。一般內容不會逐則發出警報，家長可按對話對象及時間查看。",14f,t.textSecondary,bottomPad=14))
             addView(label("家長送出設定後，子女手機需閱讀並確認範圍。未確認前只維持原有保護。Instagram 未向通知或畫面提供的內容無法擷取；這不是完整對話備份。",14f,t.textSecondary,bottomPad=18))
             addView(actionButton("傳送雙向擷取設定",t.btnPrimaryBg,t.btnPrimaryText) {
                 GuardEngine.requestFullCapture(this@MainActivity){success,_->runOnUiThread {
@@ -3231,10 +3442,10 @@ class MainActivity : Activity() {
                     dialog.dismiss()
                     thread { GuardEngine.pollChannelOnce(applicationContext,since="all");runOnUiThread{if(!isDestroyed)renderUi()} }
                 })
-            addView(label("家長可收到 Instagram 實際擷取的傳入及傳出訊息，包括信任名單中的一般對話。這比舊版只轉傳部分傳入警報的範圍更廣。",15f,t.textPrimary,bottomPad=16))
+            addView(label("家長可收到 Instagram 實際擷取的傳入訊息；按「你的擷取範圍」選項，亦可包含已送出的傳出訊息及信任對象的一般脈絡。這比只轉傳部分傳入警報的範圍更廣。",15f,t.textPrimary,bottomPad=16))
             addView(label("此版本不再讀取 DM、留言及限時動態輸入框的未送出文字；只使用輸入框位置及提示辨識畫面。舊版已保留的草稿仍可查看及刪除；已排隊的舊記錄仍可能送達。",14f,t.textSecondary,bottomPad=14))
-            addView(label("內容會先在此手機加密，經本 App 的 Cloudflare 中繼傳送至配對家長手機。離線內容可在雲端加密暫存最多七天；手機會保留未確認記錄並重試。家長的本機記錄保留至刪除。開發者及 Cloudflare 可處理密文及連線資料，中繼不會取得家庭解密金鑰。",14f,t.textSecondary,bottomPad=14))
-            addView(label("只能保留通知及畫面實際提供的內容；未顯示、未擷取或已過期的內容無法復原。確認範圍不代表 App 已獲法律認證或 Meta 授權。停止新擷取請在 Android 關閉通知存取及無障礙服務；已排隊及已送達記錄需分別處理。",13f,t.textMuted,bottomPad=18))
+            addView(label("內容會先在此手機加密，經本 App 的 Cloudflare 中繼傳送至配對家長手機。新待傳記錄及中繼離線密文最多保留 72 小時；家長新封存預設 30 天，可縮短為 7 天，個別記錄可明確保留一次 90 天。舊封存須預覽及確認採用期限。開發者及 Cloudflare 可處理密文及連線資料，中繼不會取得家庭解密金鑰。",14f,t.textSecondary,bottomPad=14))
+            addView(label("只能保留通知及畫面實際提供的內容；未顯示、未擷取或已過期的內容無法復原。確認範圍不代表 App 已獲法律認證或 Meta 授權。可在「你的擷取範圍」停止擷取及待傳送，並選擇捨棄佇列；也可在 Android 撤銷權限。已送達家長的副本需另行刪除。",13f,t.textMuted,bottomPad=18))
             if(policy.isNotEmpty() && !GuardEngine.fullCaptureEnabled(this@MainActivity)) {
                 addView(actionButton("我已了解，啟用雙向擷取",t.btnPrimaryBg,t.btnPrimaryText) {
                     if(GuardEngine.pendingCapturePolicy(this@MainActivity)==policy && GuardEngine.confirmFullCapture(this@MainActivity)) {
@@ -3250,7 +3461,7 @@ class MainActivity : Activity() {
     }
     private fun renderChildPermissions(t: ThemeColors) {
         heading("每個設定，都說清楚。", "了解每項權限的用途，再前往 Android 設定確認。", t)
-        rootContainer.addView(label("僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整；警報會加密轉傳至配對家長。停止新擷取請在 Android 關閉通知存取及無障礙服務；已排隊或送達的記錄不會因此刪除。",13f,t.textSecondary,bottomPad=14))
+        rootContainer.addView(label("僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整；警報會加密轉傳至配對家長。可在「擷取範圍與停止」停止擷取及待傳送；Android 權限可另行關閉，已送達副本需另行刪除。",13f,t.textSecondary,bottomPad=14))
         rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)}.apply{getChildAt(0).tag="full_capture_setup"})
         if (!GuardEngine.hasSecureParentCommands(this)) rootContainer.addView(label("需要更新家庭配對：現有監察仍會運作。新版家長指令與臨時碼需要家長傳送新邀請；請先更新兩部手機，並以新主密碼重新建立家庭。", 14f, t.warmHoney, bottomPad = 20))
         val notification = GuardEngine.isNotificationListenerEnabledStatic(this)
@@ -3319,7 +3530,7 @@ class MainActivity : Activity() {
         rootContainer.addView(row("bell-simple", if (GuardEngine.isParentMode(this)) "家長警報通知" else "監察狀態通知", "管理系統通知的顯示方式", t) { requestAppNotifications() })
         rootContainer.addView(row("shield", "權限與相容性", "了解 Android 授權及銀行 App 提醒", t) {
             showSheet("清楚了解，每一份授權。") { dialog ->
-                addView(label("通知存取、無障礙服務及系統通知是不同權限，正式授權由 Android 處理。\n\n子女模式會讀取 Instagram 通知及已顯示的 DM；未送出草稿不會讀取。已確認的雙向模式包含傳出及信任對象的一般訊息。記錄會加密傳至配對家長，家長本機封存保留至刪除。停止新擷取需關閉通知存取及無障礙服務，舊記錄及待傳送佇列需另行刪除。本 App 未獲 Meta 授權，也未整合官方資料轉移機制。銀行 App 或 Play Protect 仍可能提示風險，允許受限設定不代表這些服務已認可本 App。家長模式不啟用子女監察服務。\n\n若遇到封鎖，請保留完整警告及版本資料，交由開發者向 Google 提交審查。", 14f, t.textSecondary, bottomPad = 18))
+                addView(label("通知存取、無障礙服務及系統通知是不同權限，正式授權由 Android 處理。\n\n子女模式會讀取 Instagram 通知及已顯示的 DM；未送出草稿不會讀取。已確認的擴展模式按子女的選項包含已送出的傳出訊息及信任對象的一般脈絡。記錄會加密傳至配對家長；新封存預設 30 天，待傳記錄最多 72 小時。可在「你的擷取範圍」停止新擷取與待傳送及捨棄佇列；已送達副本須另行刪除。本 App 未獲 Meta 授權，也未整合官方資料轉移機制。銀行 App 或 Play Protect 仍可能提示風險，允許受限設定不代表這些服務已認可本 App。家長模式不啟用子女監察服務。\n\n若遇到封鎖，請保留完整警告及版本資料，交由開發者向 Google 提交審查。", 14f, t.textSecondary, bottomPad = 18))
                 addView(actionButton("受限設定協助", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss(); openAppDetailsSettings() })
             }
         })
@@ -3348,7 +3559,7 @@ class MainActivity : Activity() {
                 addView(label("家長接收通道：${GuardEngine.cpParentStreamState}\n\n最新傳送：${GuardEngine.cpLastHttpStatus}\n\n最新同步：${GuardEngine.cpLastPollStatus}", 14f, t.textPrimary, bottomPad = 18))
                 if (GuardEngine.isChildMode(this@MainActivity)) {
                     addView(label("畫面擷取：${GuardEngine.cpLastCaptureStatus}",13f,t.textSecondary,bottomPad=16))
-                    addView(label("待確認片段：${GuardEngine.pendingDeliveryCount(this@MainActivity)}\n啟用安全配對後，訊息保留至家長手機確認接收；確認接收不代表已閱讀。斷網後會保留並重試。", 13f, t.textSecondary, bottomPad = 16))
+                    addView(label("待確認片段：${GuardEngine.pendingDeliveryCount(this@MainActivity)}\n啟用安全配對後，新待傳片段最多保留 72 小時，或提前於家長手機確認接收後移除；確認接收不代表已閱讀。到期內容不再重試。", 13f, t.textSecondary, bottomPad = 16))
                     addView(actionButton("立即重試傳送", t.btnSecondaryBg, t.btnSecondaryText) { GuardEngine.retryPendingAlerts(this@MainActivity, force = true); dialog.dismiss() })
                     addView(actionButton("檢查系統背景電池限制", t.btnSecondaryBg, t.btnSecondaryText) {
                         launchSettings(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
@@ -3359,14 +3570,37 @@ class MainActivity : Activity() {
             }
         })
     }
+    private fun showRetentionSettings(t: ThemeColors) {
+        val scope=GuardEngine.getChannelTopic(this)
+        val preview=FamilyEvidence(this).use{it.retentionPreview(scope)}
+        showSheet("記錄保留期限") { dialog ->
+            addView(label("新封存預設保留 ${preview.retentionDays} 天，待傳內容最多 72 小時。明確保留供檢視的個別記錄最多 90 天。舊版本記錄不會在升級時直接刪除。",14f,t.textSecondary,bottomPad=12))
+            for(days in listOf(7,30))addView(actionButton("新記錄保留 $days 天",t.btnSecondaryBg,t.btnSecondaryText){
+                alert().setTitle("變更為 $days 天？").setMessage("現有新格式記錄的期限可能縮短；已過期內容會刪除。舊格式記錄仍須另行確認套用，限期保留的記錄不受縮短影響。")
+                    .setNegativeButton("取消",null).setPositiveButton("確認變更"){_,_->
+                        FamilyEvidence(this@MainActivity).use{it.setRetentionDays(scope,days);it.pruneExpired(scope)};dialog.dismiss();renderUi()
+                    }.show()
+            })
+            addView(label("舊記錄：${preview.legacyCount} 則；按目前期限已過期：${preview.legacyExpiredCount} 則。採用後，過期內容會刪除，防重播識別碼仍保留。",14f,t.textSecondary,bottomPad=12))
+            if(preview.legacyCount>0)addView(actionButton("預覽後，將期限套用至舊記錄",t.warningButtonBg,t.warningButtonText){
+                alert().setTitle("將期限套用至舊記錄？").setMessage("${preview.legacyExpiredCount} 則舊記錄可能立即到期。先在記錄詳情選擇限期保留；已複製的外部副本不受影響。")
+                    .setNegativeButton("取消",null).setPositiveButton("確認採用") {_,_->
+                        FamilyEvidence(this@MainActivity).use{it.applyRetentionToLegacy(scope);it.pruneExpired(scope,System.currentTimeMillis())};dialog.dismiss();renderUi()
+                    }.show()
+            })
+        }
+    }
+
     private fun renderRoleSwitchFooter(t: ThemeColors, requirePin: Boolean) {
         sectionTitle("家庭管理", t)
+        if(GuardEngine.isParentMode(this))rootContainer.addView(row("clock","保留期限與舊記錄預覽","設定新記錄到期日；舊記錄須確認後採用。",t){showRetentionSettings(t)})
         if (GuardEngine.isParentMode(this)) rootContainer.addView(row("key", "家長主密碼與金鑰", "密碼查看、金鑰更新及遠端救援", t) {
             showSheet("家長主密碼與金鑰") { dialog ->
                 addView(actionButton("查看家長主密碼", t.btnSecondaryBg, t.btnSecondaryText) {
                     alert().setTitle("家長主密碼").setMessage(GuardEngine.getPin(this@MainActivity)).setPositiveButton("關閉", null).show()
                 })
-                addView(actionButton("更新家庭金鑰並同步子女手機", t.btnSecondaryBg, t.btnSecondaryText) {
+                addView(actionButton("秘密可能外洩：重新安全配對",t.warningButtonBg,t.warningButtonText){dialog.dismiss();showCompromiseRecovery(t)})
+                addView(actionButton("例行更新金鑰（不能修復秘密外洩）", t.btnSecondaryBg, t.btnSecondaryText) {
                     sendParentCommand(resetChild = false); dialog.dismiss()
                 })
                 addView(actionButton("遠端解除子女保護並重設身份", t.btnSecondaryBg, t.btnSecondaryText) {
@@ -3384,6 +3618,31 @@ class MainActivity : Activity() {
         })
         if (requirePin) rootContainer.addView(label("忘記家長主密碼時，可由家長手機使用遠端救援。", 13f, t.textSecondary, topPad = 16))
     }
+    private fun showCompromiseRecovery(t: ThemeColors) {
+        showSheet("重新安全配對") { dialog ->
+            addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對及核對完整安全代碼。已被複製的舊資料無法收回。",14f,t.textSecondary,bottomPad=18))
+            fun fresh() {
+                if(!parentUnlocked())return
+                try {
+                    GuardEngine.createFreshFamilyForRecovery(this@MainActivity)
+                    parentAccess.authenticated(GuardEngine.captureRelaySession(this@MainActivity))
+                    dialog.dismiss();syncRoleServices();renderUi();showPairingInvite(currentTheme())
+                } catch(_:Exception){Toast.makeText(this@MainActivity,"未能完成；原有資料已保留。請重試或聯絡支援。",Toast.LENGTH_LONG).show()}
+            }
+            addView(actionButton("先刪除舊中繼房間，再建立新配對",t.warningButtonBg,t.warningButtonText){
+                val expected=GuardEngine.captureRelaySession(this@MainActivity)
+                CloudRelay.retireRoom(this@MainActivity){ok,message->runOnUiThread{
+                    if(isDestroyed || !parentUnlocked() || GuardEngine.captureRelaySession(this@MainActivity)!=expected)return@runOnUiThread
+                    if(ok)fresh() else Toast.makeText(this@MainActivity,message,Toast.LENGTH_LONG).show()
+                }}
+            })
+            addView(actionButton("無法連線：只建立新配對",t.btnSecondaryBg,t.btnSecondaryText){
+                alert().setTitle("未確認中繼刪除，仍要繼續？").setMessage("新秘密不會經舊通道傳送，但舊密文可能仍留在中繼直到到期。子女手機需離線停止舊擷取，然後在安全裝置重新配對；已送達或被複製資料不會刪除。")
+                    .setNegativeButton("取消",null).setPositiveButton("了解並建立新配對"){_,_->fresh()}.show()
+            })
+        }
+    }
+
     private fun sendParentCommand(resetChild: Boolean) {
         Toast.makeText(this, "正在傳送已簽署的家長指令。", Toast.LENGTH_SHORT).show()
         GuardEngine.rotateKeyAndNotifyChild(this, resetChild) { success ->
@@ -3423,6 +3682,7 @@ class MainActivity : Activity() {
     }
     private val uiDialogs = mutableSetOf<Dialog>()
     private fun trackDialog(dialog: Dialog) {
+        dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         uiDialogs.add(dialog)
         dialog.setOnDismissListener {
             uiDialogs.remove(dialog)
@@ -3437,22 +3697,23 @@ class MainActivity : Activity() {
     private fun sessionClick(action: () -> Unit): View.OnClickListener {
         val session = GuardEngine.captureRelaySession(this)
         return View.OnClickListener {
-            if (GuardEngine.captureRelaySession(this) == session) action()
+            if (GuardEngine.captureRelaySession(this) == session && parentUnlocked()) action()
             else { dismissUiDialogs(); renderUi() }
         }
     }
     private fun alert(): AlertDialog.Builder {
         val session = GuardEngine.captureRelaySession(this)
         return object : AlertDialog.Builder(this@MainActivity) {
-            override fun show(): AlertDialog = super.show().also { trackDialog(it) }
+            override fun show(): AlertDialog = create().also { trackDialog(it);it.show() }
             override fun setPositiveButton(text: CharSequence?, listener: DialogInterface.OnClickListener?): AlertDialog.Builder =
                 super.setPositiveButton(text) { dialog, which ->
-                    if (GuardEngine.captureRelaySession(this@MainActivity) == session) listener?.onClick(dialog, which)
+                    if (GuardEngine.captureRelaySession(this@MainActivity) == session && parentUnlocked()) listener?.onClick(dialog, which)
                     else { dialog.dismiss(); dismissUiDialogs(); renderUi() }
                 }
         }
     }
     private fun showSheet(title: String, content: LinearLayout.(Dialog) -> Unit) {
+        if(!parentUnlocked()){renderParentLock();return}
         activeSheet?.dismiss()
         val t = currentTheme(); val dialog = Dialog(this)
         val wrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = background(t.bgCard, 18); setPadding(dp(24), dp(10), dp(24), dp(24)) }
@@ -3480,8 +3741,9 @@ class MainActivity : Activity() {
         activeSheet = dialog
     }
     private fun copyText(title: String, value: String) {
-        (getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.setPrimaryClip(android.content.ClipData.newPlainText(title, value))
-        Toast.makeText(this, "已複製。", Toast.LENGTH_SHORT).show()
+        if(!parentUnlocked()){renderParentLock();return}
+        SensitiveClipboard.copy(this,title,value)
+        Toast.makeText(this, "已複製；如仍是此項，60 秒後清除剪貼簿。", Toast.LENGTH_SHORT).show()
     }
     private fun descendants(view: View): List<View> = listOf(view) + if (view is ViewGroup) (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
     private fun divider(parent: LinearLayout, t: ThemeColors) { parent.addView(View(this).apply { setBackgroundColor(color(t.borderSubtle)) }, LinearLayout.LayoutParams(-1, dp(1))) }

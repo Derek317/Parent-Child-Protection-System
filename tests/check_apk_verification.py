@@ -28,16 +28,16 @@ class ApkVerification(unittest.TestCase):
             return result.returncode,(root/'output').read_text() if (root/'output').exists() else ''
 
     def test_only_expected_certificate_package_version_and_non_debuggable_build_are_accepted(self):
-        good="package: name='app.family.igguard' versionCode='151' versionName='4.9-beta.3'"
+        good="package: name='app.family.igguard' versionCode='151' versionName='4.9-beta.4'"
         code,output=self.verify(good);self.assertEqual(0,code);self.assertIn('signed_verified=true',output)
         cases=[(good+'\napplication-debuggable',CERT),(good.replace("versionCode='151'","versionCode='150'"),CERT),
-               (good.replace('app.family.igguard','other.package'),CERT),(good.replace("versionName='4.9-beta.3'","versionName='4.7'"),CERT),(good,'0'*64)]
+               (good.replace('app.family.igguard','other.package'),CERT),(good.replace("versionName='4.9-beta.4'","versionName='4.7'"),CERT),(good,'0'*64)]
         for metadata,certificate in cases:
             with self.subTest(metadata=metadata,certificate=certificate):
                 code,output=self.verify(metadata,certificate);self.assertNotEqual(0,code);self.assertNotIn('signed_verified=true',output)
 
     def test_packaged_terms_must_match_the_repository_verbatim(self):
-        good="package: name='app.family.igguard' versionCode='151' versionName='4.9-beta.3'"
+        good="package: name='app.family.igguard' versionCode='151' versionName='4.9-beta.4'"
         code,output=self.verify(good,terms_match=False)
         self.assertNotEqual(0,code);self.assertNotIn('signed_verified=true',output)
 

@@ -26,8 +26,31 @@ object CloudRelay {
     private var oldRoute:Connection?=null
     @Volatile private var parentAlert:((JSONObject)->Unit)?=null
 
+    /** Parent-authorized erasure uses the old room proof; it carries no replacement pairing secrets. */
+    fun retireRoom(ctx:Context, endpoint:String = BuildConfig.RELAY_BASE_URL, onComplete:(Boolean,String)->Unit) {
+        val origin:Triple<String,String,Int>;val request:Request
+        try {
+            check(GuardEngine.isParentMode(ctx) && GuardEngine.transferAllowed(ctx))
+            origin=GuardEngine.captureRelaySession(ctx)
+            val scope=GuardEngine.getChannelTopicForToken(origin.second)
+            val room=FamilyRelay.room(GuardEngine.relayPublicKey(ctx),scope)
+            val socket=FamilyRelay.socketUrl(endpoint,room,BuildConfig.DEBUG)
+            val url=socket.replaceFirst("wss://","https://").replaceFirst("ws://","http://")
+            request=Request.Builder().url(url).delete().header("Authorization",GuardEngine.relayAuthorization(ctx,origin.second)).build()
+        } catch(_:Exception){onComplete(false,"未能準備中繼刪除請求；目前配對保留。");return}
+        executor.execute {
+            if(GuardEngine.captureRelaySession(ctx)!=origin){onComplete(false,"配對已變更，刪除請求已停止。");return@execute}
+            try {
+                client.newBuilder().readTimeout(12,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
+                    val success=response.code in 200..299
+                    onComplete(success,if(success)"中繼已確認刪除及退役舊房間。" else "中繼未確認刪除（HTTP ${response.code}）；目前配對保留。")
+                }
+            } catch(_:Exception){onComplete(false,"中繼未確認刪除；請檢查連線後重試。")}
+        }
+    }
+
     private fun connection(ctx:Context,token:String):Connection {
-        check(AppConsent.hasAccepted(ctx)) { "Initial consent is required" }
+        check(GuardEngine.transferAllowed(ctx)) { "Consent and active transfer permission are required" }
         val session=GuardEngine.captureRelaySession(ctx)
         require(session.first!="unconfigured")
         if(token!=session.second)require(session.first=="parent")
@@ -42,7 +65,7 @@ object CloudRelay {
     fun connect(ctx:Context,onParentAlert:((JSONObject)->Unit)?=null) {
         executor.execute {
             if(onParentAlert!=null)parentAlert=onParentAlert
-            if(!AppConsent.hasAccepted(ctx) || GuardEngine.getRole(ctx)=="unconfigured")return@execute
+            if(!GuardEngine.transferAllowed(ctx) || GuardEngine.getRole(ctx)=="unconfigured")return@execute
             try{connection(ctx,GuardEngine.getOrCreateFamilyToken(ctx)).start()}
             catch(_:Exception){
                 val status="中繼設定或家長驗證金鑰未完成 · 請更新兩部手機及配對資料"
@@ -92,7 +115,7 @@ object CloudRelay {
         private data class Pending(val json:JSONObject,val callback:(PublishResult)->Unit,var sent:Boolean=false,var timeout:ScheduledFuture<*>?=null)
         private val pending=linkedMapOf<String,Pending>()
         private fun current():Boolean {
-            if(closed || !AppConsent.hasAccepted(ctx) || GuardEngine.captureRelaySession(ctx)!=origin)return false
+            if(closed || !GuardEngine.transferAllowed(ctx) || GuardEngine.captureRelaySession(ctx)!=origin)return false
             return try{FamilyRelay.room(GuardEngine.relayPublicKey(ctx),GuardEngine.getChannelTopicForToken(token))==room}catch(_:Exception){false}
         }
         private fun state(text:String) {
@@ -161,12 +184,25 @@ object CloudRelay {
         }
         private fun sendNext() {
             if(!ready || !current())return
-            val item=pending.values.firstOrNull{!it.sent} ?: return
-            val delay=100L-(System.currentTimeMillis()-lastPublish)
-            if(delay>0){flush?.cancel(false);flush=executor.schedule({sendNext()},delay,TimeUnit.MILLISECONDS);return}
-            item.sent=true;lastPublish=System.currentTimeMillis()
-            if(socket?.send(item.json.toString())!=true){fail("中繼未能接收 · 已保留，稍後重試");return}
-            if(pending.values.any{!it.sent})flush=executor.schedule({sendNext()},100,TimeUnit.MILLISECONDS)
+            while(true) {
+                val item=pending.values.firstOrNull{!it.sent} ?: return
+                val delay=100L-(System.currentTimeMillis()-lastPublish)
+                if(delay>0){flush?.cancel(false);flush=executor.schedule({sendNext()},delay,TimeUnit.MILLISECONDS);return}
+                // Cached frames may have expired or been discarded while awaiting socket readiness.
+                val id=item.json.getString("id")
+                val eligible=try{FamilyEvidence(ctx).use{it.pendingEvent(GuardEngine.getChannelTopicForToken(token),id)}}
+                    catch(_:Exception){fail("未能核對本機待傳期限；傳送已停止。");return}
+                if(!eligible) {
+                    pending.remove(id);item.timeout?.cancel(false)
+                    item.callback(PublishResult(false,"記錄已到期或已移除，不再傳送。"))
+                    if(temporary && pending.isEmpty()){stop();return}
+                    continue
+                }
+                item.sent=true;lastPublish=System.currentTimeMillis()
+                if(socket?.send(item.json.toString())!=true){fail("中繼未能接收 · 已保留，稍後重試");return}
+                if(pending.values.any{!it.sent})flush=executor.schedule({sendNext()},100,TimeUnit.MILLISECONDS)
+                return
+            }
         }
         private fun incoming(ws:WebSocket,text:String) {
             if(socket!==ws || !current())return

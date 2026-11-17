@@ -42,7 +42,7 @@ class PermissionUiTest {
     }
     @Test fun settingsHelpDoesNotUnlockChild() {
         GuardEngine.setRole(ctx,"child")
-        val controller=Robolectric.buildActivity(MainActivity::class.java).create()
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
         for (method in listOf("openDirectNotificationToggle","openAccessibilityToggle","openAppDetailsSettings")) {
             MainActivity::class.java.getDeclaredMethod(method).apply { isAccessible=true }.invoke(controller.get())
             assertFalse(GuardEngine.isTemporarilyUnlocked(ctx))
@@ -51,7 +51,7 @@ class PermissionUiTest {
     }
     @Test fun navigationStartsAtTopAndKeepsDrafts() {
         GuardEngine.setRole(ctx,"parent")
-        val controller=Robolectric.buildActivity(MainActivity::class.java).create().start().visible()
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
         val a=controller.get()
         invoke(a,"navigateTo","family")
         val root=field(a,"rootContainer") as ViewGroup
@@ -105,7 +105,7 @@ class PermissionUiTest {
 
     @Test fun acceptingSenderInvalidatesStaleAllowlistDraft() {
         GuardEngine.setRole(ctx,"parent")
-        val controller=Robolectric.buildActivity(MainActivity::class.java).create()
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
         val a=controller.get()
         invoke(a,"navigateTo","family")
         val root=field(a,"rootContainer") as ViewGroup
@@ -120,7 +120,7 @@ class PermissionUiTest {
 
     @Test fun staleReportingDayRefreshesOverview() {
         GuardEngine.setRole(ctx,"parent")
-        val controller=Robolectric.buildActivity(MainActivity::class.java).create()
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
         val a=controller.get()
         invoke(a,"navigateTo","overview")
         MainActivity::class.java.getDeclaredField("displayedChartDate").apply { isAccessible=true }.set(a,"1900-01-01")
@@ -132,7 +132,7 @@ class PermissionUiTest {
 
     @Test @Config(sdk = [34]) fun android14ShowsConditionalRestrictedSettingsHelp() {
         GuardEngine.setRole(ctx,"child")
-        val controller=Robolectric.buildActivity(MainActivity::class.java).create()
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
         val a=controller.get()
         invoke(a,"navigateTo","permissions")
         val text=all(field(a,"rootContainer") as View).filterIsInstance<android.widget.TextView>().map { it.text.toString() }

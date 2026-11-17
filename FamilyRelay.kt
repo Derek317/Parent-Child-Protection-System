@@ -2,10 +2,7 @@ package app.family.igguard
 
 import org.json.JSONObject
 import java.net.URI
-import java.security.KeyFactory
 import java.security.MessageDigest
-import java.security.Signature
-import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
 import java.util.Locale
 import java.util.UUID
@@ -33,10 +30,7 @@ object FamilyRelay {
         val room=room(identity.publicKey,scope)
         val capabilityHash=capabilityHash(childCapability(token))
         val proof=listOf("igguard-relay-auth-v1","parent",room,scope,now.toString(),nonce,capabilityHash).joinToString("\n")
-        val signature=Signature.getInstance("SHA256withECDSA").run {
-            initSign(KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(decoder.decode(identity.privateKey))))
-            update(proof.toByteArray(Charsets.UTF_8));encoded(sign())
-        }
+        val signature=encoded(FamilySecurity.signBytes(proof.toByteArray(Charsets.UTF_8),identity.privateKey))
         return authorization(JSONObject().put("v",1).put("role","parent").put("room",room).put("scope",scope)
             .put("public_key",encoded(decoder.decode(identity.publicKey))).put("capability_hash",capabilityHash)
             .put("ts_ms",now).put("nonce",nonce).put("signature",signature))

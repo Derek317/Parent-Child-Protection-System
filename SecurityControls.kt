@@ -1,0 +1,41 @@
+package app.family.igguard
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PersistableBundle
+import java.util.UUID
+
+/** UI authorization only. Background reception never consults this state. */
+class ParentAccessSession {
+    private var granted: Triple<String,String,Int>? = null
+    fun authenticated(session: Triple<String,String,Int>) { require(session.first == "parent"); granted = session }
+    fun isUnlocked(session: Triple<String,String,Int>): Boolean = session.first == "parent" && granted == session
+    fun lock() { granted = null }
+}
+
+/** Clear only our own still-current copy; never overwrite a later clipboard item. */
+object SensitiveClipboard {
+    private const val MARKER = "igguard_clipboard_id"
+    fun copy(ctx: Context, label: String, value: String) {
+        val clipboard = ctx.applicationContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        val id = UUID.randomUUID().toString()
+        val clip = ClipData.newPlainText(label, value)
+        clip.description.extras = PersistableBundle().apply {
+            putString(MARKER, id)
+            putBoolean("android.content.extra.IS_SENSITIVE", true)
+        }
+        clipboard.setPrimaryClip(clip)
+        Handler(Looper.getMainLooper()).postDelayed({
+            try {
+                if (clipboard.primaryClipDescription?.extras?.getString(MARKER) == id) {
+                    if (Build.VERSION.SDK_INT >= 28) clipboard.clearPrimaryClip()
+                    else clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+                }
+            } catch (_: SecurityException) { /* Some Android versions forbid clipboard access in background. */ }
+        }, 60_000L)
+    }
+}
