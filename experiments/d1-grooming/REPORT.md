@@ -1,6 +1,8 @@
 # d1 grooming feasibility — completed synthetic experiment
 
-2026-11-17 · branch `experiment/d1-grooming-2026-11-17`
+18 November 2026 (Hong Kong) · branch `experiment/d1-grooming-2026-11-17`
+
+This experiment branch now includes security hardening commit `18e9693`. The captured rules baseline remains pinned to `71606689c58806818a98c234b8ac7d82ef5ecb36` for reproducibility; rebasing did not change or rerun the frozen model evaluation. No classifier is integrated into the Android app.
 
 **Actual inference completed for all 90 frozen synthetic chats using
 `LiquidAI/d1-omni-600M`, original F32 weights.** The 90-row rules baseline is also
