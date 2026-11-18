@@ -1,0 +1,5 @@
+{
+  "elapsed_seconds": 321.07405112200104,
+  "peak_rss_mib_linux": 1883.375,
+  "torch": "2.9.1+cpu"
+}

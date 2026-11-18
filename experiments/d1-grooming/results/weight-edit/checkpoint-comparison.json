@@ -1,0 +1,14 @@
+{
+  "checkpoint_bytes": 2348774628,
+  "weight_sha256": "b281a4b9a77a7a287e40c15518b2cec4f3e595e09419ef9a201749c54b3f2c0f",
+  "tensor_count": 1084,
+  "modified_entries": {
+    "head.scorer.1.bias": 2,
+    "head.scorer.1.weight": 2048,
+    "head.scorer.3.weight": 1024
+  },
+  "modified_inner_rows": [
+    594,
+    746
+  ]
+}

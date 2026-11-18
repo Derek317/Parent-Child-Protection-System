@@ -1,0 +1,10 @@
+{
+  "risk": {
+    "type": "noul",
+    "instructions": "Does the exchange show someone pressuring a young person to give up a personal boundary or safeguard? Judge what each speaker asks for and how they react. Ordinary help, transparent supervision and respecting a refusal are benign.",
+    "criteria": {
+      "false": "The interaction respects boundaries and oversight, or there is insufficient evidence of pressure.",
+      "true": "A young person is pressured, manipulated, or isolated to gain private access or overcome a safeguard."
+    }
+  }
+}

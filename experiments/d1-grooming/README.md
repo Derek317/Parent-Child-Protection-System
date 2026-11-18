@@ -1,5 +1,7 @@
 # d1 grooming feasibility experiment
 
+See the [direct weight edit follow-up](WEIGHT-EDIT.md) for the edited checkpoint and evaluation.
+
 Independent text-only research harness on `experiment/d1-grooming-2026-11-17`.
 No app code, live monitoring, account actions or real child data are used. Results are in
 [REPORT.md](REPORT.md); Android evidence and unexecuted device steps are in
