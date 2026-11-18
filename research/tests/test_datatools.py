@@ -359,6 +359,16 @@ class BuildAndReviewTests(unittest.TestCase):
             body = text.split("## Id to number table")[0]
             for e in dt_common.ENDINGS:
                 self.assertNotIn(f"-{e}-", body)
+            excl = ["s001-low-yue", "s002-high-mixed"]
+            dt_common.write_json(dd / "excl.json", excl)
+            self.assertEqual(make_cantonese_review.main(
+                ["--data-dir", d, "--seed", "5", "--exclude-ids-file", str(dd / "excl.json"),
+                 "--out", "r2.md", "--round", "2"]), 0)
+            r2 = (dd / "r2.md").read_text(encoding="utf-8")
+            self.assertIn("# Cantonese check, round 2", r2)
+            table = r2.split("## Id to number table")[1]
+            self.assertNotIn("| s001-", table)
+            self.assertNotIn("| s002-", table)
             # missing family file blocks the build
             (dd / "raw" / "tune" / f"{splits['tune'][0]}.jsonl").unlink()
             self.assertEqual(build_sets.main(["--data-dir", d]), 1)
