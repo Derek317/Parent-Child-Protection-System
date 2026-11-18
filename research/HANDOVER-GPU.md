@@ -6,11 +6,11 @@ Run every command from the repository root in PowerShell, on branch `research/lo
 
 ## Rules
 
-- Do not open, print, score or search `research/data/sealed-test.jsonl`, `research/data/sealed-set-aside.jsonl`, `research/data/raw/sealed/` or `research/data/sealed-work/` before stage 4. `python research/datatools/seal.py verify` checks the hashes without showing content.
+- Do not open, print, score or search `research/data/sealed-test.jsonl`, `research/data/sealed-set-aside.jsonl`, `research/data/raw/sealed/` or `research/data/sealed-work/`, `research/data/sealed-work-round1/`, `research/data/restyle/sealed/` or `research/data/raw-round1/sealed/` before stage 4. `python research/datatools/seal.py verify` checks the hashes without showing content.
 - Do not open `research/data/check.jsonl` until training settings and cutoffs are frozen.
 - Do not edit `research/prompts/instruction-v1.txt`. It is frozen.
 - Synthetic chats only. Model files stay out of git (`research/models/` is ignored).
-- **Do not start any fine-tuning until Derek has passed the Cantonese check** (`research/data/cantonese-review.md`) and the stage 1 stop-or-go below says go.
+- **Do not start any fine-tuning until Derek has passed the Cantonese check** (round 2: `research/data/cantonese-review-round2.md`; round 1 led to a restyle of all Cantonese and mixed chats) and the stage 1 stop-or-go below says go.
 
 ## Step 0: set up and prove the harness on this machine
 
