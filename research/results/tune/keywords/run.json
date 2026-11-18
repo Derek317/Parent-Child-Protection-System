@@ -1,0 +1,20 @@
+{
+  "name": "keywords",
+  "kind": "keywords",
+  "set": "tune",
+  "input": {
+    "path": "research/data/tune.jsonl",
+    "sha256": "182a5cde24e4a7726ed4315ee27fcf2451f74e01164b9781116b30c14ffc337a",
+    "mode": "severity",
+    "n": 225
+  },
+  "python": "3.12.3",
+  "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+  "template": "server",
+  "model": "keywords (GuardEngine.SEXUAL_PATTERN)",
+  "timing": {
+    "wall_seconds_this_invocation": 0.01829072800001086,
+    "chats_run_this_invocation": 225,
+    "workers": 1
+  }
+}
