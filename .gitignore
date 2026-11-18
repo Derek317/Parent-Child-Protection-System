@@ -8,9 +8,9 @@ relay/.env*
 signing-key.base64
 
 # Earlier research bundle (extracted locally, read-only)
-handoff/
+/handoff/
 # Model files and run caches
-research/models/
+/research/models/
 *.gguf
 __pycache__/
 .venv/
