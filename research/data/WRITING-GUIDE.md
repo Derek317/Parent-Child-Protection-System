@@ -46,6 +46,20 @@ Write each language version on its own, as a native writer would. Same plot beat
 - **`zh-Hant-yue`**: **written colloquial Hong Kong Cantonese in Traditional Chinese characters**, the way Hong Kong teens type in DMs. Use Cantonese words and particles (係, 唔, 嘅, 咗, 喺, 啲, 嘢, 佢, 冇, 咁, 㗎, 喎, 啦, 囉, 咩, 嘅啫). Do **not** write standard written Chinese or Mandarin phrasing (不是, 的, 了, 在, 什麼, 沒有, 他們 are wrong here; write 唔係, 嘅, 咗, 喺, 咩, 冇, 佢哋). No Simplified characters. Short lines, sparse punctuation. An occasional English word is normal (ok, sorry, IG, story), but the chat is Cantonese.
 - **`mixed`**: Hong Kong code-switching. Mostly Cantonese sentences with English words and phrases dropped in the way Hong Kong students do ("聽日 present 你 ready 未", "我 send 咗 個 link 畀你"), and some whole messages in English. Both people may switch. It should not read as alternating translated lines. The English that gets mixed in is the English Hong Kong students really use: school, game, app and hobby words, short reactions (ok, sure, nice, sorry, thanks), and set phrases. Basic function words stay Cantonese: write 諗下, 聽晚, 朋友, 得唔得, 係, not "think 下", "聽日 night", "可以嗎", "對". If a line sounds like nobody would say it aloud in a Hong Kong school corridor, rewrite it.
 
+### Hong Kong texting style (from Derek's review, round 1)
+
+Derek edited 26 of the 30 chats in the first review. These rules come from his edits and notes. They apply to `zh-Hant-yue` and `mixed`, mostly to peers and to the child; adults may write a little more fully but still colloquially.
+
+- **Use the shorthand Hong Kong teens type.** `btw` (not 對喇, 對了, 對咗), `thx`, `sry` or `sor`, `tmr`, `k`, `ok`, `nvm`, `bruh`, `lmao` or `lol` (not 哈哈好), `wtf`, `nah`, `yea`, `for real?`, `huh`, `frd`, `grp`, `ac` (account), `del` (delete: "del咗佢", not 刪咗), `tg` (Telegram), `dc` (Discord), `pic`, `add oil` (加油).
+- **Account words.** 細ac is a personal or private account, 大ac or 主ac the public one. Not "個人 account".
+- **Romanised particles are normal:** `ge` (㗎/嘅), `lo` (囉), 姐 or `je` (啫). 咋 at the end of "only" statements often reads better as 姐.
+- **Family words.** Teens often write 老母 or 阿媽 for mum, not "我 mum". 媽咪 suits younger children.
+- **Fewer English words, and the right ones.** Usually one or two English words in a sentence, not one after every other word. The English is slang, a verb or a term of the hobby (send, post, add, tag, book, swap, deadline, practice). Do not swap English in for ordinary nouns and verbs that people say in Cantonese: 話畀其他人 not "tell 其他人", 改咗佢 not "change 咗佢", 玩 not "game", 進步 not "improve", 過錢 not "transfer money", 場波 not "game", 巴士 not "bus".
+- **Chinglish is fine**, including whole short replies: "think think sin" (諗諗先), "try try something new", "no thx", "between u and me", "quick decide", "not yet". A child may answer a Cantonese message in loose English.
+- **Mild swearing happens between peers** (仆街, wtf). Use it sparingly and never anything sexual.
+- **Drop written-style and Mandarin-leaning words:** 想想 (use 諗諗), 來源 (reference), 晚啲 (晏啲), 時 as "when" (嗰時 or 嗰陣), 對唔住喎 in a quick reply (sor), 好似 at the start of a taunt.
+- **Short is natural.** A one-word reply (`yes`, `k`, `ok`) is often better than a full sentence. Cut filler that repeats what was just said.
+
 ## File format
 
 One file per family: `<setting_id>.jsonl`, UTF-8, 15 lines, one JSON object per line:
