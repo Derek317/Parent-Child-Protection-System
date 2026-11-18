@@ -53,7 +53,7 @@ jobs:
 
       - name: Verify deployed relay and authenticated offline delivery
         env:
-          RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
+          RELAY_BASE_URL: ${{ vars.EXPERIMENTAL_RELAY_BASE_URL }}
         run: |
           set -euo pipefail
           status=0
@@ -69,7 +69,7 @@ jobs:
     needs: relay
     runs-on: ubuntu-24.04
     env:
-      RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
+      RELAY_BASE_URL: ${{ vars.EXPERIMENTAL_RELAY_BASE_URL }}
     outputs:
       artifact_name: ${{ steps.package.outputs.artifact_name }}
       signed_verified: ${{ steps.verify.outputs.signed_verified }}

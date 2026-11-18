@@ -86,3 +86,19 @@ It preserves inherited prediction objects and writes the complete metrics into a
 original process. The report excludes the interrupted row from latency percentiles and
 labels approximate pause subtraction. Progress-reader disconnects no longer abort inference.
 Original harness source is retained in `evidence/run-initial.py.txt` with its recorded hash.
+
+## Experimental app backend
+
+This branch targets Worker `experimental` at `https://experimental.dere2005317.workers.dev`.
+The default APK endpoint is in `relay/endpoint.json`; `relay/wrangler.jsonc` names that
+Worker and keeps its Durable Object binding/migration. The APK workflow accepts the
+optional GitHub repository variable `EXPERIMENTAL_RELAY_BASE_URL`; if absent, it uses
+the committed endpoint. It does not use the production `RELAY_BASE_URL` repository variable.
+No GitHub variable change is required for the default experimental endpoint.
+
+Cloudflare Builds: select this branch, root `relay`, and deploy command `npm run deploy`.
+The existing GitHub deployment step does not automatically deploy this experimental
+branch; its build checks the already-deployed endpoint. Both test phones need newly
+built APKs using the same experimental endpoint. Previously installed APKs keep their
+old endpoint. This changes the relay destination only; it does not integrate d1 into
+the app or enable model inference in the Worker.
