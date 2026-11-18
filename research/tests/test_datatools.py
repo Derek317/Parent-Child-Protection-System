@@ -11,6 +11,7 @@ import build_sets  # noqa: E402
 import dt_common  # noqa: E402
 import make_cantonese_review  # noqa: E402
 import seal  # noqa: E402
+import restyle  # noqa: E402
 import split_catalogue  # noqa: E402
 import validate_family  # noqa: E402
 
@@ -361,6 +362,119 @@ class BuildAndReviewTests(unittest.TestCase):
             # missing family file blocks the build
             (dd / "raw" / "tune" / f"{splits['tune'][0]}.jsonl").unlink()
             self.assertEqual(build_sets.main(["--data-dir", d]), 1)
+
+
+class RestyleTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dd = Path(self.tmp.name)
+        write_rows(self.dd / "catalogue" / "settings.jsonl", make_catalogue(4))
+        dt_common.write_json(self.dd / "splits.json", {"seed": 1, "train": ["s001", "s002"], "tune": [], "check": [], "sealed": []})
+        self.raw = {}
+        for f in ("s001", "s002"):
+            self.raw[f] = make_family(f)
+            write_rows(self.dd / "raw" / "train" / f"{f}.jsonl", self.raw[f])
+        self.cat = dt_common.load_catalogue(self.dd)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def patch_rows(self, fam, edit=True, mutate=None):
+        rows = []
+        for r in copy.deepcopy(self.raw[fam]):
+            if r["language"] == "en":
+                continue
+            if edit:
+                for m in r["messages"]:
+                    m["text"] += "喎"
+            rows.append({"id": r["id"], "messages": r["messages"]})
+        if mutate:
+            mutate(rows)
+        return rows
+
+    def write_patch(self, fam, rows):
+        p = self.dd / "restyle" / "train" / f"{fam}.jsonl"
+        write_rows(p, rows)
+        return p
+
+    def check(self, fam, rows, derek=()):
+        p = self.write_patch(fam, rows)
+        return restyle.check_patch(p, self.dd, self.cat, set(derek))
+
+    def assertProblem(self, rows, text, derek=()):
+        problems, _, _ = self.check("s001", rows, derek)
+        self.assertTrue(any(text in p for p in problems), f"{text!r} not in {problems}")
+
+    def test_good_patch(self):
+        problems, warnings, merged = self.check("s001", self.patch_rows("s001"))
+        self.assertEqual((problems, warnings), ([], []))
+        self.assertEqual(len(merged), 15)
+
+    def test_missing_extra_duplicate(self):
+        rows = self.patch_rows("s001")
+        self.assertProblem(rows[1:], "missing from the patch")
+        self.assertProblem(rows + [copy.deepcopy(rows[0])], "appears 2 times")
+        en = copy.deepcopy(self.raw["s001"][0])
+        self.assertProblem(rows + [{"id": en["id"], "messages": en["messages"]}], "English chat")
+
+    def test_count_and_speakers(self):
+        def drop(rows):
+            rows[0]["messages"].pop()
+        self.assertProblem(self.patch_rows("s001", mutate=drop), "keep the count")
+
+        def swap(rows):
+            rows[0]["messages"][0]["speaker"] = "other" if rows[0]["messages"][0]["speaker"] == "child" else "child"
+        self.assertProblem(self.patch_rows("s001", mutate=swap), "speaker order")
+
+    def test_empty_text(self):
+        def m(rows):
+            rows[0]["messages"][0]["text"] = " "
+        self.assertProblem(self.patch_rows("s001", mutate=m), "non-empty string")
+
+    def test_derek_ids_must_be_identical(self):
+        rows = self.patch_rows("s001")
+        self.assertProblem(rows, "hand-edited", derek=[rows[0]["id"]])
+        same = self.patch_rows("s001", edit=False)
+        problems, warnings, _ = self.check("s001", same, derek=[same[0]["id"]])
+        self.assertEqual(problems, [])
+        self.assertEqual(len(warnings), 9)
+
+    def test_unchanged_is_warning(self):
+        problems, warnings, _ = self.check("s001", self.patch_rows("s001", edit=False))
+        self.assertEqual(problems, [])
+        self.assertEqual(len(warnings), 10)
+        self.assertIn("unchanged", warnings[0])
+
+    def test_merged_must_validate(self):
+        def m(rows):
+            for x in rows[0]["messages"]:
+                x["text"] = "今日天氣很好我想去公園玩"
+        self.assertProblem(self.patch_rows("s001", mutate=m), "after applying the patch")
+
+    def test_apply(self):
+        self.write_patch("s001", self.patch_rows("s001"))
+        errors, stats = restyle.apply_split(self.dd, "train")
+        self.assertTrue(any("missing patch file" in e for e in errors))
+        self.assertIsNone(stats)
+        self.assertEqual(dt_common.read_jsonl(self.dd / "raw" / "train" / "s001.jsonl"), self.raw["s001"])
+        self.write_patch("s002", self.patch_rows("s002"))
+        errors, stats = restyle.apply_split(self.dd, "train")
+        self.assertEqual(errors, [])
+        self.assertEqual(stats["chats_changed"], 20)
+        self.assertEqual(stats["messages_changed"], 2 * sum(len(r["messages"]) for r in self.raw["s001"] if r["language"] != "en"))
+        new = dt_common.read_jsonl(self.dd / "raw" / "train" / "s001.jsonl")
+        self.assertEqual([r["id"] for r in new], [r["id"] for r in self.raw["s001"]])
+        for o, n in zip(self.raw["s001"], new):
+            if o["language"] == "en":
+                self.assertEqual(o, n)
+            else:
+                self.assertEqual({k: v for k, v in o.items() if k != "messages"}, {k: v for k, v in n.items() if k != "messages"})
+                self.assertNotEqual(o["messages"], n["messages"])
+        backup = self.dd / "raw-round1" / "train" / "s001.jsonl"
+        self.assertEqual(dt_common.read_jsonl(backup), self.raw["s001"])
+        # a second apply keeps the original backup
+        restyle.apply_split(self.dd, "train")
+        self.assertEqual(dt_common.read_jsonl(backup), self.raw["s001"])
 
 
 if __name__ == "__main__":
