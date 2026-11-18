@@ -46,7 +46,7 @@ def make_family(fam, role="adult", counts=None):
         for k, e in enumerate(dt_common.ENDINGS):
             rows.append({"id": f"{fam}-{e}-{SUFFIX[lang]}", "family": fam, "language": lang, "ending": e,
                          "level": dt_common.LEVELS[e], "other_role": role,
-                         "messages": chat_messages(lang, e, fam, 6 + k)})
+                         "messages": chat_messages(lang, e, fam, 6 + k + (6 if lang == "zh-Hant-yue" else 0))})
     return rows
 
 
@@ -183,6 +183,14 @@ class ValidateTests(unittest.TestCase):
         problems, warnings = self.check(m)
         self.assertEqual(problems, [])
         self.assertEqual(len(warnings), 1)
+
+    def test_length_spread_per_ending(self):
+        def m(r):
+            for x in r:
+                if x["ending"] == "high":
+                    x["messages"] = chat_messages(x["language"], "high", "s001", 8)
+        self.assertProblem(m, "high")
+        self.assertProblem(m, "11 or fewer")
 
     def test_phone_and_handle(self):
         def phone(r):

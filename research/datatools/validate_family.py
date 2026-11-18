@@ -10,7 +10,7 @@ from dt_common import (ENDINGS, LANG_CODES, LANGUAGES, LEVELS, SUFFIX_OF,
 
 ROW_KEYS = {"id", "family", "language", "ending", "level", "other_role", "messages"}
 MARKERS = set("係唔嘅咗喺啲嘢佢冇咁㗎喎啦囉咩")
-SIMPLIFIED = set("这们说没吗对时为会个来还过问让给谁么样觉应该现发见听话请谢欢妈爸钱买卖车门间学习课师写读书图网电机视频照张")
+SIMPLIFIED = set("这们说没吗对时为会个来还过问让给谁么样觉应该现发见听话请谢欢妈钱买卖车门间学习课师写读书图网电机视频张")
 MANDARIN_WORDS = ["不是", "什麼", "沒有", "他們", "我們", "你們", "這個", "那個", "的話"]
 PHONE_RE = re.compile(r"\d{8,}")
 HANDLE_RE = re.compile(r"@\w")
@@ -155,6 +155,15 @@ def validate_rows(rows, family, catalogue):
               and len(ka) > 1 and ka[:-1] == kb[:-1]):
             problems.append(f"{ia} and {ib} are the same chat except the last message; "
                             f"let the endings diverge from an early point")
+    # Length must not give the ending away: each ending needs a short and a long chat.
+    by_ending = {}
+    for r in good:
+        if isinstance(r.get("messages"), list):
+            by_ending.setdefault(r.get("ending"), []).append(len(r["messages"]))
+    for e, lens in by_ending.items():
+        if len(lens) == 3 and not (min(lens) <= 11 and max(lens) >= 12):
+            problems.append(f"ending {e!r}: its three chats have {sorted(lens)} messages; each ending needs "
+                            f"at least one chat of 11 or fewer and one of 12 or more, so length does not reveal the level")
     return problems, warnings
 
 
