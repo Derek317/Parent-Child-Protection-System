@@ -1,0 +1,20 @@
+{
+  "name": "keywords",
+  "kind": "keywords",
+  "set": "blind90",
+  "input": {
+    "path": "research/data/handoff/blind.jsonl",
+    "sha256": "4fcf4a33536006a92512426533cb2eadcce1d4717caa6a58cbd06d5fdc934be1",
+    "mode": "binary",
+    "n": 90
+  },
+  "python": "3.12.3",
+  "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+  "template": "server",
+  "model": "keywords (GuardEngine.SEXUAL_PATTERN)",
+  "timing": {
+    "wall_seconds_this_invocation": 5.789299984826357e-05,
+    "chats_run_this_invocation": 0,
+    "workers": 1
+  }
+}
