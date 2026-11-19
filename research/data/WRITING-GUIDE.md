@@ -60,6 +60,32 @@ Derek edited 26 of the 30 chats in the first review. These rules come from his e
 - **Drop written-style and Mandarin-leaning words:** 想想 (use 諗諗), 來源 (reference), 晚啲 (晏啲), 時 as "when" (嗰時 or 嗰陣), 對唔住喎 in a quick reply (sor), 好似 at the start of a taunt.
 - **Short is natural.** A one-word reply (`yes`, `k`, `ok`) is often better than a full sentence. Cut filler that repeats what was just said.
 
+### Hong Kong texting style (from Derek's review, round 2)
+
+Derek changed 21 of the 30 chats in the second review (43 of 380 messages, no chat changed its message count or speaker order). These rules come from his edits and notes and apply to `zh-Hant-yue` and `mixed`. Where a rule refines or contradicts round 1 it says so.
+
+- **Thanks is `thx`, not 多謝.** 多謝 reads as formal in chat. Example: "thx。啲燈籠記得小心搬".
+- **`kk` or `k` means ok** ("kk" as a whole reply). Asking for agreement: `ok?`, `o唔ok?` or `u ok?`, never "ok 唔 ok" and not "你覺得ok 咩" (rude and stiff; use 你覺得點？).
+- **Laughter is `lol`, `lmao`, 笑死** (also `xswl`, `2333`, `www` exist). A bare 哈哈 reads as a fake person. Refines round 1 (which allowed `lmao`/`lol` but did not rule on 哈哈 alone). Example: "lol, thx 第三段要唔要刪".
+- **Do not switch language back and forth inside one clause.** If a clause starts in English or uses an English connective (but, so, because), keep the rest of that clause in English: "owl is level 12, fox is level 9", "我知你好意，but we are fine", "should work" (not "好 work ge"). Switching keyboards mid-sentence is annoying.
+- **The reverse: one English word in a Chinese clause should usually be the Chinese word,** unless people really say it in English. 蛋 not egg, 稀有 not rare, 商場 not mall (or just 出去玩), 數 not maths, 𥄫 not stare (see below). Refines round 1 ("one or two English words" is fine only for terms people say in English).
+- **Whole short English replies are normal:** "need laptop?", "maybe", "no can do", "np" (not "no prob"), "gd" (good), "sure", "hi" (not 你好呀), "fair enough" on its own. 可能 alone in an otherwise English-free reply reads formal; use `maybe`.
+- **Game terms:** `SSR` / `UR` for a rare card, not "rare card"; "張SSR", "好稀有 ga".
+- **Screen words:** `mon` is a screen (short for monitor), 𥄫 is stare: "𥄫住個mon".
+- **Making up after a quarrel is 耍冧** (spoken "sa lum"; written 耍咗冧), not "講咗sor". Example: "我同佢耍咗冧".
+- **`kam` describes someone awkward or cringey.** Example: "佢好 kam".
+- **Maths is 數**, not "maths" or 數學.
+- **Word order and aspect.** 出咗去, not 出去咗 (咗 goes between the two verb parts); `send咗` or `sent`, not 發過 (Mandarin-leaning); 大概要 90 分鐘, not 要大概 90 分鐘; 踢出 club 名單, not 除咗出.
+- **有冇 + verb asks about the past.** For a plan that has not happened, ask "你 join 唔 join?". Example: 星期六打機 is a plan, so not "你有冇 join".
+- **Drop subjects and objects that are obvious.** "明就答ok", not "你同我講 ok". Cut vague or redundant filler: "你做完海報send me", "同你一齊做感應器 佢哋好叻" was dropped as redundant, and a repeated "都係 fair enough" became "fair enough".
+- **Written-leaning forms go.** 傾你偈 is wrong, use 同你傾偈. 細細嘅活動 is weird, use 個活動. 班堂 does not exist, use 上堂. 度 does not follow a verb-like `hashtag` ("同hashtag 其他人傾"). The second 畀 in "我帶支筆嚟畀大家簽" means give; the first 畀 means allow.
+- **Use the phone model name:** "13" or "S26", not "13 款個殼".
+- **`sor` is too casual for a teacher or an older adult;** write `sorry`. Peers can still get `sor` or `sry` (round 1).
+- **A 喂 opener is a bit rude** and not used to start a conversation, but it is acceptable between peers.
+- **Replies must fit the question.** A child asked about using dc does not answer with a statement that contradicts it ("我媽咪唔准我用dc, 不過佢睇到個server 就得"); "我唔錄畫面得唔得" (can I skip recording the screen?) fits a request to record, "我錄畫面得唔得" did not.
+- **Mild profanity exists between peers** (撚 as an intensifier: "mute 撚咗佢啦成日唱衰你"). Keep it rare, never sexual, and never from or to an adult in a position of trust. Round 1 already allowed sparing swearing between peers.
+- **Completion particles:** "check 咗先" and "del 曬佢" (曬 = all of it) were preferred to "check 先" and "del".
+
 ## File format
 
 One file per family: `<setting_id>.jsonl`, UTF-8, 15 lines, one JSON object per line:
