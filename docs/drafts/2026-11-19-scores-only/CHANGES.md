@@ -81,7 +81,7 @@ A change is needed, so a draft was written. The live document covers only the pa
 - The terms revision string, and removal of the banner and drafting note before anything is bundled (the banner would otherwise change the hash).
 - The 8 GB wording: plan decision 5 treats 7 GB or more reported memory as "about 8 GB". The drafts say "about 8 GB".
 - Plan decision 6 (notification once per conversation per 14 days, no contact name) appears only in the data-flow draft.
-- Most screen captures have kind `unknown` today, so under the design many conversations are not scored (plan, open question 1). The drafts say so in plain words; if Derek changes that rule the text must change.
+- Derek decided on 19 November 2026 that unknown-kind (mostly screen) threads are analysed while only one other person appears; the drafts now say so, and say that a group seen only on the screen may be analysed because the screen capture records no incoming author.
 - Version: the plan says 4.9-beta.4 is not changed; the drafts keep that.
 
 ## 8. Things in the live documents that were already inaccurate before this feature
