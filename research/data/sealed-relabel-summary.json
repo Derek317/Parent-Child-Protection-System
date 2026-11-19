@@ -1,108 +1,108 @@
 {
   "total": 750,
-  "kept": 662,
-  "set_aside": 88,
-  "set_aside_rate": 0.1173,
+  "kept": 661,
+  "set_aside": 89,
+  "set_aside_rate": 0.1187,
   "per_language": {
     "en": {
       "total": 250,
-      "set_aside": 24,
-      "rate": 0.096
+      "set_aside": 29,
+      "rate": 0.116
     },
     "zh-Hant-yue": {
       "total": 250,
-      "set_aside": 30,
-      "rate": 0.12
+      "set_aside": 25,
+      "rate": 0.1
     },
     "mixed": {
       "total": 250,
-      "set_aside": 34,
-      "rate": 0.136
+      "set_aside": 35,
+      "rate": 0.14
     }
   },
   "per_ending": {
     "low": {
       "total": 150,
-      "set_aside": 0,
-      "rate": 0.0
+      "set_aside": 6,
+      "rate": 0.04
     },
     "potential": {
       "total": 150,
-      "set_aside": 31,
-      "rate": 0.2067
+      "set_aside": 30,
+      "rate": 0.2
     },
     "moderate": {
       "total": 150,
-      "set_aside": 0,
-      "rate": 0.0
+      "set_aside": 1,
+      "rate": 0.0067
     },
     "high": {
       "total": 150,
-      "set_aside": 0,
-      "rate": 0.0
+      "set_aside": 1,
+      "rate": 0.0067
     },
     "unresolved": {
       "total": 150,
-      "set_aside": 57,
-      "rate": 0.38
+      "set_aside": 51,
+      "rate": 0.34
     }
   },
   "confusion_intended_by_blind_answer": {
     "low": {
-      "0": 150,
-      "1": 0,
+      "0": 144,
+      "1": 4,
       "2": 0,
       "3": 0,
-      "U": 0
+      "U": 2
     },
     "potential": {
-      "0": 31,
-      "1": 119,
+      "0": 29,
+      "1": 120,
       "2": 0,
       "3": 0,
-      "U": 0
+      "U": 1
     },
     "moderate": {
       "0": 0,
-      "1": 0,
-      "2": 140,
-      "3": 10,
+      "1": 1,
+      "2": 137,
+      "3": 12,
       "U": 0
     },
     "high": {
-      "0": 0,
+      "0": 1,
       "1": 0,
       "2": 0,
-      "3": 150,
+      "3": 149,
       "U": 0
     },
     "unresolved": {
-      "0": 29,
-      "1": 27,
-      "2": 1,
-      "3": 0,
-      "U": 93
+      "0": 23,
+      "1": 25,
+      "2": 2,
+      "3": 1,
+      "U": 99
     }
   },
-  "kept_2_vs_3_mismatches": 10,
+  "kept_2_vs_3_mismatches": 12,
   "remaining_per_language": {
     "en": {
       "risk": 100,
-      "benign": 50,
-      "potential": 41,
-      "unresolved": 35
+      "benign": 49,
+      "potential": 40,
+      "unresolved": 32
     },
     "zh-Hant-yue": {
       "risk": 100,
-      "benign": 50,
-      "potential": 40,
-      "unresolved": 30
+      "benign": 48,
+      "potential": 42,
+      "unresolved": 35
     },
     "mixed": {
-      "risk": 100,
-      "benign": 50,
+      "risk": 98,
+      "benign": 47,
       "potential": 38,
-      "unresolved": 28
+      "unresolved": 32
     }
   },
   "over_15_percent": false

@@ -70,3 +70,7 @@ Cells are risk flagged · benign flagged.
 - **The edit works in the style it was fitted on and nowhere else**, the same pattern as the handoff's edits and as Qwen3 v1.
 - **The comparison is not like for like on the handoff sets.** The d1 edit was fitted on the new-style chats only; Qwen3 v3 also trained on 387 handoff-style development chats. The third-style test is the fair row: neither model saw that style.
 - **Decision: the fine-tuned Qwen3 1.7B is the model to carry forward.** A head edit can only re-read what d1's last layers already expose; fine-tuning changes what the model computes.
+
+## Note added 19 November 2026: the sealed set changed after this report
+
+The Cantonese and mixed chats in the sealed set were reworded a second time and relabelled blind (661 kept, 89 set aside; new hashes in `research/data/SEALED.sha256`). The figures above were measured on the earlier wording (662 kept). A new sealed score on the reworded set is a second use, not a clean first look. See `research/HANDOVER-GPU.md`.
