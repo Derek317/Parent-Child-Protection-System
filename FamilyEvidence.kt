@@ -442,14 +442,14 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     private val riskTables=riskChildTables+riskParentTables
     private fun riskSchema(db:SQLiteDatabase) {
         // Text and labels are sealed like the evidence table; thread identity is a blind index.
-        db.execSQL("CREATE TABLE risk_store(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,id TEXT NOT NULL,thread_index TEXT NOT NULL,label TEXT NOT NULL,direction TEXT NOT NULL,body TEXT NOT NULL,stamp INTEGER NOT NULL,sort_stamp INTEGER NOT NULL,sort_order INTEGER NOT NULL,UNIQUE(scope,id))")
-        db.execSQL("CREATE INDEX risk_store_thread ON risk_store(scope,thread_index,sort_stamp DESC,sort_order DESC,id DESC)")
-        db.execSQL("CREATE TABLE risk_threads(scope TEXT NOT NULL,thread_index TEXT NOT NULL,label TEXT NOT NULL,scored_seq INTEGER NOT NULL DEFAULT 0,sent_sig TEXT NOT NULL DEFAULT '',PRIMARY KEY(scope,thread_index))")
-        db.execSQL("CREATE TABLE risk_results(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,thread_index TEXT NOT NULL,score REAL,reason TEXT,scored_at INTEGER NOT NULL)")
-        db.execSQL("CREATE INDEX risk_results_thread ON risk_results(scope,thread_index,scored_at)")
-        db.execSQL("CREATE TABLE risk_unknown(scope TEXT NOT NULL,thread_index TEXT NOT NULL,seen_at INTEGER NOT NULL,PRIMARY KEY(scope,thread_index))")
-        db.execSQL("CREATE TABLE risk_scores(scope TEXT NOT NULL,label_index TEXT NOT NULL,label TEXT NOT NULL,result TEXT NOT NULL,scored_at INTEGER NOT NULL,first_reached_50 INTEGER,PRIMARY KEY(scope,label_index))")
-        db.execSQL("CREATE TABLE risk_state(scope TEXT PRIMARY KEY,policy_id TEXT,model TEXT NOT NULL,consent TEXT NOT NULL,paused INTEGER NOT NULL,paused_at INTEGER,last_run INTEGER,scored_count INTEGER NOT NULL,unknown_threads INTEGER NOT NULL,sent_at INTEGER NOT NULL,received_at INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_store(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,id TEXT NOT NULL,thread_index TEXT NOT NULL,label TEXT NOT NULL,direction TEXT NOT NULL,body TEXT NOT NULL,stamp INTEGER NOT NULL,sort_stamp INTEGER NOT NULL,sort_order INTEGER NOT NULL,UNIQUE(scope,id))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS risk_store_thread ON risk_store(scope,thread_index,sort_stamp DESC,sort_order DESC,id DESC)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_threads(scope TEXT NOT NULL,thread_index TEXT NOT NULL,label TEXT NOT NULL,scored_seq INTEGER NOT NULL DEFAULT 0,sent_sig TEXT NOT NULL DEFAULT '',PRIMARY KEY(scope,thread_index))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_results(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,thread_index TEXT NOT NULL,score REAL,reason TEXT,scored_at INTEGER NOT NULL)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS risk_results_thread ON risk_results(scope,thread_index,scored_at)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_unknown(scope TEXT NOT NULL,thread_index TEXT NOT NULL,seen_at INTEGER NOT NULL,PRIMARY KEY(scope,thread_index))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_scores(scope TEXT NOT NULL,label_index TEXT NOT NULL,label TEXT NOT NULL,result TEXT NOT NULL,scored_at INTEGER NOT NULL,first_reached_50 INTEGER,PRIMARY KEY(scope,label_index))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_state(scope TEXT PRIMARY KEY,policy_id TEXT,model TEXT NOT NULL,consent TEXT NOT NULL,paused INTEGER NOT NULL,paused_at INTEGER,last_run INTEGER,scored_count INTEGER NOT NULL,unknown_threads INTEGER NOT NULL,sent_at INTEGER NOT NULL,received_at INTEGER NOT NULL)")
     }
     private fun scoreLabelKey(scope:String,label:String):String = index(scope,"score_label",label.trim().removePrefix("@").lowercase(Locale.ROOT))
     private fun protectScore(scope:String,label:String,result:String):ContentValues {
