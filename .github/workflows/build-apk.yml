@@ -370,7 +370,12 @@ jobs:
               testImplementation 'org.robolectric:robolectric:4.14.1'
           }
           EOF
-          gradle testDebugUnitTest lintDebug --no-daemon
+          if ! gradle testDebugUnitTest lintDebug --no-daemon; then
+            # Gradle prints only the exception type; show which runtime jar Robolectric could not open, if any.
+            grep -rhoE -m1 '(Path is not a file|Unable to read file): [^<&]*' app/build/test-results 2>/dev/null | sort -u | sed 's/^/::error::Robolectric offline runtime: /' || true
+            ls -la "$HOME/.robolectric-android-all" || true
+            exit 1
+          fi
 
       - name: Compile APK
         id: package
