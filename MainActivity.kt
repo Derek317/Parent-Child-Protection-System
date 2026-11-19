@@ -186,6 +186,7 @@ object GuardEngine {
         check(prefs(ctx).edit().putBoolean("collection_withdrawn", true).remove("capture_local_ack_id").commit())
         relayGeneration++; CloudRelay.disconnect()
         if(discardPending) FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx)) }
+        RiskLocal.wipeData(ctx); try{RiskScoringSchedule.sync(ctx)}catch(_:RuntimeException){}
         refreshMonitoringDisclosure(ctx)
     }
     /** Resuming is an explicit fresh start: held old-scope records are not silently resent. */
@@ -631,14 +632,18 @@ object GuardEngine {
     fun setRole(ctx: Context, role: String) {
         require(role in setOf("child", "parent", "unconfigured"))
         synchronized(pollLock) {
-            if (getRole(ctx) != role) {relayGeneration++;CloudRelay.disconnect()}
+            val previous = getRole(ctx)
+            if (previous != role) {relayGeneration++;CloudRelay.disconnect()}
             prefs(ctx).edit().putString("role", role).apply()
+            // Leaving the child role (including a remote reset) ends scores-only mode and deletes the scoring store.
+            if (previous == "child" && role != "child") RiskLocal.resetFamily(ctx)
         }
         syncChildComponents(ctx)
     }
 
     fun syncChildComponents(ctx: Context) {
         try{ArchiveMaintenance.schedule(ctx)}catch(_:RuntimeException){android.util.Log.w("IGGuard","Archive maintenance could not be scheduled")}
+        try{RiskScoringSchedule.sync(ctx)}catch(_:RuntimeException){android.util.Log.w("IGGuard","Risk scoring could not be scheduled")}
         if (isChildMode(ctx)) {
             prefs(ctx).edit().remove("parent_signing_private").remove("parent_signing_public").apply()
             val legacyPassword = prefs(ctx).getString("parent_master_password", null)
@@ -711,6 +716,8 @@ object GuardEngine {
             val old = prefs(ctx).getString("family_uuid_token", "") ?: ""
             val editor = prefs(ctx).edit()
             if (old != clean) {
+                // The scoring store never survives a key change; a new family also loses the mode state and consent.
+                if (preserveFamilyHistory) RiskLocal.wipeData(ctx) else RiskLocal.resetFamily(ctx)
                 if (old.isNotEmpty()) FamilyEvidence(ctx).use { db ->
                     if (isParentMode(ctx)) migrateEvidence(ctx)
                     if (preserveFamilyHistory) {
@@ -862,6 +869,8 @@ object GuardEngine {
                 val token=getOrCreateFamilyToken(ctx);val scope=getChannelTopicForToken(token)
                 require(observations.size<=128){"Capture batch exceeds 128 observations"}
                 val rows=observations;val now=System.currentTimeMillis()
+                // Scores-only mode: text is stored on this phone, never queued; keyword alerts go out without text.
+                val riskMode=RiskLocal.captureMode(ctx);val contentFreeAlerts=mutableListOf<JSONObject>()
                 val hashes=rows.map { c->AlertFrames.digest(JSONArray().put(c.direction).put(c.author).put(c.text).put(c.messageTime).toString().toByteArray(Charsets.UTF_8)) }
                 FamilyEvidence(ctx).use { db ->
                     val sql=db.writableDatabase;sql.beginTransaction()
@@ -890,6 +899,10 @@ object GuardEngine {
                             }
                             if(c.sourceKey.isNotEmpty())r.put("event_id","capture:"+AlertFrames.digest(JSONArray().put(r.getString("conversation_key")).put(c.source).put(c.sourceKey).toString().toByteArray(Charsets.UTF_8)))
                             if(!captureObservationAllowed(ctx,c,contact.isNotBlank() && isTrustedSender(ctx,contact,c.text),contact.isNotBlank() && isFlaggedOffender(ctx,contact)))continue
+                            if(riskMode!=RiskCapture.NORMAL){
+                                if(RiskLocal.captureContentFree(db,scope,r,riskMode==RiskCapture.ACTIVE,now)){accepted.add(r);if(ConversationCapture.actionable(r))contentFreeAlerts.add(r)}
+                                continue
+                            }
                             val stamp=r.getLong("ts_ms")
                             r.put("time",SimpleDateFormat("MM-dd HH:mm:ss",Locale.US).format(Date(stamp)))
                             r.put("receipt_requested",true)
@@ -900,6 +913,7 @@ object GuardEngine {
                         sql.setTransactionSuccessful()
                     } finally {sql.endTransaction()}
                 }
+                RiskLocal.sendContentFreeAlerts(ctx,contentFreeAlerts,expectedSession)
                 accepted.filter{it.optBoolean("flag_partner")}.forEach{markSenderAsFlaggedOffender(ctx,it.optString("conversation_label"))}
             }
         } catch(e:Exception) {
@@ -1083,7 +1097,8 @@ object GuardEngine {
         val token=expectedSession?.second ?: getOrCreateFamilyToken(ctx)
         val topic=getChannelTopicForToken(token)
         val cleanSender = sender.trim().ifEmpty { "unknown" }
-        val cleanText = text
+        // Scores-only mode: alerts about messages carry the category and the account label, never the text.
+        val cleanText = if (RiskLocal.scrubsText(ctx, reason)) "" else text
         val dedupeKey = "$topic|${reason.lowercase(Locale.US)}|${cleanSender.lowercase(Locale.US).removePrefix("@")}|${cleanText.lowercase(Locale.US)}"
         val windowMs = if (fromNotification) NOTIF_BURST_DEDUPE_MS else SCREEN_DEDUPE_MS
 
@@ -1128,6 +1143,37 @@ object GuardEngine {
         postEncryptedToChannel(ctx, topic, token, plain, null)
     }
 
+    /** Runs [block] while holding the session lock, so a state change cannot interleave with a capture or a relay line. */
+    internal fun <T> withSessionLock(block: () -> T): T = synchronized(pollLock) { block() }
+
+    /** Queues one control-wrapped scores report for the parent. False if it could not be queued. */
+    internal fun queueScoresReport(ctx: Context, payload: JSONObject): Boolean {
+        if (!isChildMode(ctx)) return false
+        val token = getOrCreateFamilyToken(ctx);val topic = getChannelTopicForToken(token)
+        val id = UUID.randomUUID().toString()
+        var failed = false;var returned = false
+        postEncryptedToChannel(ctx, topic, token, JSONObject(payload.toString()).put("command_id", id).toString(), { ok, _ -> if (!returned && !ok) failed = true })
+        returned = true
+        return !failed || FamilyEvidence(ctx).use { it.hasQueuedEvent(topic, "control:$id") }
+    }
+
+    fun scoresModePolicy(ctx: Context): ScoresModePolicy? = RiskLocal.parentPolicy(ctx)
+
+    /**
+     * Parent: sends the signed scores-mode policy. Enabling is refused (false) unless the child's last report says the model is valid.
+     * Every enabling uses a new policy id, so the child must agree again. Disabling is always allowed.
+     */
+    fun sendScoresModePolicy(ctx: Context, enabled: Boolean): Boolean = synchronized(pollLock) {
+        check(isParentMode(ctx))
+        val token = getOrCreateFamilyToken(ctx);val topic = getChannelTopicForToken(token)
+        if (enabled && FamilyEvidence(ctx).use { it.scoresModeState(topic) }?.model != "valid") return@synchronized false
+        val id = UUID.randomUUID().toString();val now = System.currentTimeMillis()
+        if (!RiskLocal.saveParentPolicy(ctx, id, enabled, now)) return@synchronized false
+        val payload = JSONObject().put("type", "scores_mode_policy").put("policy_id", id).put("enabled", enabled).put("ts_ms", now)
+        postEncryptedToChannel(ctx, topic, token, payload.toString(), null)
+        true
+    }
+
     private fun postEncryptedToChannel(
         ctx: Context,
         topic: String,
@@ -1167,7 +1213,7 @@ object GuardEngine {
             val type=payload.optString("type")
             require(topic==getChannelTopicForToken(token) && token in relayRouteTokens(ctx))
             val parentCommand=type in FamilySecurity.controlTypes
-            check(if(parentCommand)isParentMode(ctx) else isChildMode(ctx) && type in setOf("capture_ack","sync_child_handle"))
+            check(if(parentCommand)isParentMode(ctx) else isChildMode(ctx) && type in setOf("capture_ack","sync_child_handle","scores_mode_report"))
             val commandId=payload.optString("command_id").ifEmpty{UUID.randomUUID().toString()}
             require(UUID.fromString(commandId).toString()==commandId)
             payload.put("scope",topic).put("command_id",commandId)
@@ -1338,7 +1384,7 @@ object GuardEngine {
             FamilySecurity.readCommand(envelope, prefs(ctx).getString("parent_command_public_key", "") ?: "", getChannelTopicForToken(token), System.currentTimeMillis()) ?: return RelayConsumption.REJECTED
         } else {
             if (envelope.optString("type") in FamilySecurity.controlTypes) return RelayConsumption.REJECTED
-            if(controlId.isNotEmpty() && (role!="parent" || envelope.optString("type") !in setOf("capture_ack","sync_child_handle")))return RelayConsumption.REJECTED
+            if(controlId.isNotEmpty() && (role!="parent" || envelope.optString("type") !in setOf("capture_ack","sync_child_handle","scores_mode_report")))return RelayConsumption.REJECTED
             envelope
         }
         if(controlId.isNotEmpty() && controlId!="control:"+inner.optString("command_id"))return RelayConsumption.REJECTED
@@ -1370,6 +1416,17 @@ object GuardEngine {
             "capture_ack" -> {
                 if(role=="parent" && inner.optInt("schema_version")==2 && pendingCapturePolicy(ctx).isNotEmpty() && inner.optString("policy_id")==pendingCapturePolicy(ctx)) {
                     prefs(ctx).edit().putString("capture_child_ack_id",inner.getString("policy_id")).commit()
+                    ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
+                }
+            }
+            "scores_mode_policy" -> if(role=="child")RiskLocal.receivePolicy(ctx,inner.getString("policy_id"),inner.getBoolean("enabled"))
+            "scores_mode_report" -> if(role=="parent") {
+                val received=System.currentTimeMillis();val topic=getChannelTopicForToken(token)
+                val report=ScoresReportCodec.parse(inner,topic,received)
+                if(report!=null) {
+                    val reached=FamilyEvidence(ctx).use{it.storeScoresReport(topic,report,received)}
+                    // Generic notice only: no account label, no score, no text.
+                    if(reached>0)onNewAlertForParent?.invoke(JSONObject().put("type","alert").put("reason","scores_threshold").put("event_id","scores:"+UUID.randomUUID()).put("sender","").put("text","").put("ts_ms",received))
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
             }
@@ -2256,6 +2313,7 @@ class ParentAlertService : Service() {
         val generic = when(reason) {
             "test_alert" -> "已收到子女手機的加密測試。可在裝置與傳送查看記錄。"
             "sexual_or_grooming_content" -> "偵測到需留意的關鍵字。開啟查看記錄及尋求協助建議。"
+            "scores_threshold" -> "有對話的風險分數已達 50 或以上。開啟 App 查看分數。"
             else -> "有新的家庭提醒，請開啟 App 查看。"
         }
         val publicNotice = Notification.Builder(this, "ig_guard_alerts")
