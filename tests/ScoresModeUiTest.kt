@@ -89,6 +89,16 @@ class ScoresParentUiTest {
     private fun page(c: org.robolectric.android.controller.ActivityController<MainActivity>): List<View> { UiSupport.nav(c.get(), "scores"); return UiSupport.views(c.get(), "scores_loading") }
     private fun tagged(v: List<View>, tag: String) = v.filter { it.tag == tag }
 
+    @Test fun theParentIsToldThatTheChildMustAgreeAgainWithoutPromisingTheEarlierMode() {
+        enable(); report(consent = "reconsent", active = false)
+        val c = launch()
+        try {
+            page(c)
+            val text = UiSupport.texts(c.get().window.decorView).joinToString("\n")
+            assertTrue(text.contains("子女需要再次同意")); assertTrue(text.contains("也不會把訊息文字傳給你"))
+            assertFalse(text.contains("維持原有的運作方式"))
+        } finally { c.pause().stop().destroy() }
+    }
     @Test fun everyStateShowsItsOwnTitleAndOneNextStep() {
         val now = System.currentTimeMillis()
         val cases = listOf<Pair<Pair<String, String>, () -> Unit>>(
@@ -649,6 +659,27 @@ class ScoresChildUiTest {
     private fun count(table: String) = FamilyEvidence(ctx).use { db -> db.readableDatabase.rawQuery("SELECT COUNT(*) FROM $table", null).use { it.moveToFirst(); it.getInt(0) } }
     private fun stateLabel(c: org.robolectric.android.controller.ActivityController<MainActivity>) = (tag(c, "scores_state_label").single() as TextView).text.toString()
 
+    private fun staleReceipt() {
+        val old = org.json.JSONObject().put("version", "2026-11-19-scores-v1").put("policy_id", RiskLocal.policyId(ctx)).put("accepted_at", 1L).put("withdrawn_at", 0L)
+        ctx.getSharedPreferences("ig_guard_scores_consent", android.content.Context.MODE_PRIVATE).edit().putString("receipt", LocalVault.seal(ctx, "scores_consent_receipt", old.toString())).commit()
+    }
+    @Test fun aChildWhoMustAgreeAgainSeesTrueWordingOnStatusAndConsentPage() {
+        installModel(); policy(); assertTrue(RiskLocal.accept(ctx)); staleReceipt()
+        val c = launch()
+        try {
+            val status = UiSupport.texts(tag(c, "scores_status_block").single()).joinToString("\n")
+            assertTrue(stateLabel(c).contains("AGREE AGAIN"))
+            assertTrue(status.contains("需要你再次同意") && status.contains("no message text is sent to your parent"))
+            assertFalse("the earlier mode is not promised", status.contains("仍會像以往一樣收到訊息") || status.contains("still receives messages as before"))
+            assertEquals(1, tag(c, "scores_withdraw").size); assertEquals(1, tag(c, "scores_consent_card").size)
+            assertTrue(UiSupport.texts(tag(c, "scores_consent_card").single()).any { it.contains("說明文字已更新") })
+            tag(c, "scores_consent_open").single().performClick()
+            val page = UiSupport.texts(c.get().window.decorView).joinToString("\n")
+            assertTrue(page.contains("不會傳送你的訊息文字給家長") && page.contains("no message text is sent to your parent"))
+            assertFalse(page.contains("原有的運作方式繼續")); assertFalse(page.contains("the earlier behaviour continues"))
+        } finally { c.pause().stop().destroy() }
+    }
+
     // ---------------- consent ----------------
     @Test fun consentCardAppearsOnlyWhenAPolicyIsPending() {
         var c = launch()
@@ -671,7 +702,7 @@ class ScoresChildUiTest {
             tag(c, "scores_consent_open").single().performClick()
             val text = UiSupport.texts(c.get().window.decorView).joinToString("\n")
             for (needle in listOf("一對一對話", "最新 60 則", "14 天", "充電", "帳戶名稱", "風險分數", "不含訊息文字", "家長不會收到你的訊息", "只用虛構的對話測試過", "兩個方向都可能出錯", "隨時暫停", "撤回", "刪除", "未獲 Meta 批准",
-                "One-to-one chats are analysed", "cannot be told apart from group chats", "latest 60 messages", "invented chats", "wrong in both directions", "Not approved by Meta")) assertTrue(needle, text.contains(needle))
+                "One-to-one Instagram chats that this app already reads are analysed", "cannot be told apart from group chats", "latest 60 messages", "invented chats", "wrong in both directions", "Not approved by Meta")) assertTrue(needle, text.contains(needle))
             assertFalse("no pre-ticked box", v(c).any { it is android.widget.CheckBox })
             assertEquals(0, tag(c, "scores_agree").count { !it.isEnabled })
             tag(c, "scores_not_now").single().performClick()

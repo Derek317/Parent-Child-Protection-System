@@ -650,12 +650,13 @@ class ScoresModeChildTest {
         activate(); capture(obs(text(1)))
         val old = JSONObject().put("version", "2026-11-19-scores-v1").put("policy_id", RiskLocal.policyId(ctx)).put("accepted_at", 1L).put("withdrawn_at", 0L)
         ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).edit().putString("receipt", LocalVault.seal(ctx, "scores_consent_receipt", old.toString())).commit()
-        assertEquals("none", RiskLocal.consentState(ctx)); assertTrue(RiskLocal.pendingPolicy(ctx)); assertFalse(RiskLocal.active(ctx))
+        assertEquals("reconsent", RiskLocal.consentState(ctx)); assertTrue(RiskLocal.pendingPolicy(ctx)); assertFalse(RiskLocal.active(ctx))
         assertTrue("alerts stay content-free while the child is asked again", RiskLocal.contentFree(ctx)); assertEquals(RiskCapture.CONTENT_FREE, RiskLocal.captureMode(ctx))
-        val before = count("risk_store")
+        assertEquals("the store is wiped at the first chance, not at the daily maintenance", 0, count("risk_store"))
         assertTextFree(obs("send nudes ${secret}y", conversation = "badguy"), obs(text(2)))
-        assertEquals("nothing is stored or scored until the child accepts", before, count("risk_store")); assertEquals(RiskBatch.Outcome.INACTIVE, runBatch().outcome)
-        assertTrue(RiskReporter.send(ctx)); assertEquals("none", reports().last().getJSONObject("state").getString("consent"))
+        assertEquals("nothing is stored or scored until the child accepts", 0, count("risk_store")); assertEquals(RiskBatch.Outcome.INACTIVE, runBatch().outcome)
+        assertTrue(RiskReporter.send(ctx)); assertEquals("reconsent", reports().last().getJSONObject("state").getString("consent"))
+        assertNotNull(ScoresReportCodec.parse(reports().last(), scope, System.currentTimeMillis()))
         assertTrue(RiskLocal.accept(ctx)); assertEquals("accepted", RiskLocal.consentState(ctx)); assertTrue(RiskLocal.active(ctx))
         val fresh = JSONObject(LocalVault.open(ctx, "scores_consent_receipt", ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).getString("receipt", "")!!))
         assertEquals("2026-11-19-scores-v2", fresh.getString("version"))
@@ -958,5 +959,61 @@ class ScoresModeChildTest {
             val texts = UiSupport.texts(org.robolectric.shadows.ShadowDialog.getLatestDialog().window!!.decorView)
             assertTrue(texts.any { it.contains("僅分數模式不分享訊息內容") }); assertTrue(texts.none { it.contains(secret) })
         } finally { c.pause().stop().destroy() }
+    }
+    private fun staleReceipt() {
+        val old = JSONObject().put("version", "2026-11-19-scores-v1").put("policy_id", RiskLocal.policyId(ctx)).put("accepted_at", 1L).put("withdrawn_at", 0L)
+        ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).edit().putString("receipt", LocalVault.seal(ctx, "scores_consent_receipt", old.toString())).commit()
+    }
+    @Test fun aChildWhoMustAgreeAgainCanWithdrawAndTheStoreIsGone() {
+        activate(); capture(obs(text(1))); assertEquals(1, count("risk_store")); staleReceipt()
+        RiskLocal.enforceWording(ctx)
+        assertEquals(0, count("risk_store")); assertEquals("reconsent", RiskLocal.status(ctx).consent)
+        assertTrue(RiskLocal.withdraw(ctx)); assertEquals("withdrawn", RiskLocal.consentState(ctx)); assertFalse(RiskLocal.pendingPolicy(ctx))
+        assertEquals("withdrawn", reports().last().getJSONObject("state").getString("consent"))
+    }
+    @Test fun aDirectRecordNeverKeepsASetAsideMarkerAliveButAGroupOrUnknownRecordDoes() {
+        activate()
+        capture(note("Pal", "hi ${secret}", "incoming", 3000, kind = "group", author = "anna"))
+        val old = System.currentTimeMillis() - 13 * day
+        FamilyEvidence(ctx).use { it.writableDatabase.execSQL("UPDATE risk_unknown SET seen_at=?", arrayOf(old)) }
+        fun seen() = FamilyEvidence(ctx).use { db -> db.readableDatabase.rawQuery("SELECT seen_at FROM risk_unknown", null).use { it.moveToFirst(); it.getLong(0) } }
+        capture(note("Pal", "direct ${secret}", "incoming", 2000, kind = "direct"))
+        assertEquals("a direct record does not refresh the marker", old, seen()); assertEquals(0, count("risk_store"))
+        capture(note("Pal", "unknown ${secret}", "incoming", 1000, kind = "unknown"))
+        assertTrue("an unknown-kind record does", seen() > old)
+    }
+    @Test fun anUntitledGroupNamedAfterItsSenderDoesNotSetThatPersonsChatAside() {
+        activate()
+        capture(note("Pal", "group msg ${secret}", "incoming", 3000, kind = "group", author = "Pal"))
+        assertEquals(0, count("risk_unknown")); assertEquals(0, count("risk_store"))
+        capture(note("Pal", "direct chat ${secret}", "incoming", 2000, kind = "direct"))
+        assertEquals(1, count("risk_store"))
+    }
+    @Test fun aScreenRowClaimsTheNewestMatchingNotificationSoAnOlderDistinctMessageStays() {
+        activate()
+        capture(note("Pal", "ok", "incoming", 86_400_000L, key = "yesterday"), note("Pal", "ok", "incoming", 5000, key = "now"))
+        capture(screen("ok", "incoming", "Pal"))
+        assertEquals(2, count("risk_store"))
+    }
+    @Test fun purgingTheStaleReportHappensInTheCaptureAndAFreshOneFollows() {
+        activate()
+        capture(note("team", "one ${secret}", "incoming", 3000, author = "anna"), note("keep", "fine ${secret}", "incoming", 2000))
+        runBatch()
+        fun names(label: String) = reports().any { r -> (0 until r.getJSONArray("conversations").length()).any { r.getJSONArray("conversations").getJSONObject(it).getString("account_label") == label } }
+        assertTrue(names("team"))
+        RiskLocal.deferFollowUp = true
+        try {
+            capture(note("team", "two ${secret}", "incoming", 1000, author = "ben"))
+            assertFalse("the queued report naming the thread is gone before anything else runs", names("team"))
+            assertTrue(reports().isEmpty()); assertTrue(prefs.getBoolean("scores_report_due", false))
+            RiskLocal.dailyReport(ctx)   // the next heartbeat honours the persisted flag
+            assertFalse(prefs.getBoolean("scores_report_due", false)); assertTrue(names("keep")); assertFalse(names("team"))
+        } finally { RiskLocal.deferFollowUp = false }
+    }
+    @Test fun upgradingFromVersionEightClearsCountsAndMakesAReportDue() {
+        prefs.edit().putInt("scores_last_scored", 5).putInt("scores_last_review", 2).commit()
+        FamilyEvidence(ctx).use { db -> db.writableDatabase.version = 8 }
+        FamilyEvidence(ctx).use { db -> db.readableDatabase }
+        assertFalse(prefs.contains("scores_last_scored")); assertFalse(prefs.contains("scores_last_review")); assertTrue(prefs.getBoolean("scores_report_due", false))
     }
 }
