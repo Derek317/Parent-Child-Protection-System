@@ -17,7 +17,7 @@ data class EvidenceQuery(val text: String = "", val filter: String = "all", val 
     val conversationKey:String?=null,val section:String="all",val review:String="all",val direction:String="all",val before:EvidenceCursor?=null)
 data class EvidenceCursor(val stamp:Long,val order:Long,val id:String)
 data class EvidenceContact(val sender: String, val count: Int, val important: Int, val latest: Long)
-data class ConversationSummary(val key:String,val label:String,val account:String,val count:Int,val unreviewed:Int,val latest:Long,val preview:String,val categories:List<String> = emptyList(),val kind:String="unknown",val unidentified:Boolean=false)
+data class ConversationSummary(val key:String,val label:String,val account:String,val count:Int,val unreviewed:Int,val latest:Long,val preview:String,val categories:List<String> = emptyList(),val kind:String="unknown",val unidentified:Boolean=false,val contentFree:Boolean=false)
 data class PendingEvidence(val id: String, val wire: String, val waitForReceipt: Boolean, val kind:String="urgent")
 data class CaptureWindow(val tokens:List<String> = emptyList(),val anchor:Long=0,val start:Long=0)
 data class RetentionPreview(val retentionDays:Int,val legacyCount:Int,val legacyExpiredCount:Int,
@@ -363,10 +363,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             buildList {while(c.moveToNext()) {
                 val last=readableDatabase.rawQuery("SELECT $evidenceColumns FROM evidence WHERE $where AND conversation_index=? ORDER BY sort_stamp DESC,sort_order DESC,id DESC LIMIT 1",args+arrayOf(c.string("conversation_index"))).use {
                     check(it.moveToFirst());val payload=JSONObject(it.content("payload"))
-                    Triple(it.content("body"),payload.optString("conversation_kind","unknown"),ConversationCapture.unidentifiedLegacyLabel(payload))
+                    Triple(it.content("body"),payload.optString("conversation_kind","unknown"),ConversationCapture.unidentifiedLegacyLabel(payload)) to payload.optBoolean("content_free")
                 }
                 add(c.getInt(10) to ConversationSummary(c.content("conversation_key"),c.content("conversation_label"),c.content("account_label"),
-                    c.getInt(6),c.getInt(7),c.getLong(8),last.first,c.getString(9)?.split(",")?:emptyList(),last.second,last.third))
+                    c.getInt(6),c.getInt(7),c.getLong(8),last.first.first,c.getString(9)?.split(",")?:emptyList(),last.first.second,last.first.third,last.second))
             }}
         }.sortedWith(compareByDescending<Pair<Int,ConversationSummary>>{if(q.section=="review")it.first else 0}
             .thenByDescending{it.second.latest}.thenBy{it.second.key}).drop(q.page.coerceAtLeast(0)*30).take(31).map{it.second}
@@ -384,7 +384,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                     (old?.count?:0)+1,(old?.unreviewed?:0)+if(actionable && c.string("review_state")!="reviewed")1 else 0,
                     maxOf(old?.latest?:0,c.number("stamp")),if(latest)c.content("body") else old!!.preview,
                     ((old?.categories?:emptyList())+if(actionable)listOf(reason) else emptyList()).distinct(),
-                    payload?.optString("conversation_kind","unknown")?:old!!.kind,if(payload!=null)ConversationCapture.unidentifiedLegacyLabel(payload) else old!!.unidentified)
+                    payload?.optString("conversation_kind","unknown")?:old!!.kind,if(payload!=null)ConversationCapture.unidentifiedLegacyLabel(payload) else old!!.unidentified,
+                    payload?.optBoolean("content_free") ?: old!!.contentFree)
                 groups[key]=ConversationGroup(summary,if(latest)position else previous!!.cursor,maxOf(previous?.priority?:0,if(reason=="sexual_or_grooming_content")2 else 1))
             }
         }

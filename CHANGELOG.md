@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — scores-only family mode (19 November 2026, Hong Kong) — source work on branch `app/local-risk-scoring`, not released
+
+No app version is changed by this entry. Nothing below has run on a physical phone, and the model was tested only on invented chats.
+
+- Add an optional scores-only family mode. The parent switches it on only after the child's phone has reported a valid model file; the child sees a plain-language page and must agree once. Until the child agrees, the earlier behaviour continues unchanged. The child can pause (stops storing and scoring at once) or withdraw (deletes the local store and unsent scores). Turning the mode on again needs agreement again.
+- While the mode is on, the child's phone keeps the latest 60 messages per one-to-one thread for up to 14 days in an encrypted local store, scores each thread on its latest 30 messages while charging and idle (charging only after 48 hours without a run), and sends the parent only an account label, a 0 to 100 score or "needs review", and times. Message text is no longer sent to the parent in this mode. Threads of unknown kind are counted, not stored; group chats are ignored.
+- Keyword and unapproved-contact alerts keep working but carry only the category, the account label and the time, marked as sent without text. After a withdrawal the phone does not go back to forwarding text; only the parent switching the mode off does, and the child is told when that happens.
+- Add the on-phone scoring engine (llama.cpp, CPU, arm64-v8a) and a hand-imported model file that is refused unless its size and SHA-256 match exactly. Phones with under about 8 GB of memory, or where the library cannot load, report the mode as unavailable.
+- Add parent and child screens: a score page with states for waiting, paused, withdrawn, out of date, model missing or wrong, and scoring; a child status block that is always visible, and a permanent notification line while analysis is on, paused or waiting.
+- The Terms of Service, privacy policy and data-flow drafts for this mode are drafts awaiting review by Derek and a Hong Kong privacy lawyer; the live documents are unchanged. The wording makes no claim of Meta approval or legal clearance.
+- Not verified: speed, memory, heat and battery on a real phone, how often idle-and-charging windows occur, importing a 1.1 GB file through the system picker, and screen-reader behaviour on real hardware.
+
 ## 4.9-beta.4 — 18 November 2026 (Hong Kong) — source draft
 
 - Add native Android biometric/device-credential gating for parent UI and sensitive actions, relock on background, secure-window flags and generic private notifications. Parent background receipt, archiving and signed acknowledgments continue while the UI is locked. Explicit app copies are marked sensitive and get best-effort cleanup after 60 seconds if still current.

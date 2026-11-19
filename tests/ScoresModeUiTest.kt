@@ -319,7 +319,7 @@ class ScoresParentUiTest {
             UiSupport.views(a, "evidence_loading").filterIsInstance<Button>().single { it.text.toString() == "需要跟進" }.performClick()
             UiSupport.views(a, "evidence_loading")
             val rows = UiSupport.texts(a.window.decorView)
-            assertTrue("the list line is neutral: it cannot tell the marker", rows.any { it.contains(ScoresUi.NO_TEXT_PLAIN) })
+            assertTrue("the list line carries the marker too", rows.any { it.contains("僅分數模式不分享訊息內容") })
             val stored = FamilyEvidence(ctx).use { it.find(scope, "cf-1") }!!
             val t = UiSupport.theme(a)
             MainActivity::class.java.getDeclaredMethod("showAlertDetails", JSONObject::class.java, t.javaClass).apply { isAccessible = true }.invoke(a, stored, t)

@@ -777,4 +777,58 @@ class ScoresModeChildTest {
         assertFalse(part.exists())
         part.writeBytes(ByteArray(10)); GuardEngine.syncChildComponents(ctx); assertFalse(part.exists())
     }
+
+    // ---------- content_free marker ----------
+    private fun alertsOut() = outbox().filter { it.optString("type") == "alert" && !it.optBoolean("relay_control") }
+    private fun postPlainAlertThroughTheQueue(reason: String, text: String) {
+        val m = GuardEngine::class.java.declaredMethods.first { it.name == "postEncryptedToChannel" }.apply { isAccessible = true }
+        val plain = JSONObject().put("type", "alert").put("event_id", UUID.randomUUID().toString()).put("reason", reason).put("sender", "late_builder")
+            .put("text", text).put("ts_ms", System.currentTimeMillis()).put("time", "10:00:00")
+        m.invoke(GuardEngine, ctx, scope, token, plain.toString(), null, null)
+    }
+    @Test fun theContentFreeMarkerIsOnEveryTextlessAlertAndNeverOnOrdinaryOnes() {
+        // Mode off: ordinary alerts, no marker.
+        GuardEngine.sendAlertFromChild(ctx, "stranger_message", "someone", "ordinary words", bypassDedupe = true)
+        GuardEngine.sendAlertFromChild(ctx, "tamper_attempt", "Guard", "device event", bypassDedupe = true)
+        assertTrue(alertsOut().size >= 2); assertTrue(alertsOut().none { it.has("content_free") })
+        clearOutbox()
+        activate()
+        // Path 1: captureMessages.  Path 2: sendAlertFromChild.  Path 3: the re-check under the lock in postEncryptedToChannel.
+        capture(obs("send nudes ${secret}", conversation = "badguy"))
+        GuardEngine.sendAlertFromChild(ctx, "stranger_message", "other", "words ${secret}", bypassDedupe = true)
+        postPlainAlertThroughTheQueue("stranger_message", "built before the child agreed ${secret}")
+        GuardEngine.sendAlertFromChild(ctx, "tamper_attempt", "Guard", "device event", bypassDedupe = true)
+        val message = alertsOut().filter { it.getString("reason") != "tamper_attempt" }
+        assertTrue(message.size >= 3)
+        for (a in message) { assertEquals("", a.getString("text")); assertTrue(a.toString(), a.optBoolean("content_free")) }
+        assertTrue(message.any { it.getString("sender") == "late_builder" })
+        assertTrue(alertsOut().filter { it.getString("reason") == "tamper_attempt" }.none { it.has("content_free") })
+        assertNoPrivateText()
+    }
+    @Test fun aRealTextlessAlertReachesTheParentMarkedAndRendersTheNoTextLine() {
+        activate()
+        capture(obs("send nudes ${secret}", conversation = "badguy_account"))
+        val frames = FamilyEvidence(ctx).use { db -> db.due(scope, Long.MAX_VALUE, "child") }.filter { f ->
+            GuardEngine.decryptPayload(token, f.wire)?.let { !it.optBoolean("relay_control") && it.optString("type") == "alert" } == true
+        }
+        assertTrue(frames.isNotEmpty())
+        GuardEngine.setRole(ctx, "parent")
+        for (f in frames) {
+            val line = JSONObject().put("event", "message").put("id", UUID.randomUUID().toString()).put("message", f.wire)
+            assertEquals(RelayConsumption.CONSUMED, GuardEngine.processIncomingRelayLine(ctx, line.toString(), "parent", null))
+        }
+        val stored = FamilyEvidence(ctx).use { db -> db.messages(scope, EvidenceQuery(filter = "any")).single() }
+        assertTrue(stored.optBoolean("content_free")); assertEquals("", stored.getString("text")); assertEquals("badguy_account", stored.getString("sender"))
+        FamilyEvidence(ctx).use { db ->
+            assertTrue(db.find(scope, stored.getString("_id"))!!.optBoolean("content_free"))
+            assertTrue(db.conversations(scope, EvidenceQuery(section = "conversations")).single().contentFree)
+        }
+        val c = org.robolectric.Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val a = c.get(); val t = UiSupport.theme(a)
+            MainActivity::class.java.getDeclaredMethod("showAlertDetails", JSONObject::class.java, t.javaClass).apply { isAccessible = true }.invoke(a, stored, t)
+            val texts = UiSupport.texts(org.robolectric.shadows.ShadowDialog.getLatestDialog().window!!.decorView)
+            assertTrue(texts.any { it.contains("僅分數模式不分享訊息內容") }); assertTrue(texts.none { it.contains(secret) })
+        } finally { c.pause().stop().destroy() }
+    }
 }

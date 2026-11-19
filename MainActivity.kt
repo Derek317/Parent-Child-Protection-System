@@ -1099,7 +1099,8 @@ object GuardEngine {
         val topic=getChannelTopicForToken(token)
         val cleanSender = sender.trim().ifEmpty { "unknown" }
         // Scores-only mode: alerts about messages carry the category and the account label, never the text.
-        val cleanText = if (RiskLocal.scrubsText(ctx, reason)) "" else text
+        val scrubbed = RiskLocal.scrubsText(ctx, reason)
+        val cleanText = if (scrubbed) "" else text
         val dedupeKey = "$topic|${reason.lowercase(Locale.US)}|${cleanSender.lowercase(Locale.US).removePrefix("@")}|${cleanText.lowercase(Locale.US)}"
         val windowMs = if (fromNotification) NOTIF_BURST_DEDUPE_MS else SCREEN_DEDUPE_MS
 
@@ -1123,6 +1124,8 @@ object GuardEngine {
             put("reason", reason)
             put("sender", cleanSender)
             put("text", cleanText)
+            // Marks an alert whose text was removed by scores-only mode (ordinary alerts never carry this field).
+            if (scrubbed) put("content_free", true)
             put("ts_ms", System.currentTimeMillis())
             put("time", nowDateTimeStr())
             put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
@@ -1223,7 +1226,7 @@ object GuardEngine {
                     else {
                         // Decided under the same lock as accept(): an alert built just before the child agreed loses its text here.
                         val outgoing=if(payload.optString("text").isNotEmpty() && RiskLocal.scrubsText(ctx,payload.optString("reason")))
-                            AlertFrames.split(payload.put("text","")).mapIndexed { index,frame -> "${payload.getString("event_id")}:$index" to encryptPayload(token,frame.toString()) } else wires
+                            AlertFrames.split(payload.put("text","").put("content_free",true)).mapIndexed { index,frame -> "${payload.getString("event_id")}:$index" to encryptPayload(token,frame.toString()) } else wires
                         FamilyEvidence(ctx).use { it.enqueueBatch(topic,outgoing,waitForReceipt=receiptRequested) };true
                     }
                 }
@@ -3291,7 +3294,7 @@ class MainActivity : Activity() {
                     if(!inConversation && query.section!="device") {
                         for(contact in contacts.take(30)) {
                             val category=contact.categories.map{reviewCategory(it)}.distinct().joinToString(" / ").ifEmpty{"一般對話"}
-                            val caption=(if(contact.kind=="group")"群組 · " else "")+"${contact.account.ifBlank{"帳號未確認"}} · 最近記錄 ${evidenceTime(contact.latest)}\n${contact.count} 則記錄 · ${contact.unreviewed} 則需查看 · $category\n${shortEvidence(contact.preview.ifBlank{ScoresUi.NO_TEXT_PLAIN})}"
+                            val caption=(if(contact.kind=="group")"群組 · " else "")+"${contact.account.ifBlank{"帳號未確認"}} · 最近記錄 ${evidenceTime(contact.latest)}\n${contact.count} 則記錄 · ${contact.unreviewed} 則需查看 · $category\n${shortEvidence(contact.preview.ifBlank{if(contact.contentFree)NO_TEXT_NOTE else ScoresUi.NO_TEXT_PLAIN})}"
                             val display=ConversationCapture.displayLabel(contact.label,contact.unidentified)
                             results.addView(row("chat-circle",display,caption,t){openConversation(contact.key,display)}.apply{
                                 tag="conversation_${contact.key}";getChildAt(0).tag="evidence_contact_${contact.label.trim().removePrefix("@").lowercase(Locale.ROOT)}"
