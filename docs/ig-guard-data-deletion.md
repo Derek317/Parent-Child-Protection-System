@@ -28,7 +28,7 @@ Content already forwarded or buffered by the relay may still arrive. Neither sto
 Authenticate with the parent phone's Android biometric/device credential first. Leaving the app relocks its UI while background reception continues.
 
 - **One record.** Open **Alerts (提醒) → Conversation history (對話記錄)**, open the message’s full record, then tap **Delete this record (刪除此記錄)** and confirm.
-- **All records for the current family.** In **Conversation history (對話記錄)**, return to the list, scroll to **Delete all evidence for this family (刪除此家庭的全部證據)**, and confirm. This removes the current family’s archived text, saved records and incomplete message fragments on that phone. Chart counts and replay-prevention identifiers may remain.
+- **All records for the current family.** In **Conversation history (對話記錄)**, return to the list, scroll to **Delete all evidence for this family (刪除此家庭的全部證據)**, and confirm. This removes the current family’s archived text, saved records and incomplete message fragments on that phone. Chart counts and replay-prevention identifiers may remain. This also clears the phone's connection diagnostics log.
 - **Archives for other families.** Open **Settings (設定) → Other families’ local archives (其他家庭的本機封存)** if that option appears, then confirm deletion.
 
 Older unsent comment/story-reply observations remain labelled historical, with sending unconfirmed. They are subject to the same deletion controls and legacy-retention preview.

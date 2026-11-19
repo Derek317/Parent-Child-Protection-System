@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — security fixes (no version change)
+
+- **Fresh authentication.** Showing the parent master password, routine key rotation, remote child reset, compromise re-pairing and leaving the parent role each ask for a new biometric/device-credential check; an open session is not enough. Cancelling cancels only that action. Leaving the parent role is now an explicit, authenticated step that removes the master password and parent signing key from the phone (stored records stay).
+- **Pairing links.** A parent phone, or an unconfigured phone that still holds parent secrets, refuses `igguard://pair` with a plain message and never deletes the master password or signing key because of a link. A child phone can be re-paired only by entering the current parent password (checked with the existing verifier and lockout) or after a signed remote reset; a temporary unlock alone is no longer enough. A tamper alert is queued to the old family before the switch, and delivery is awaited for up to 6 seconds; if the relay is unreachable that notice cannot be sent after the switch. A pairing link at a locked child phone raises at most one alert per hour.
+- **Temporary unlock and time.** Unlock expiry, unlock-code life and the 10-minute wrong-password lockout are counted on `elapsedRealtime` with a boot marker; the wall-clock expiry stays as an additional upper bound. An unlock ends at reboot, a reboot restarts (never ends) a running lockout, and moving the clock back cannot extend an unlock or revive a code. Unlock codes are single-use. A child whose clock moves back by more than 5 minutes sends one tamper alert per hour. A rolled-back clock still makes the child reject signed commands; that protocol limit is unchanged.
+- **Diagnostics.** Checkpoint logs no longer record sender names or Instagram handles; older entries are rewritten on read, and deleting all evidence clears the logs.
+- **Overlay protection.** Consent, pairing confirmation, two-way capture confirmation, remote reset and role-switch controls (and all other in-app buttons) ignore touches delivered while another window covers them.
+- Pairing, relay messages and signed commands keep their wire formats; updated and not-yet-updated paired phones keep working together. Not addressed here: single-use or short-lived invitations, per-device child keys, end-to-end sequence numbers and changing how trusted senders are recognised.
+
 ## 4.9-beta.4 — 18 November 2026 (Hong Kong) — source draft
 
 - Add native Android biometric/device-credential gating for parent UI and sensitive actions, relock on background, secure-window flags and generic private notifications. Parent background receipt, archiving and signed acknowledgments continue while the UI is locked. Explicit app copies are marked sensitive and get best-effort cleanup after 60 seconds if still current.
