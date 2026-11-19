@@ -2798,7 +2798,7 @@ class MainActivity : Activity() {
             section = if (selectedEntryRole == "parent") "parent_setup" else "child_setup"
             renderUi(animate = true)
         }
-        if (current == "child") verifyParentForRoleChange(proceed) else proceed()
+        if (current == "child") verifyParentForRoleChange(onSuccess = proceed) else proceed()
     }
     private fun verifyParentForRoleChange(title: String = "切換身份，需要家長確認。", onSuccess: () -> Unit) {
         val t = currentTheme()
