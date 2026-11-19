@@ -181,7 +181,16 @@ object GuardEngine {
 
     fun collectionAllowed(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && !prefs(ctx).getBoolean("collection_withdrawn", false)
     fun transferAllowed(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && (getRole(ctx) != "child" || collectionAllowed(ctx))
-    fun withdrawCollection(ctx: Context, discardPending: Boolean = true) = synchronized(pollLock) {
+    /**
+     * The child may always stop collection. With [noticeWaitMs] > 0 (UI path, background thread) one content-free
+     * "stopped by the child" notice is queued first and given that long to reach the relay, because afterwards nothing is sent.
+     */
+    fun withdrawCollection(ctx: Context, discardPending: Boolean = true, noticeWaitMs: Long = 0L) {
+        if (noticeWaitMs > 0L && isChildMode(ctx) && transferAllowed(ctx))
+            noticeToParent(ctx, "Capture Control", "子女已在此手機停止擷取與傳送。之後不會再有新的提醒送到家長手機。", noticeWaitMs)
+        withdrawNow(ctx, discardPending)
+    }
+    private fun withdrawNow(ctx: Context, discardPending: Boolean) = synchronized(pollLock) {
         check(isChildMode(ctx))
         check(prefs(ctx).edit().putBoolean("collection_withdrawn", true).remove("capture_local_ack_id").commit())
         relayGeneration++; CloudRelay.disconnect()
@@ -1025,10 +1034,16 @@ object GuardEngine {
         sendAlertFromChild(ctx, "tamper_attempt", "Deep-Link Guard",
             "有程式在子女手機開啟了家庭配對邀請。更換家庭需要家長主密碼；每小時最多通知一次。", bypassDedupe = true)
     }
-    private fun announceRepair(ctx: Context, waitMs: Long) {
+    private fun announceRepair(ctx: Context, waitMs: Long) = noticeToParent(ctx, "Re-pair Guard",
+        "子女手機已用家長主密碼確認，改為配對另一個家庭。若這不是你操作的，請盡快查看。", waitMs)
+    /** The child phone confirmed with the parent password that it is leaving the family (role switch to unconfigured). */
+    fun announceChildLeaving(ctx: Context, waitMs: Long) {
+        if (isChildMode(ctx)) noticeToParent(ctx, "Role Guard", "子女手機已用家長主密碼確認，離開目前的家庭，回到未設定狀態。", waitMs)
+    }
+    /** Queues one content-free alert and, off the main thread, waits up to [waitMs] for the relay to take it. */
+    private fun noticeToParent(ctx: Context, sender: String, text: String, waitMs: Long) {
         val delivered = java.util.concurrent.CountDownLatch(1)
-        sendAlertFromChild(ctx, "tamper_attempt", "Re-pair Guard",
-            "子女手機已用家長主密碼確認，改為配對另一個家庭。若這不是你操作的，請盡快查看。", bypassDedupe = true) { _, _ -> delivered.countDown() }
+        sendAlertFromChild(ctx, "tamper_attempt", sender, text, bypassDedupe = true) { _, _ -> delivered.countDown() }
         if (waitMs > 0L && android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
             try { delivered.await(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
@@ -2989,8 +3004,12 @@ class MainActivity : Activity() {
                 if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒，或由家長手機遠端救援。"; return@actionButton }
                 val ok = GuardEngine.verifyParentPassword(this@MainActivity, password.text.toString())
                 GuardEngine.recordPasswordAttempt(this@MainActivity, ok)
-                if (ok) { inputDrafts.remove("家長主密碼"); dialog.dismiss(); onSuccess() }
-                else { error.text = "家長主密碼不正確。"; password.error = "請重新輸入" }
+                if (!ok) { error.text = "家長主密碼不正確。"; password.error = "請重新輸入"; return@actionButton }
+                inputDrafts.remove("家長主密碼"); error.text = "正在通知家長手機…"
+                thread {
+                    GuardEngine.announceChildLeaving(this@MainActivity, 6_000L)
+                    runOnUiThread { if (!isDestroyed) { dialog.dismiss(); onSuccess() } }
+                }
             })
         }
     }
@@ -3641,6 +3660,13 @@ class MainActivity : Activity() {
         GuardEngine.pendingCapturePolicy(this).isNotEmpty()->"只擷取傳入警報 · 已收到家長設定，點按此處閱讀及確認雙向範圍。"
         else->"只擷取傳入警報 · 請家長先傳送雙向擷取設定，點按查看步驟。"
     }
+    private fun withdrawWithNotice(discard: Boolean, dialog: Dialog) {
+        Toast.makeText(this, "正在通知家長手機，然後停止…", Toast.LENGTH_SHORT).show()
+        thread {
+            GuardEngine.withdrawCollection(applicationContext, discard, noticeWaitMs = 6_000L)
+            runOnUiThread { if (!isDestroyed) { dialog.dismiss(); renderUi() } }
+        }
+    }
     private fun showCapturePrivacy(t: ThemeColors) {
         showSheet("你的擷取範圍") { dialog ->
             addView(label("停止會同時阻止新擷取與尚未送出的內容。已送達家長的副本需在家長手機另行刪除。重新開始不會自動恢復雙向擷取，也不會重傳舊範圍的待傳記錄。",14f,t.textSecondary,bottomPad=12))
@@ -3657,10 +3683,10 @@ class MainActivity : Activity() {
                     GuardEngine.setCaptureOptions(this@MainActivity,outgoing.isChecked,trusted.isChecked);dialog.dismiss();renderUi()
                 })
                 addView(actionButton("停止擷取及傳送，並捨棄待傳內容",t.warningButtonBg,t.warningButtonText){
-                    GuardEngine.withdrawCollection(this@MainActivity,true);dialog.dismiss();renderUi()
+                    withdrawWithNotice(true,dialog)
                 })
                 addView(actionButton("停止擷取及傳送，暫存待傳內容",t.btnSecondaryBg,t.btnSecondaryText){
-                    GuardEngine.withdrawCollection(this@MainActivity,false);dialog.dismiss();renderUi()
+                    withdrawWithNotice(false,dialog)
                 })
             }
         }
