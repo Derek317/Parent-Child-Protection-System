@@ -4,10 +4,11 @@ import { DurableObject } from 'cloudflare:workers';
 const TTL = 7 * 24 * 60 * 60 * 1000;
 const MAX_QUEUE = 512;
 const WINDOW = 8;
-// Per-room buffered writes per UTC day. A real family buffers a few hundred frames a day at most.
+// Per-room buffered ordinary-data writes per UTC day. A real family buffers a few hundred frames a day at most.
+// Only `data` is budgeted: the app keeps a refused data frame on the phone and carries on, whereas any other
+// class answered with a long retry would make the app close the socket and back off for hours.
 const DAY = 86_400_000;
 const DAILY_DATA_BUDGET = 2000;
-const DAILY_TOTAL_BUDGET = 6000;
 const ranks = { control: '0', receipt: '1', urgent: '2', data: '3' };
 const encoder = new TextEncoder();
 class AccessDenied extends Error {}
@@ -44,14 +45,18 @@ export class FamilyRoom extends DurableObject {
     this.ctx = ctx;
     this.sql = ctx.storage.sql;
     this.schemaReady = false;
+    this.registering = false;
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
   // Storage is created only after a parent proof is verified, so unauthenticated requests to
   // arbitrary room ids write nothing. Reading sqlite_master does not create anything.
   hasSchema() {
-    if (!this.schemaReady) this.schemaReady = this.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata'").toArray().length > 0;
-    return this.schemaReady;
+    if (this.schemaReady) return true;
+    const present = this.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata'").toArray().length > 0;
+    // Never cache while the registration transaction runs: it may still roll back.
+    if (present && !this.registering) this.schemaReady = true;
+    return present;
   }
 
   ensureSchema() {
@@ -61,7 +66,6 @@ export class FamilyRoom extends DurableObject {
       // Primary-key order places controls before context without another write-amplifying index.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS ${name} (id TEXT PRIMARY KEY, wire TEXT NOT NULL, digest TEXT NOT NULL, kind TEXT NOT NULL, expires INTEGER NOT NULL) WITHOUT ROWID`);
     }
-    this.schemaReady = true;
   }
 
   metadata() {
@@ -81,6 +85,8 @@ export class FamilyRoom extends DurableObject {
     try {
       if (auth.role === 'parent') {
         // No await between replay check and commit: concurrent upgrades cannot spend a nonce twice.
+        this.registering = true;
+        try {
         this.ctx.storage.transactionSync(() => {
           this.ensureSchema();
           const owner = this.metadata();
@@ -92,6 +98,8 @@ export class FamilyRoom extends DurableObject {
             public_key: auth.public_key, scope: auth.scope, capability_hash: auth.capability_hash, nonces,
           }));
         });
+        this.schemaReady = true; // only after the transaction committed
+        } finally { this.registering = false; }
       } else {
         const owner = this.metadata();
         if (!owner) return json(409, 'parent_not_registered', 15_000);
@@ -170,14 +178,14 @@ export class FamilyRoom extends DurableObject {
       }
       const count = this.sql.exec(`SELECT COUNT(*) AS n FROM ${inbox}`).one().n;
       if (count >= (packet.kind === 'data' ? MAX_QUEUE - 32 : MAX_QUEUE)) { full = true; return; }
-      if (!this.spendBudget(packet.kind)) { budget = true; return; }
+      if (packet.kind === 'data' && !this.spendBudget()) { budget = true; return; }
       this.sql.exec(`INSERT INTO ${inbox}(id,wire,digest,kind,expires) VALUES(?,?,?,?,?)`, key, packet.wire, bodyHash, packet.kind, Date.now() + TTL);
     });
     if (existing && (!sameHash(existing.digest, bodyHash) || existing.id !== key)) {
       send(socket, { type: 'error', id: packet.id, code: 'id_conflict', retry_after_ms: 60_000 }); return;
     }
     if (full) { send(socket, { type: 'error', id: packet.id, code: 'queue_full', retry_after_ms: 30_000 }); return; }
-    // Same code and handling the app already has for a full mailbox: ordinary data stays on the phone, urgent alerts still flow.
+    // Only ordinary data reaches here. The app already answers a data queue_full by keeping the record on the phone and sending on.
     if (budget) { send(socket, { type: 'error', id: packet.id, code: 'queue_full', retry_after_ms: Math.max(1000, DAY - Date.now() % DAY) }); return; }
     if (!forwarded) {
       await this.ensureAlarm();
@@ -186,15 +194,14 @@ export class FamilyRoom extends DurableObject {
     send(socket, { type: 'accepted', id: packet.id, mode: forwarded ? 'forwarded' : 'buffered' });
   }
 
-  // Counts buffered inserts per UTC day inside the caller's transaction; returns false once spent.
-  spendBudget(kind) {
+  // Counts buffered data inserts per UTC day inside the caller's transaction; returns false once spent.
+  spendBudget() {
     const day = Math.floor(Date.now() / DAY);
     const row = this.sql.exec("SELECT value FROM metadata WHERE key='budget'").toArray()[0];
     let spent = row ? JSON.parse(row.value) : null;
-    if (!spent || spent.day !== day) spent = { day, data: 0, total: 0 };
-    if (spent.total >= DAILY_TOTAL_BUDGET || (kind === 'data' && spent.data >= DAILY_DATA_BUDGET)) return false;
-    spent.total++;
-    if (kind === 'data') spent.data++;
+    if (!spent || spent.day !== day) spent = { day, data: 0 };
+    if (spent.data >= DAILY_DATA_BUDGET) return false;
+    spent.data++;
     this.sql.exec("INSERT OR REPLACE INTO metadata(key,value) VALUES('budget',?)", JSON.stringify(spent));
     return true;
   }

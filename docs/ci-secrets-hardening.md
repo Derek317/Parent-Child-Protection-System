@@ -19,8 +19,10 @@ Other tag names (for example `foo`) are treated like a branch: unsigned, nothing
 1. In the repository open **Settings → Environments → New environment**.
 2. Create **`relay-prod`**. Under **Deployment branches and tags** choose **Selected branches and tags** and add: branch `main`, tag `4.8-hotfix.*`. Tick **Required reviewers** and add yourself (and one other trusted person if you have one). Optionally tick **Prevent self-review** if there are two reviewers.
 3. Create **`release`**. Add deployment rules: branch `main`, tags `[0-9]*.[0-9]*` (this covers `4.9`, `4.9.1`, `4.9-beta.3` and `4.8-hotfix.4`; GitHub tag patterns are simple globs, so the workflow, not this pattern, enforces the exact format). Tick **Required reviewers**.
-4. Expect an approval prompt on every push to `main` and on every release tag, because the build job runs in `release`. Approving is the point: nothing signs or deploys unless a person says yes.
-5. The workflow also names a third environment, `ci-unprotected`, on other refs. GitHub creates it automatically on first use. Leave it empty: no secrets, no rules. Never add secrets to it.
+4. Once reviewers are set, **every push to `main` needs two approvals**: one for `relay-prod` (the deploy) and one for `release` (the signing build). A release tag needs one (`release`), or two for a `4.8-hotfix.N` tag. Approving is the point: nothing signs or deploys unless a person says yes.
+5. **A rejected approval is not a clean stop for tags.** GitHub reports a rejected deployment as a failed job, and the release job deliberately still publishes the documented notes-only release when the build fails (see `docs/releases/4.7.md`). So rejecting the `release` approval on a release tag can publish release notes without an APK (never an APK). I could not find documentation of a separate result for a rejected deployment, so this is documented rather than prevented. The tag ruleset in Step 3 is what stops unwanted tags.
+6. A release-looking tag on any commit still gets a signed build and release, and a tag run executes the workflow file from that commit. The tag ruleset and the environment reviewer are the only defence; read the workflow at the tagged commit before approving.
+7. The workflow also names a third environment, `ci-unprotected`, on other refs. GitHub creates it automatically on first use. Leave it empty: no secrets, no rules. Never add secrets to it.
 
 ## Step 2. Move the secrets into the environments
 
@@ -45,12 +47,18 @@ gh api --paginate "repos/OWNER/REPO/actions/artifacts?name=ig-guard-signed-apk&p
   --jq '.artifacts[] | [.id, .workflow_run.head_branch, .created_at, .expired] | @tsv'
 ```
 
-Delete every one whose branch is **not** `main` and not a release tag name (inspect the list first; release tags appear as the tag name in `head_branch`):
+Delete every one whose branch is not `main` and not a version-like tag name. First collect the ids into a file and read the list; nothing is deleted yet:
 
 ```sh
 gh api --paginate "repos/OWNER/REPO/actions/artifacts?name=ig-guard-signed-apk&per_page=100" \
-  --jq '.artifacts[] | select(.workflow_run.head_branch != "main") | .id' |
-while read -r id; do gh api -X DELETE "repos/OWNER/REPO/actions/artifacts/$id" && echo "deleted $id"; done
+  --jq '.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch != "main") | select(.workflow_run.head_branch | test("^[0-9]+\\.[0-9]+") | not) | [.id, .workflow_run.head_branch, .created_at] | @tsv' > to-delete.tsv
+cat to-delete.tsv
+```
+
+Only when the list contains nothing you want to keep, delete from the file (never while still paginating), then list again and repeat until the file is empty:
+
+```sh
+cut -f1 to-delete.tsv | while read -r id; do gh api -X DELETE "repos/OWNER/REPO/actions/artifacts/$id" && echo "deleted $id"; done
 ```
 
 If any experimental branch build was ever installed on a real family's phone, treat that phone as running an untrusted build and reinstall the verified release APK.
@@ -64,4 +72,6 @@ If any experimental branch build was ever installed on a real family's phone, tr
 
 The relay now stores nothing for unauthenticated requests and caps buffered writes per family per day, but every request, including a rejected one, still counts against the Cloudflare Workers Free quotas (requests per day, Durable Object requests). Anyone who knows the public `workers.dev` address can exhaust them, and the relay then stops serving every family until the next 00:00 UTC reset. Code in this repository does not stop that: Cloudflare's per-IP Rate Limiting binding was **not** added, because the current documentation page for the binding does not say it is available on the Workers Free plan, and a deploy that failed because of it would stop production releases.
 
-If this risk matters to you, the options are on your side of Cloudflare: attach a custom domain you own to the Worker, turn off `workers.dev` for it, and add a WAF rate-limiting rule for `/v1/rooms/*` in that domain's dashboard (these need a domain on Cloudflare, not a paid Workers plan); or monitor request counts in the dashboard and react. Moving to a paid plan raises the limits but does not remove the abuse possibility.
+> **Warning: do not turn off `workers.dev`.** The address `https://parent-child-protection-system.dere2005317.workers.dev` (from `relay/endpoint.json`) is built into every installed APK. Disabling it, or deleting that Worker route, stops every installed app from reaching the relay. A custom domain with a WAF rule protects **only builds that point at the new domain**, and switching means releasing an app update and installing it on both phones of every family at the same time. Keep `workers.dev` on unless you are running that coordinated migration.
+
+If this risk matters to you, the options are on your side of Cloudflare: monitor request counts in the dashboard and react; or, as part of a planned migration, attach a custom domain you own to the Worker, add a WAF rate-limiting rule for `/v1/rooms/*` in that domain's dashboard (needs a domain on Cloudflare, not a paid Workers plan), and ship an app version using the new domain. Moving to a paid plan raises the limits but does not remove the abuse possibility.

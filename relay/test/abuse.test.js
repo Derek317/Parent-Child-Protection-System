@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { family, header, runtime, connection, publish, wire, sql, vector } from './helpers.js';
 
 // Miniflare's local simulator keeps its own bookkeeping tables (__miniflare_*, _cf_*); only the relay's tables matter.
@@ -35,32 +36,43 @@ test('the schema appears only after a verified parent registration', async () =>
   } finally { await mf.dispose(); }
 });
 
-test('daily buffered-data budget answers queue_full for data, never blocks urgent or forwarded frames', async () => {
+test('daily budget limits only ordinary data; no other class or direction is ever blocked by it', async () => {
   const mf = runtime();
   try {
     const f = family(), initial = await connection(mf, f); initial.close();
     const child = await connection(mf, f, 'child');
-    await sql(mf, f.room, "INSERT OR REPLACE INTO metadata(key,value) VALUES('budget',?)", JSON.stringify({ day: Math.floor(Date.now() / DAY), data: 1999, total: 1999 }));
+    const send = async (client, id, kind) => {
+      for (;;) {
+        const result = await publish(client, id, wire(id), kind);
+        if (result.code !== 'rate_limited') return result;
+        await delay(result.retry_after_ms);
+      }
+    };
+    const today = Math.floor(Date.now() / DAY);
+    await sql(mf, f.room, "INSERT OR REPLACE INTO metadata(key,value) VALUES('budget',?)", JSON.stringify({ day: today, data: 1999, total: 5999 }));
     assert.equal((await publish(child, 'budget:last')).mode, 'buffered');
     const refused = await publish(child, 'budget:over');
     assert.equal(refused.code, 'queue_full');
     assert.ok(refused.retry_after_ms >= 1000 && refused.retry_after_ms <= DAY);
-    assert.equal((await publish(child, 'budget:urgent', wire('u'), 'urgent')).mode, 'buffered');
-    assert.equal((await publish(child, 'budget:over')).code, 'queue_full');
-    // A duplicate of an already stored frame is not a new write.
+    // Duplicate of a stored frame is not a new write.
     assert.equal((await publish(child, 'budget:last')).type, 'accepted');
-    // Forwarding to an online peer writes nothing and is not budgeted.
+    // The child floods always-buffered control frames: they are not counted and never get a budget refusal.
+    for (let n = 0; n < 200; n++) assert.equal((await send(child, `flood:${n}`, 'control')).type, 'accepted');
+    assert.equal((await publish(child, 'budget:over2')).code, 'queue_full');
+    // Other kinds and the other direction are unaffected.
+    assert.equal((await send(child, 'u:1', 'urgent')).type, 'accepted');
     const parent = await connection(mf, f);
     await parent.next(m => m.type === 'ready');
+    for (const kind of ['control', 'receipt']) {
+      const result = await send(parent, `parent:${kind}`, kind);
+      assert.equal(result.type, 'accepted', `${kind} refused: ${JSON.stringify(result)}`);
+    }
+    // Forwarding to an online peer writes nothing and is not budgeted.
     assert.equal((await publish(child, 'budget:live')).mode, 'forwarded');
     parent.close();
     // A new UTC day starts a new budget.
-    await sql(mf, f.room, "UPDATE metadata SET value=? WHERE key='budget'", JSON.stringify({ day: Math.floor(Date.now() / DAY) - 1, data: 5000, total: 9000 }));
+    await sql(mf, f.room, "UPDATE metadata SET value=? WHERE key='budget'", JSON.stringify({ day: today - 1, data: 5000 }));
     assert.equal((await publish(child, 'budget:tomorrow')).mode, 'buffered');
-    // Total cap: any kind is refused once the room has spent its whole daily budget (retry-later path in the app).
-    await sql(mf, f.room, "UPDATE metadata SET value=? WHERE key='budget'", JSON.stringify({ day: Math.floor(Date.now() / DAY), data: 0, total: 5999 }));
-    assert.equal((await publish(child, 'cap:1', wire('1'), 'urgent')).mode, 'buffered');
-    assert.equal((await publish(child, 'cap:2', wire('2'), 'urgent')).code, 'queue_full');
     child.close();
   } finally { await mf.dispose(); }
 });

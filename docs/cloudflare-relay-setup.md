@@ -19,7 +19,7 @@ No Cloudflare account is needed for the parents or children using the app. Both 
 4. The public endpoint is tracked in [relay/endpoint.json](../relay/endpoint.json). An optional repository variable **RELAY_BASE_URL** can override it. It is public configuration, not a secret. Both Android roles use the same configured endpoint.
 5. A `4.8-hotfix.N` source tag updates the existing 4.8 release only when the signed APK passes verification. It does not move the original `4.8` tag. Failed hotfix builds leave the existing release notes and assets intact.
 
-The signed-APK verification runs only on `main` and release tags. It verifies the existing replacement signing certificate, package `app.family.igguard`, version name 4.8, a version code greater than 150 and a non-debuggable release. It never reads the private signing key outside the temporary signing step.
+The signed-APK verification runs only on `main` and release tags. It verifies the existing replacement signing certificate, package `app.family.igguard`, version name `4.9-beta.3` (the value hard-coded in the workflow's verify step; update it with each release), a version code greater than 150 and a non-debuggable release. It never reads the private signing key outside the temporary signing step.
 
 ## Deploy from Codespaces instead
 
@@ -40,7 +40,7 @@ Both phones must use the updated signed build. For an existing secure V43 pairin
 
 ## Abuse limits
 
-The relay creates a family's storage only after a valid parent signature, so unauthenticated requests to made-up room addresses write nothing. Each room may buffer at most 2,000 ordinary-data frames and 6,000 frames of any kind per UTC day; beyond that the relay answers `queue_full` with a retry time, which the app already treats as "keep on phone and retry" (urgent alerts still go through until the larger total is reached). There is no per-IP rate limit in front of the Worker. Because every request counts against the shared Cloudflare Free quotas, a third party who knows the public address can still exhaust them and interrupt every family until the 00:00 UTC reset. See [ci-secrets-hardening.md](ci-secrets-hardening.md) for the owner-side mitigation.
+The relay creates a family's storage only after a valid parent signature, so unauthenticated requests to made-up room addresses write nothing. Each room may buffer at most 2,000 ordinary-data frames per UTC day; beyond that the relay answers `queue_full` with a retry time for that data frame, which the app already treats as "keep this record on the phone and carry on". The budget applies only to ordinary data: urgent alerts, controls and receipts are never refused by it, and one direction's traffic cannot use up the other's allowance. They remain limited only by the existing 512-row mailbox per direction (answered with the existing 30-second `queue_full`). There is no per-IP rate limit in front of the Worker. Because every request counts against the shared Cloudflare Free quotas, a third party who knows the public address can still exhaust them and interrupt every family until the 00:00 UTC reset. See [ci-secrets-hardening.md](ci-secrets-hardening.md) for the owner-side mitigation.
 
 ## What remains to verify
 

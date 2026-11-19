@@ -455,9 +455,10 @@ jobs:
 
   release:
     needs: [plan, relay-test, relay-deploy, build]
-    # always() exists so a tag whose build FAILED still publishes the documented notes-only release
-    # (docs/releases/4.7.md). It no longer publishes when the relay tests or deploy failed (build is then
-    # skipped), when the run was cancelled, or for refs that are not release tags.
+    # A tag whose build FAILED still publishes the documented notes-only release (docs/releases/4.7.md),
+    # so a failed build is accepted here. It does not publish when the relay tests or deploy failed (build is
+    # then skipped), when the run was cancelled, or for refs that are not release tags. A rejected
+    # environment approval also appears as a failed build; see docs/ci-secrets-hardening.md.
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') && github.event.deleted != true && needs.plan.outputs.protected == 'true' && needs.relay-test.result == 'success' && (needs.relay-deploy.result == 'success' || needs.relay-deploy.result == 'skipped') && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-24.04
     permissions:
