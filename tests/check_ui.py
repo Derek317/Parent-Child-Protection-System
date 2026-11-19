@@ -50,6 +50,18 @@ class Checks(unittest.TestCase):
   self.assertIn('Terms revision: '+revision,(root/'docs/ig-guard-terms-of-service.md').read_text())
   for name in names[2:4]+names[5:]:
    self.assertNotIn('2026-11-18-v2',(root/name).read_text(),name)
+ def test_documents_match_receipt_time_retention_and_key_fallback(self):
+  root=Path(__file__).resolve().parents[1]
+  names=['README.md','docs/ig-guard-terms-of-service.md','docs/ig-guard-privacy-policy.md','docs/local-storage-security.md','docs/releases/4.9-beta.4.md','CHANGELOG.md']
+  for name in names:
+   text=(root/name).read_text()
+   for phrase in ['based on record time','按記錄時間','from record time','measured from record time']:self.assertNotIn(phrase,text,f'{name}: {phrase}')
+  for name in names[:5]:
+   text=(root/name).read_text()
+   self.assertTrue('keeps using that existing key' in text or '繼續使用原有金鑰' in text or 'existing legacy key keeps working' in text,f'{name} must state the key-migration fallback')
+  consent=(root/'AppConsent.kt').read_text()
+  self.assertIn('若移入失敗',consent)
+  self.assertNotIn('簽署金鑰不匯出。',consent)
  def test_changelog_has_one_entry_for_this_version(self):
   text=(Path(__file__).resolve().parents[1]/'CHANGELOG.md').read_text()
   self.assertEqual(1,text.count('## 4.9-beta.4'))

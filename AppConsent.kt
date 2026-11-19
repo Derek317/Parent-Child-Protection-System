@@ -96,7 +96,7 @@ object AppConsent {
         content.addView(text("先了解，再決定\nYour messages, your decision", 26f, true))
         content.addView(text("請與家長一起閱讀完整條款。你可以拒絕並返回主畫面。\nRead the full Terms with your parent. You may decline and return to Home."))
         content.addView(text("子女模式會將實際擷取的 Instagram 訊息及相關資料傳至指定、已核對配對的家長／法定監護人。一般模式處理傳入警報；傳出及信任對象的一般對話仍須另行確認雙向擷取。未送出草稿不會讀取。", 17f, true))
-        content.addView(text("本機內容及偏好字串以 Android Keystore 金鑰及 AES-GCM 保護；家長控制簽署金鑰不匯出。家長畫面須經手機鎖驗證，背景接收仍繼續；部分時間、分類及狀態資料仍可見。內容先以家庭金鑰加密，再經 TLS 及 Cloudflare 中繼傳送。開發者與 Cloudflare 可處理密文及連線中繼資料，中繼不持有家庭解密金鑰。加密不能保護已解鎖、遭入侵的手機或外部副本。"))
+        content.addView(text("本機內容及偏好字串以 Android Keystore 金鑰及 AES-GCM 保護；家長控制簽署金鑰存入 Keystore 後不匯出；若移入失敗，會暫用原有加密保存的金鑰並於下次啟動重試。家長畫面須經手機鎖驗證，背景接收仍繼續；部分時間、分類及狀態資料仍可見。內容先以家庭金鑰加密，再經 TLS 及 Cloudflare 中繼傳送。開發者與 Cloudflare 可處理密文及連線中繼資料，中繼不持有家庭解密金鑰。加密不能保護已解鎖、遭入侵的手機或外部副本。"))
         content.addView(text("手機上新待傳記錄最多保留 72 小時；中繼站上未被取走的密文最多保留 7 天；中繼登記目前不會自動到期，亦不能刪除。新封存預設 30 天，可選 7／30 天。個別記錄可明確保留一次 90 天。舊封存須預覽及確認採用期限。到期內容在下次存取或排程清理時移除；供應商日誌／備份另有保留規則。只供私人家庭保障用途，禁止監視陌生人、伴侶、員工或學生。第 486 章第 52 條不是本服務、開發者或 Cloudflare 的全面豁免。"))
         content.addView(text("拒絕時不擷取或轉傳；既有佇列暫停，舊資料不會自動刪除。日後可在「擷取範圍與停止」同時停止新擷取與待傳送，選擇暫存或捨棄待傳內容；重新開始會捨棄舊待傳內容，雙向範圍須重新確認。已在傳送途中或送達的副本可能仍存在，需另行刪除。Android 兩項存取權限亦可另行關閉。下列條款說明刪除方法及使用限制。"))
         content.addView(text("完整使用條款 / Full Terms of Service", 21f, true))
