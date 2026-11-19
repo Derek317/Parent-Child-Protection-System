@@ -762,6 +762,19 @@ object GuardEngine {
      * Explicit, authenticated departure from the parent role: the master password and the signing identity are removed
      * here (and nowhere as a side effect of pairing). Stored family records stay on the phone.
      */
+    /**
+     * Queues a signed remote_reset_child for the paired child and waits up to [waitMs] (background thread) for the relay to
+     * accept it. True means the relay took it; the child itself cannot confirm, because it becomes unconfigured on receipt.
+     */
+    fun releaseChildBeforeLeaving(ctx: Context, waitMs: Long): Boolean {
+        if (!isParentMode(ctx)) return false
+        val done = java.util.concurrent.CountDownLatch(1); var accepted = false
+        try { rotateKeyAndNotifyChild(ctx, true) { ok -> accepted = ok; done.countDown() } } catch (_: Exception) { return false }
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            try { done.await(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        }
+        return accepted
+    }
     fun leaveParentRole(ctx: Context) = synchronized(pollLock) {
         check(getRole(ctx) == "parent")
         setRole(ctx, "unconfigured")
@@ -2957,8 +2970,10 @@ class MainActivity : Activity() {
         when (current) {
             "child" -> verifyParentForRoleChange(proceed)
             "parent" -> alert().setTitle("離開家長身份？")
-                .setMessage("離開後，此手機會刪除家長主密碼與簽署金鑰，之後無法再管理已配對的子女手機。已保存的家庭記錄會留在本機。")
-                .setNegativeButton("取消", null).setPositiveButton("離開家庭") { _, _ -> requireFreshParentAuth(proceed) }.show()
+                .setMessage("離開後，此手機會刪除家長主密碼與簽署金鑰，之後無法再管理已配對的子女手機。子女手機會一直受到保護，直到收到解除指令。已保存的家庭記錄會留在本機。")
+                .setNegativeButton("取消", null).setPositiveButton("離開家庭") { _, _ ->
+                    requireFreshParentAuth { releaseChildSheet("離開家長身份", "下一步會顯示目前的家長主密碼，並可同時解除子女手機。", proceed) }
+                }.show()
             else -> proceed()
         }
     }
@@ -3883,16 +3898,53 @@ class MainActivity : Activity() {
         })
         if (requirePin) rootContainer.addView(label("忘記家長主密碼時，可由家長手機使用遠端救援。", 13f, t.textSecondary, topPad = 16))
     }
+    /**
+     * Before the parent password and signing key disappear: show the password, and by default send a signed reset so the paired
+     * child becomes unconfigured. The parent is told plainly what was and was not confirmed.
+     */
+    private fun releaseChildSheet(title: String, intro: String, proceed: () -> Unit) {
+        val t = currentTheme(); val password = GuardEngine.getPin(this)
+        showSheet(title) { dialog ->
+            addView(label(intro, 14f, t.textSecondary, bottomPad = 14))
+            addView(label("目前的家長主密碼（請先記下）：", 13f, t.textPrimary, true))
+            addView(label(password, 18f, t.textPrimary, true, bottomPad = 10).apply { setTextIsSelectable(true) })
+            addView(label("子女手機在解除前仍受保護。若解除指令沒有送達，子女手機換家庭時，需要在子女手機輸入這個主密碼。", 13f, t.textSecondary, bottomPad = 14))
+            val send = CheckBox(this@MainActivity).apply { text = "同時送出解除指令，讓子女手機回到未設定狀態（建議）"; isChecked = true; tag = "release_child" }
+            addView(send)
+            val status = label("", 13f, t.textSecondary, topPad = 8, bottomPad = 8); addView(status)
+            lateinit var go: Button
+            fun finished(message: String) {
+                status.text = message; go.text = "我已記下，繼續"; go.isEnabled = true
+                go.setOnClickListener(sessionClick { dialog.dismiss(); proceed() })
+            }
+            go = actionButton("繼續", t.btnPrimaryBg, t.btnPrimaryText) {
+                go.isEnabled = false
+                if (!send.isChecked) { finished("你選擇不送出解除指令。子女手機仍受保護，請記下上面的主密碼。"); return@actionButton }
+                status.text = "正在送出解除指令…"
+                thread {
+                    val accepted = GuardEngine.releaseChildBeforeLeaving(this@MainActivity, 8_000L)
+                    runOnUiThread {
+                        if (!isDestroyed) finished(if (accepted) "解除指令已送到中繼站；子女手機開啟並連線後會自動解除。這不代表子女手機已確認；若它沒有解除，請在子女手機輸入上面的主密碼。"
+                            else "解除指令未能送出，子女手機仍受保護。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。")
+                    }
+                }
+            }
+            addView(go)
+            addView(textAction("取消") { dialog.dismiss() })
+        }
+    }
     private fun showCompromiseRecovery(t: ThemeColors) {
         showSheet("重新安全配對") { dialog ->
             addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對及核對完整安全代碼。已被複製的舊資料無法收回。",14f,t.textSecondary,bottomPad=18))
             fun fresh() {
                 if(!parentUnlocked())return
-                try {
-                    GuardEngine.createFreshFamilyForRecovery(this@MainActivity)
-                    parentAccess.authenticated(GuardEngine.captureRelaySession(this@MainActivity))
-                    dialog.dismiss();syncRoleServices();renderUi();showPairingInvite(currentTheme())
-                } catch(_:Exception){Toast.makeText(this@MainActivity,"未能完成；原有資料已保留。請重試或聯絡支援。",Toast.LENGTH_LONG).show()}
+                releaseChildSheet("重新安全配對","新的家庭秘密不經舊通道傳送；子女手機須解除舊配對後才能重新配對。") {
+                    try {
+                        GuardEngine.createFreshFamilyForRecovery(this@MainActivity)
+                        parentAccess.authenticated(GuardEngine.captureRelaySession(this@MainActivity))
+                        dialog.dismiss();syncRoleServices();renderUi();showPairingInvite(currentTheme())
+                    } catch(_:Exception){Toast.makeText(this@MainActivity,"未能完成；原有資料已保留。請重試或聯絡支援。",Toast.LENGTH_LONG).show()}
+                }
             }
             addView(actionButton("先刪除舊中繼房間，再建立新配對",t.warningButtonBg,t.warningButtonText){requireFreshParentAuth {
                 val expected=GuardEngine.captureRelaySession(this@MainActivity)

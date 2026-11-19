@@ -113,6 +113,10 @@ class ParentFreshAuthTest {
             call(a,"continueEntryRole")
             (ShadowDialog.getLatestDialog() as? android.app.AlertDialog)?.takeIf{it.isShowing}?.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.performClick().also{shadowOf(android.os.Looper.getMainLooper()).idle()}
             assertTrue(prompted(a));answer(a,true)
+            assertEquals("parent",GuardEngine.getRole(ctx))   // the release sheet comes first (see ChildReleaseTest)
+            all(ShadowDialog.getLatestDialog().window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="繼續"}.performClick()
+            repeat(150){shadowOf(android.os.Looper.getMainLooper()).idle();if(all(ShadowDialog.getLatestDialog().window!!.decorView).filterIsInstance<Button>().any{it.text.toString()=="我已記下，繼續"})return@repeat;Thread.sleep(100)}
+            all(ShadowDialog.getLatestDialog().window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="我已記下，繼續"}.performClick()
             assertEquals("unconfigured",GuardEngine.getRole(ctx))
             assertFalse("leaving explicitly removes the parent password",prefs.contains("parent_master_password"))
             assertFalse(prefs.contains("parent_signing_public"))
