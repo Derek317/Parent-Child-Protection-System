@@ -901,7 +901,7 @@ object GuardEngine {
                             if(c.sourceKey.isNotEmpty())r.put("event_id","capture:"+AlertFrames.digest(JSONArray().put(r.getString("conversation_key")).put(c.source).put(c.sourceKey).toString().toByteArray(Charsets.UTF_8)))
                             if(!captureObservationAllowed(ctx,c,contact.isNotBlank() && isTrustedSender(ctx,contact,c.text),contact.isNotBlank() && isFlaggedOffender(ctx,contact)))continue
                             if(riskMode!=RiskCapture.NORMAL){
-                                if(RiskLocal.captureContentFree(db,scope,r,riskMode==RiskCapture.ACTIVE,now)){accepted.add(r);if(ConversationCapture.actionable(r))contentFreeAlerts.add(r)}
+                                if(RiskLocal.captureContentFree(ctx,db,scope,r,riskMode==RiskCapture.ACTIVE,now)){accepted.add(r);if(ConversationCapture.actionable(r))contentFreeAlerts.add(r)}
                                 continue
                             }
                             val stamp=r.getLong("ts_ms")
@@ -2436,7 +2436,11 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
         super.onActivityResult(requestCode,resultCode,data)
         if(requestCode==parentAuthRequest && parentAuthPending)completeParentAuthentication(resultCode==RESULT_OK)
-        if(requestCode==modelPickRequest && resultCode==RESULT_OK)data?.data?.let{startModelImport(it)}
+        if(requestCode==modelPickRequest) {
+            // A picker result counts only if the parent's password was accepted before the picker was opened.
+            val authorized=modelPickAuthorized;modelPickAuthorized=false
+            if(authorized && resultCode==RESULT_OK)data?.data?.let{startModelImport(it)}
+        }
     }
     private lateinit var scrollView: ScrollView
     private lateinit var rootContainer: LinearLayout
@@ -2590,6 +2594,7 @@ class MainActivity : Activity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        modelPickAuthorized = savedInstanceState?.getBoolean("model_pick_authorized", false) == true
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         try {
             LocalVault.preferences(this).all
@@ -2665,6 +2670,7 @@ class MainActivity : Activity() {
                 outState.putString("encrypted_parent_ui_state",LocalVault.seal(this,"parent_ui_state_v1",raw))
             } finally {parcel.recycle()}
         } else saveCurrentUiState(outState)
+        outState.putBoolean("model_pick_authorized", modelPickAuthorized)
         super.onSaveInstanceState(outState)
     }
     private fun saveCurrentUiState(outState: Bundle) {
@@ -3613,6 +3619,7 @@ class MainActivity : Activity() {
 
     // ================= Scores-only family mode: child's phone =================
     private val modelPickRequest = 9032
+    private var modelPickAuthorized = false
     private var scoresReadOnly = false
     /** Registered while this activity is on screen; the import itself lives in the process, so a recreated activity re-attaches here. */
     private val importListener: () -> Unit = { uiHandler.post { if (!isDestroyed && activityVisible && section == "permissions") renderUi() } }
@@ -3744,6 +3751,7 @@ class MainActivity : Activity() {
     }
     private fun pickModelFile() {
         try {
+            modelPickAuthorized = true   // only reached after the parent's password was accepted
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), modelPickRequest)
         } catch (_: Exception) { Toast.makeText(this, "找不到檔案選擇器。\nNo file picker is available.", Toast.LENGTH_LONG).show() }
     }

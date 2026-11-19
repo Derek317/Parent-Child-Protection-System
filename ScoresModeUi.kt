@@ -175,13 +175,13 @@ internal object ScoresUi {
     const val LIMITS_NOTICE = "分數來自一個只用虛構對話測試過的模型，可能高估，也可能漏掉真正的風險。它是一個訊號，不是結論。"
     const val NEXT_STEPS = "下一步：先和孩子好好談談。如果你認為孩子有即時危險，請致電 999（香港）。"
     const val NO_MESSAGES = "在這個模式下，你不會收到訊息內容。"
-    fun unknownText(n: Int) = "沒有被分析的對話：$n 個（看似群組聊天，或對話類型未能確認）。"
+    fun unknownText(n: Int) = "被視為群組聊天而沒有被分析的對話：$n 個。"
     fun staleBody(receivedAt: Long, now: Long = System.currentTimeMillis()) = "已超過 ${hoursSince(receivedAt, now)} 小時沒有收到子女手機的報告。最後一次報告：${time(receivedAt)}。"
 
     data class StateCopy(val title: String, val body: String, val next: String)
     fun copy(m: ScoresPageModel): StateCopy = when (m.page) {
         ScoresPage.OFF -> StateCopy("僅分數模式未開啟",
-            "開啟後，子女手機會在充電時於手機上分析一對一對話（包括從畫面讀取、而且只出現一位對方的對話；群組聊天不會被分析），你只會收到分數和不含文字的提醒，不會收到訊息內容。",
+            "開啟後，子女手機會在充電時於手機上分析一對一對話，你只會收到分數和不含文字的提醒，不會收到訊息內容。從畫面讀取的對話無法與群組聊天區分，所以孩子在這部手機上打開的群組聊天也可能被分析；已知是群組的對話不會被分析。",
             "下一步：到「家庭」頁開啟僅分數模式。")
         ScoresPage.WAITING -> StateCopy("等待子女同意",
             if (m.noReportYet) "已送出設定，但還沒有收到子女手機的回覆。子女需要在自己的手機閱讀說明並同意，分析才會開始。你不能代替子女同意。"
@@ -241,7 +241,7 @@ internal object ScoresUi {
 
     const val PARENT_ON_TITLE = "改用「僅分數模式」？ / Switch to scores-only mode?"
     val PARENT_ON_POINTS = listOf(
-        "子女手機會在充電時，於手機上分析一對一對話（包括從畫面讀取、而且只出現一位對方的對話；群組聊天不會被分析）。你只會收到分數和不含文字的提醒。\nYour child's phone analyses one-to-one chats on the phone while charging, including ones read from the screen when only one other person appears. Group chats are not analysed. You receive scores and alerts without text.",
+        "子女手機會在充電時，於手機上分析一對一對話。從畫面讀取的對話無法與群組聊天區分，所以孩子打開的群組聊天也可能被分析；已知是群組的對話不會被分析。你只會收到分數和不含文字的提醒。\nYour child's phone analyses one-to-one chats on the phone while charging. Chats read from the screen cannot be told apart from group chats, so a group chat the child opens may be analysed too; a chat known to be a group is not analysed. You receive scores and alerts without text.",
         "已經配對的家庭：新訊息的文字不會再傳到你的手機。\nFor an existing family, the text of new messages stops reaching your phone.",
         "你手機上現有的封存會保留，直到你自己刪除。\nThe existing archive stays on your phone until you delete it.",
         "在這個模式下，即使遇到緊急情況，你也不能閱讀訊息內容。\nIn this mode you cannot read messages, even in an emergency.",
@@ -263,7 +263,7 @@ internal object ScoresChildCopy {
     const val TITLE = "AI 風險分析 / AI risk analysis"
     const val CONSENT_TITLE = "先了解，再決定\nAI risk analysis: read first, then decide"
     val CONSENT_POINTS = listOf(
-        "分析什麼 / What is analysed" to "只分析本 App 已經讀取的 Instagram 一對一對話，包括從畫面讀取、而且只出現一位對方的對話；群組聊天不會被分析。每個對話只保留最新 60 則訊息，存放在這部手機上，最長 14 天。\nOnly one-to-one Instagram conversations this app already reads, including ones read from the screen when only one other person appears. Group chats are not analysed. The latest 60 messages per conversation are kept on this phone for at most 14 days.",
+        "分析什麼 / What is analysed" to "只分析一對一對話。從畫面讀取的對話無法與群組聊天區分，所以在這部手機上打開的群組聊天也可能被分析；已知是群組的對話不會被分析。每個對話只保留最新 60 則訊息，存放在這部手機上，最長 14 天。\nOne-to-one chats are analysed. Chats read from the screen cannot be told apart from group chats, so a group chat that is opened on this phone may be analysed too. A chat known to be a group is not analysed. The latest 60 messages per conversation are kept on this phone for at most 14 days.",
         "在哪裡、何時 / Where and when" to "分析在這部手機上進行，只在充電時運行。訊息不會為了分析而傳出這部手機。\nAnalysis runs on this phone, only while it is charging. Messages are not sent anywhere for analysis.",
         "家長會收到 / What your parent receives" to "你聊天對象的帳戶名稱、一個風險分數（或「需要檢視」）及時間；不含訊息文字的提醒；以及分析是開啟、暫停還是已撤回。\nThe account name of who you chat with, a risk score (or \"needs review\") and the time; alerts without message text; and whether analysis is on, paused or withdrawn.",
         "家長不會收到 / What your parent does not receive" to "家長不會收到你的訊息。在這個模式下，新訊息不再傳給家長。\nYour parent does not receive your messages. In this mode new messages are no longer sent to them.",
@@ -312,7 +312,7 @@ internal object ScoresChildCopy {
     private fun noteForConsent(consent: String) = if (consent == "none") listOf("原有的運作方式繼續：你的家長仍會像以往一樣收到訊息。\nThe earlier mode continues, so your parent still receives messages as before.") else listOf(PARENT_GETS_NO_TEXT)
     fun lastRun(s: RiskChildStatus): String = s.lastRun?.let { "上次運行：${ScoresUi.time(it)} · ${s.scoredCount} 個對話\nLast run: ${ScoresUi.time(it)} · ${s.scoredCount} conversations" }
         ?: "尚未運行\nNot run yet"
-    fun unknown(n: Int) = "未分析的對話（看似群組，或類型未能確認）：$n 個\nNot analysed (looks like a group chat, or type not confirmed): $n"
+    fun unknown(n: Int) = "被視為群組而未分析的聊天：$n 個\nGroup chats set aside, not analysed: $n"
     const val PAUSE_FAILED = "未能暫停，狀態沒有改變。請再試一次。\nCould not pause. Nothing changed. Please try again."
     const val RESUME_FAILED = "未能恢復，狀態沒有改變。請再試一次。\nCould not resume. Nothing changed. Please try again."
     const val WITHDRAW_FAILED = "未能撤回，狀態沒有改變，儲存的訊息仍在。請再試一次。\nCould not withdraw. Nothing changed and the stored messages are still here. Please try again."

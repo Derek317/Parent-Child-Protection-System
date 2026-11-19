@@ -115,7 +115,12 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.execSQL("INSERT INTO archive_maintenance VALUES(1)")
         }
         if(oldVersion<6)retentionSchema(db)
-        if(oldVersion<9)riskSchema(db)
+        if(oldVersion<9) {
+            riskSchema(db)
+            // Before schema 9 a thread was keyed by account, label and kind and risk_unknown meant "counted, not stored".
+            // From 9 a thread is keyed by its label alone and risk_unknown means "set aside as a group", so nothing carries over.
+            if(oldVersion in 7..8)for(table in riskChildTables)db.delete(table,null,null)
+        }
     }
     private fun retentionSchema(db:SQLiteDatabase) {
         // NULL marks existing archives for preview and explicit adoption, never first-open erasure.
@@ -438,7 +443,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         finally { db.endTransaction() }
     }
 
-    // ---- Scores-only mode (schema 7). Child: risk_store, risk_threads, risk_results, risk_unknown. Parent: risk_scores, risk_state. ----
+    // ---- Scores-only mode (schema 9). Child: risk_store, risk_threads, risk_results, risk_unknown (set-aside group chats), risk_authors. Parent: risk_scores, risk_state, risk_tombstones, risk_replay. ----
     private val riskChildTables=listOf("risk_store","risk_threads","risk_results","risk_unknown","risk_authors")
     private val riskParentTables=listOf("risk_scores","risk_state")
     private val riskTables=riskChildTables+riskParentTables
@@ -453,6 +458,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_authors(scope TEXT NOT NULL,thread_index TEXT NOT NULL,author_index TEXT NOT NULL,seen_at INTEGER NOT NULL,PRIMARY KEY(scope,thread_index,author_index))")
         addColumn(db,"risk_store","body_hash","TEXT NOT NULL DEFAULT ''")
         addColumn(db,"risk_store","source","TEXT NOT NULL DEFAULT ''")
+        addColumn(db,"risk_store","matched","INTEGER NOT NULL DEFAULT 0")
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_unknown(scope TEXT NOT NULL,thread_index TEXT NOT NULL,seen_at INTEGER NOT NULL,PRIMARY KEY(scope,thread_index))")
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_scores(scope TEXT NOT NULL,label_index TEXT NOT NULL,label TEXT NOT NULL,result TEXT NOT NULL,scored_at INTEGER NOT NULL,first_reached_50 INTEGER,PRIMARY KEY(scope,label_index))")
         // Content-free replay guard: the last 64 report ids per scope survive deleteArchive, like the seen tombstones.
@@ -495,18 +501,31 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     /** Child: content-free marker so a re-read message is neither stored nor alerted twice. True when [id] is new. */
     fun markCaptured(scope:String,id:String):Boolean =
         writableDatabase.insertWithOnConflict("capture_seen",null,ContentValues().apply{put("scope",scope);put("id",id)},SQLiteDatabase.CONFLICT_IGNORE)!=-1L
-    /** Child: stores one direct-thread message (caller's transaction) and enforces 60 messages per thread and 14 days. */
+    /**
+     * Child: stores one message of a one-to-one thread (caller's transaction) and enforces 60 messages per thread and 14 days.
+     * [threadKey] is the normalised conversation label. The same message read through two routes is kept once, one to one:
+     * a screen row claims at most one unclaimed notification row with the same direction and text that is not newer than the
+     * capture (the notification row is dropped, the screen row's position is kept), and a notification arriving after the
+     * screen read is dropped if an unclaimed screen row matches. So "ok","ok" stays two messages.
+     */
     fun storeRiskMessage(scope:String,id:String,threadKey:String,label:String,direction:String,text:String,stamp:Long,sortStamp:Long,sortOrder:Long,now:Long,source:String=""):Boolean {
         require(direction in setOf("incoming","outgoing"))
         val db=writableDatabase;val thread=index(scope,"conversation",threadKey)
         val bodyHash=index(scope,"risk_body",text)
-        // The same message read twice through different routes (a notification and the screen) is kept once.
-        if(source.isNotEmpty() && db.rawQuery("SELECT 1 FROM risk_store WHERE scope=? AND thread_index=? AND direction=? AND body_hash=? AND source<>? AND source<>'' AND ABS(stamp-?)<=120000 LIMIT 1",
-                arrayOf(scope,thread,direction,bodyHash,source,stamp.toString())).use{it.moveToFirst()})return false
+        var matched=0
+        if(source=="visible_dm") {
+            val claim=db.rawQuery("SELECT seq FROM risk_store WHERE scope=? AND thread_index=? AND direction=? AND body_hash=? AND source='notification' AND stamp<=? ORDER BY stamp LIMIT 1",
+                arrayOf(scope,thread,direction,bodyHash,stamp.toString())).use{if(it.moveToFirst())it.getLong(0) else null}
+            if(claim!=null){db.delete("risk_store","seq=?",arrayOf(claim.toString()));matched=1}
+        } else if(source=="notification") {
+            val screenRow=db.rawQuery("SELECT seq FROM risk_store WHERE scope=? AND thread_index=? AND direction=? AND body_hash=? AND source='visible_dm' AND matched=0 AND stamp>=? ORDER BY stamp LIMIT 1",
+                arrayOf(scope,thread,direction,bodyHash,stamp.toString())).use{if(it.moveToFirst())it.getLong(0) else null}
+            if(screenRow!=null){db.execSQL("UPDATE risk_store SET matched=1 WHERE seq=?",arrayOf(screenRow));return false}
+        }
         val row=ContentValues().apply {
             put("scope",scope);put("id",id);put("thread_index",thread);put("direction",direction)
             put("label",seal(scope,"risk_store",id,"label",label));put("body",seal(scope,"risk_store",id,"body",text))
-            put("stamp",stamp);put("sort_stamp",sortStamp);put("sort_order",sortOrder);put("body_hash",bodyHash);put("source",source)
+            put("stamp",stamp);put("sort_stamp",sortStamp);put("sort_order",sortOrder);put("body_hash",bodyHash);put("source",source);put("matched",matched)
         }
         val inserted=db.insertWithOnConflict("risk_store",null,row,SQLiteDatabase.CONFLICT_IGNORE)!=-1L
         if(inserted) {
@@ -525,13 +544,18 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.insertWithOnConflict("risk_authors",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);put("author_index",index(scope,"risk_author",author));put("seen_at",now)},SQLiteDatabase.CONFLICT_REPLACE)
         return db.rawQuery("SELECT COUNT(*) FROM risk_authors WHERE scope=? AND thread_index=? AND seen_at>=?",arrayOf(scope,thread,(now-RiskLimits.DAYS*DAY).toString())).use{it.moveToFirst();it.getInt(0)}
     }
-    /** Child: an unknown-kind thread that shows a second incoming author is a group: delete what was kept and mark it excluded. */
-    fun excludeRiskThread(scope:String,threadKey:String,now:Long) {
+    /**
+     * Child: sets a thread aside as a group chat (a group record, or a second incoming author): marks it first, then deletes
+     * what was kept. True if it was not already marked. The marker is a blind index only and expires 14 days after last seen.
+     */
+    fun excludeRiskThread(scope:String,threadKey:String,now:Long):Boolean {
         val db=writableDatabase;val thread=index(scope,"conversation",threadKey)
-        for(table in listOf("risk_store","risk_results","risk_threads","risk_authors"))db.delete(table,"scope=? AND thread_index=?",arrayOf(scope,thread))
+        val fresh=!riskExcluded(scope,threadKey,now)
         noteRiskUnknown(scope,threadKey,now)
+        for(table in listOf("risk_store","risk_results","risk_threads","risk_authors"))db.delete(table,"scope=? AND thread_index=?",arrayOf(scope,thread))
+        return fresh
     }
-    /** Child: marks a thread excluded (looks like a group chat or its type cannot be confirmed); keeps no text. */
+    /** Child: marks a thread set aside as a group chat (or refreshes the marker); keeps no text. */
     fun noteRiskUnknown(scope:String,threadKey:String,now:Long) {
         writableDatabase.insertWithOnConflict("risk_unknown",null,ContentValues().apply{put("scope",scope);put("thread_index",index(scope,"conversation",threadKey));put("seen_at",now)},SQLiteDatabase.CONFLICT_REPLACE)
     }

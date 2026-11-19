@@ -19,6 +19,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.security.MessageDigest
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -200,7 +201,8 @@ internal enum class RiskCapture { NORMAL, CONTENT_FREE, ACTIVE }
  *   Only then is anything stored or scored.
  */
 internal object RiskLocal {
-    private const val WORDING_VERSION = "2026-11-19-scores-v1"
+    /** Bump when the consent wording changes: a child who agreed to older wording is asked again. */
+    private const val WORDING_VERSION = "2026-11-19-scores-v2"
     private const val RECEIPT_PURPOSE = "scores_consent_receipt"
     private const val POLICY_ID = "scores_policy_id"
     private const val POLICY_ENABLED = "scores_policy_enabled"
@@ -240,10 +242,13 @@ internal object RiskLocal {
     fun consentState(ctx: Context): String {
         if (!receiptPrefs(ctx).contains("receipt")) return "none"
         val json = receipt(ctx) ?: return "withdrawn"
-        return if (json.optLong("withdrawn_at") > 0) "withdrawn" else "accepted"
+        if (json.optLong("withdrawn_at") > 0) return "withdrawn"
+        // Agreement to older wording does not count: ask again (pending), while alerts stay content-free in the meantime.
+        return if (json.optString("version") == WORDING_VERSION) "accepted" else "none"
     }
 
-    fun contentFree(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && policyEnabled(ctx) && consentState(ctx) != "none"
+    /** Any receipt, whatever its wording version, keeps the phone content-free until the parent switches the mode off. */
+    fun contentFree(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && policyEnabled(ctx) && receiptPrefs(ctx).contains("receipt")
 
     fun active(ctx: Context): Boolean =
         AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && GuardEngine.collectionAllowed(ctx) && GuardEngine.fullCaptureEnabled(ctx) &&
@@ -256,25 +261,49 @@ internal object RiskLocal {
     fun scrubsText(ctx: Context, reason: String): Boolean = reason in messageReasons && contentFree(ctx)
 
     // ---------------- capture hooks (called from GuardEngine.captureMessages) ----------------
-    /** Marks the record seen; stores it when [store]. True when the record is new. Never lets a store failure lose the alert. */
-    fun captureContentFree(db: FamilyEvidence, scope: String, r: JSONObject, store: Boolean, now: Long): Boolean {
+    /** The thread identity: the conversation label alone (no account, no kind), so every route to one conversation shares it. */
+    fun threadLabel(r: JSONObject): String = r.optString("conversation_label").trim().removePrefix("@").lowercase(Locale.ROOT)
+
+    private val background = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "Risk report").apply { isDaemon = true } }
+    /** Test hook: waits for report work started after an exclusion. */
+    internal fun awaitBackground() { background.submit {}.get() }
+
+    /**
+     * After a thread was set aside as a group: delete any undelivered report that might name it and send a fresh one.
+     * Runs on its own thread, so it waits for the capture that triggered it (and its session lock) to finish.
+     * A score already delivered to the parent stays there under the archive's normal deletion rules.
+     */
+    private fun afterExclusion(ctx: Context) {
+        val app = ctx.applicationContext
+        background.execute { try { RiskReporter.send(app) } catch (e: Exception) { Log.w("IGGuard", "Scores report failed: ${e.javaClass.simpleName}") } }
+    }
+
+    /**
+     * Marks the record seen; keeps it when [store]. True when the record is new. Never lets a store failure lose the alert.
+     * While the child's agreement is current (also when paused) the thread's kind and incoming authors are tracked by blind index
+     * only, no text: kind `group` sets the thread aside; kind `unknown` (screen reads, whose incoming messages carry no author)
+     * is one-to-one until a second distinct incoming author shows; kind `direct` is one-to-one. A thread is identified by its
+     * label alone, so a group seen by notification is also set aside when the same title is read from the screen.
+     */
+    fun captureContentFree(ctx: Context, db: FamilyEvidence, scope: String, r: JSONObject, store: Boolean, now: Long): Boolean {
         if (!db.markCaptured(scope, r.getString("event_id"))) return false
-        if (store) try {
+        try {
+            if (consentState(ctx) != "accepted") return true
+            val label = threadLabel(r)
+            if (label.isEmpty()) return true
             val kind = r.optString("conversation_kind", "unknown")
             val direction = r.optString("direction")
-            val key = r.getString("conversation_key")
-            // direct: stored. unknown (most screen reads): stored while it shows at most one distinct incoming author; a second one
-            // makes it a group, which deletes what was kept and excludes the thread. group: never stored.
-            var eligible = kind == "direct"
-            if (kind == "unknown") {
-                if (db.riskExcluded(scope, key, now)) { db.noteRiskUnknown(scope, key, now) }
-                else {
-                    eligible = true
-                    val author = r.optString("author").trim().removePrefix("@").lowercase()
-                    if (direction == "incoming" && author.isNotEmpty() && db.noteRiskAuthor(scope, key, author, now) > 1) { db.excludeRiskThread(scope, key, now); eligible = false }
+            if (kind == "group") { if (db.excludeRiskThread(scope, label, now)) afterExclusion(ctx); return true }
+            if (db.riskExcluded(scope, label, now)) { db.noteRiskUnknown(scope, label, now); return true }
+            if (kind == "unknown" && direction == "incoming") {
+                val author = r.optString("author").trim().removePrefix("@").lowercase(Locale.ROOT)
+                // The child's own handle is not "another person".
+                if (author.isNotEmpty() && !GuardEngine.isSelfSenderLabel(ctx, author) && db.noteRiskAuthor(scope, label, author, now) > 1) {
+                    if (db.excludeRiskThread(scope, label, now)) afterExclusion(ctx)
+                    return true
                 }
             }
-            if (eligible && direction in setOf("incoming", "outgoing")) db.storeRiskMessage(scope, r.getString("event_id"), key,
+            if (store && direction in setOf("incoming", "outgoing")) db.storeRiskMessage(scope, r.getString("event_id"), label,
                 r.optString("conversation_label"), direction, r.getString("text").replace("\u0000", ""), r.optLong("ts_ms"),
                 if (r.has("screen_anchor_ms")) r.getLong("screen_anchor_ms") else r.optLong("ts_ms"),
                 if (r.has("screen_order")) r.getLong("screen_order") else r.optLong("capture_order"), now, r.optString("capture_source"))
@@ -491,7 +520,7 @@ internal object RiskLocal {
         if (!GuardEngine.isChildMode(ctx) || !policyEnabled(ctx)) return base
         val consent = consentState(ctx)
         return when {
-            pendingPolicy(ctx) && consent == "none" -> "AI 風險分析 (AI risk analysis)：等待你同意，尚未開始。$base"
+            pendingPolicy(ctx) && !contentFree(ctx) -> "AI 風險分析 (AI risk analysis)：等待你同意，尚未開始。$base"
             pendingPolicy(ctx) -> "AI 風險分析 (AI risk analysis)：等待你再次同意 · 警報不含訊息內容。"
             consent == "withdrawn" -> "你已撤回 AI 風險分析 (withdrawn) · 警報不含訊息內容。"
             consent == "none" -> base
