@@ -29,7 +29,7 @@ def script_stats(text):
     return cjk, latin, total
 
 
-def check_chat(row, cid, family, cat_row, problems, warnings):
+def check_chat(row, cid, family, cat_row, problems, warnings, min_messages=6):
     """Append problems for one chat row. cid is a label for messages."""
     def bad(msg):
         problems.append(f"{cid}: {msg}")
@@ -69,8 +69,8 @@ def check_chat(row, cid, family, cat_row, problems, warnings):
     if not isinstance(msgs, list):
         bad("messages must be a list")
         return
-    if not 6 <= len(msgs) <= 30:
-        bad(f"has {len(msgs)} messages; must be 6 to 30")
+    if not min_messages <= len(msgs) <= 30:
+        bad(f"has {len(msgs)} messages; must be {min_messages} to 30")
     speakers = set()
     texts = []
     for n, m in enumerate(msgs, 1):
@@ -124,7 +124,7 @@ def check_chat(row, cid, family, cat_row, problems, warnings):
         bad(f"contains Simplified characters {''.join(simp)}; use Traditional characters")
 
 
-def validate_rows(rows, family, catalogue):
+def validate_rows(rows, family, catalogue, min_messages=6, spread_at=11):
     problems, warnings = [], []
     cat_row = catalogue.get(family)
     if cat_row is None:
@@ -134,7 +134,7 @@ def validate_rows(rows, family, catalogue):
     seen = {}
     for n, row in enumerate(rows, 1):
         cid = row.get("id") if isinstance(row, dict) and isinstance(row.get("id"), str) else f"row {n}"
-        check_chat(row, cid, family, cat_row, problems, warnings)
+        check_chat(row, cid, family, cat_row, problems, warnings, min_messages)
         if isinstance(row, dict):
             seen.setdefault((row.get("ending"), row.get("language")), []).append(cid)
     for e in ENDINGS:
@@ -161,19 +161,25 @@ def validate_rows(rows, family, catalogue):
         if isinstance(r.get("messages"), list):
             by_ending.setdefault(r.get("ending"), []).append(len(r["messages"]))
     for e, lens in by_ending.items():
-        if len(lens) == 3 and not (min(lens) <= 11 and max(lens) >= 12):
+        if len(lens) == 3 and not (min(lens) <= spread_at and max(lens) >= spread_at + 1):
             problems.append(f"ending {e!r}: its three chats have {sorted(lens)} messages; each ending needs "
-                            f"at least one chat of 11 or fewer and one of 12 or more, so length does not reveal the level")
+                            f"at least one chat of {spread_at} or fewer and one of {spread_at + 1} or more, so length does not reveal the level")
     return problems, warnings
 
 
-def validate_file(path, catalogue):
+def validate_file(path, catalogue, min_messages=6, spread_at=11):
     path = Path(path)
     try:
         rows = read_jsonl(path)
     except (OSError, ValueError, UnicodeDecodeError) as exc:
         return [f"cannot read file: {exc}"], []
-    return validate_rows(rows, path.stem, catalogue)
+    return validate_rows(rows, path.stem, catalogue, min_messages, spread_at)
+
+
+def add_length_args(parser):
+    parser.add_argument("--min-messages", type=int, default=6, help="fewest messages per chat (default 6)")
+    parser.add_argument("--spread-at", type=int, default=11,
+                        help="each ending needs one chat with at most N messages and one with at least N+1 (default 11)")
 
 
 def collect(paths):
@@ -191,6 +197,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("paths", nargs="+", help="family .jsonl files or directories")
     add_data_dir_arg(ap)
+    add_length_args(ap)
     args = ap.parse_args(argv)
     try:
         catalogue = load_catalogue(args.data_dir)
@@ -201,7 +208,7 @@ def main(argv=None):
         return fail("no .jsonl files found")
     bad = 0
     for f in files:
-        problems, warnings = validate_file(f, catalogue)
+        problems, warnings = validate_file(f, catalogue, args.min_messages, args.spread_at)
         if problems:
             bad += 1
             print(f"{f}: {len(problems)} problem(s)")

@@ -41,13 +41,13 @@ def chat_messages(lang, ending, fam, count=6):
     return out
 
 
-def make_family(fam, role="adult", counts=None):
+def make_family(fam, role="adult", base=6, yue_extra=6):
     rows = []
     for lang in dt_common.LANGUAGES:
         for k, e in enumerate(dt_common.ENDINGS):
             rows.append({"id": f"{fam}-{e}-{SUFFIX[lang]}", "family": fam, "language": lang, "ending": e,
                          "level": dt_common.LEVELS[e], "other_role": role,
-                         "messages": chat_messages(lang, e, fam, 6 + k + (6 if lang == "zh-Hant-yue" else 0))})
+                         "messages": chat_messages(lang, e, fam, base + k + (yue_extra if lang == "zh-Hant-yue" else 0))})
     return rows
 
 
@@ -193,6 +193,19 @@ class ValidateTests(unittest.TestCase):
         self.assertProblem(m, "high")
         self.assertProblem(m, "11 or fewer")
 
+    def test_min_messages_and_spread_options(self):
+        rows = make_family("s001", base=15, yue_extra=7)
+        problems, _ = validate_family.validate_rows(rows, "s001", self.cat, min_messages=15, spread_at=21)
+        self.assertEqual(problems, [])
+        problems, _ = validate_family.validate_rows(rows, "s001", self.cat)
+        self.assertTrue(any("11 or fewer and one of 12 or more" in p for p in problems))
+        short = make_family("s001", base=10, yue_extra=12)
+        problems, _ = validate_family.validate_rows(short, "s001", self.cat, min_messages=15, spread_at=21)
+        self.assertTrue(any("must be 15 to 30" in p for p in problems))
+        flat = make_family("s001", base=15, yue_extra=0)
+        problems, _ = validate_family.validate_rows(flat, "s001", self.cat, min_messages=15, spread_at=21)
+        self.assertTrue(any("21 or fewer and one of 22 or more" in p for p in problems))
+
     def test_phone_and_handle(self):
         def phone(r):
             r[0]["messages"][0]["text"] = "call 12345678 now"
@@ -335,6 +348,38 @@ class SealTests(unittest.TestCase):
             fh.write(b"\n")
         bad, _ = seal.do_verify(self.dd)
         self.assertEqual(len(bad), 1)
+
+
+class SealSmallSetTests(unittest.TestCase):
+    def test_twenty_family_sealed_set(self):
+        with tempfile.TemporaryDirectory() as d:
+            dd = Path(d)
+            cat = [dict(r, setting_id=f"x{i:02d}") for i, r in enumerate(make_catalogue(20), 1)]
+            write_rows(dd / "catalogue" / "settings.jsonl", cat)
+            ids = [r["setting_id"] for r in cat]
+            dt_common.write_json(dd / "splits.json", {"seed": 0, "train": [], "tune": [], "check": [], "sealed": ids})
+            rows = {}
+            for r in cat:
+                fam = make_family(r["setting_id"], r["other_role"], base=15, yue_extra=7)
+                write_rows(dd / "raw" / "sealed" / f"{r['setting_id']}.jsonl", fam)
+                rows.update({x["id"]: x for x in fam})
+            opts = ["--data-dir", d, "--min-messages", "15", "--spread-at", "21"]
+            self.assertEqual(seal.main(["strip"] + opts[:2]), 1)  # defaults reject 15+ message spread? (see below)
+            self.assertEqual(seal.main(["strip"] + opts), 0)
+            for n in range(1, 6):
+                self.assertEqual(len(dt_common.read_jsonl(dd / "sealed-work" / f"part-{n}.jsonl")), 60)
+            key = dt_common.read_json(dd / "sealed-work" / "key.json")
+            self.assertEqual(len(key), 300)
+            out = []
+            for alias, rid in key.items():
+                lv = rows[rid]["level"]
+                out.append({"id": alias, "answer": "U" if lv is None else str(lv)})
+            for n in range(5):
+                write_rows(dd / "sealed-work" / f"answers-{n + 1}.jsonl", out[n * 60:(n + 1) * 60])
+            self.assertEqual(seal.main(["compare"] + opts), 0)
+            self.assertEqual(len(dt_common.read_jsonl(dd / "sealed-test.jsonl")), 300)
+            self.assertEqual(seal.main(["hash", "--data-dir", d]), 0)
+            self.assertEqual(seal.main(["verify", "--data-dir", d]), 0)
 
 
 class BuildAndReviewTests(unittest.TestCase):

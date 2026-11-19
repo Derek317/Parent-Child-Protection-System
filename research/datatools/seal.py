@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dt_common import (ENDINGS, LANGUAGES, LEVELS, SEED, add_data_dir_arg, fail,
                        load_catalogue, load_splits, read_jsonl, write_json, write_jsonl, read_json)
-from validate_family import validate_file
+from validate_family import add_length_args, validate_file
 
 PARTS = 5
 ANSWERS = ["0", "1", "2", "3", "U"]
@@ -22,7 +22,7 @@ def label_of(row):
     return "U" if lv is None else str(lv)
 
 
-def load_sealed_rows(data_dir):
+def load_sealed_rows(data_dir, min_messages=6, spread_at=11):
     data_dir = Path(data_dir)
     splits = load_splits(data_dir)
     cat = load_catalogue(data_dir)
@@ -32,7 +32,7 @@ def load_sealed_rows(data_dir):
         if not f.exists():
             errors.append(f"missing sealed family file {f}")
             continue
-        problems, _ = validate_file(f, cat)
+        problems, _ = validate_file(f, cat, min_messages, spread_at)
         if problems:
             errors.append(f"{f} has {len(problems)} problem(s); run validate_family.py on it")
             continue
@@ -40,9 +40,9 @@ def load_sealed_rows(data_dir):
     return rows, errors
 
 
-def strip(data_dir):
+def strip(data_dir, min_messages=6, spread_at=11):
     data_dir = Path(data_dir)
-    rows, errors = load_sealed_rows(data_dir)
+    rows, errors = load_sealed_rows(data_dir, min_messages, spread_at)
     if errors:
         return errors
     rows.sort(key=lambda r: r["id"])
@@ -70,7 +70,7 @@ def norm_answer(v):
     return s if s in ANSWERS else None
 
 
-def compare(data_dir):
+def compare(data_dir, min_messages=6, spread_at=11):
     """Return (summary, errors)."""
     data_dir = Path(data_dir)
     work = data_dir / "sealed-work"
@@ -97,7 +97,7 @@ def compare(data_dir):
     if errors:
         return None, errors
     by_id = {}
-    for r in load_sealed_rows(data_dir)[0]:
+    for r in load_sealed_rows(data_dir, min_messages, spread_at)[0]:
         by_id[r["id"]] = r
     kept, aside = [], []
     confusion = {e: {a: 0 for a in ANSWERS} for e in ENDINGS}
@@ -210,13 +210,16 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for c in ("strip", "compare", "hash", "verify"):
-        add_data_dir_arg(sub.add_parser(c))
+        sp = sub.add_parser(c)
+        add_data_dir_arg(sp)
+        if c in ("strip", "compare"):
+            add_length_args(sp)
     args = ap.parse_args(argv)
     try:
         if args.cmd == "strip":
-            errs = strip(args.data_dir)
+            errs = strip(args.data_dir, args.min_messages, args.spread_at)
         elif args.cmd == "compare":
-            summary, errs = compare(args.data_dir)
+            summary, errs = compare(args.data_dir, args.min_messages, args.spread_at)
             if not errs:
                 print_summary(summary)
         elif args.cmd == "hash":
