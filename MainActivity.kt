@@ -3879,7 +3879,7 @@ class MainActivity : Activity() {
             }
         }
         val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, dp(10), 0) }
-        words.addView(label("僅分數模式 / Scores-only mode", 15f, t.textPrimary, true, bottomPad = 5).apply { isAccessibilityHeading = true })
+        words.addView(label("僅分數模式 / Scores-only mode", 15f, t.textPrimary, true, bottomPad = 5).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true })
         words.addView(label(status, 13f, t.textSecondary, bottomPad = if (why.isEmpty()) 0 else 5).apply { tag = "scores_mode_status" })
         if (why.isNotEmpty()) words.addView(label(why, 13f, t.textPrimary).apply { tag = "scores_mode_why" })
         line.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
