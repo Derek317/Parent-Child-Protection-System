@@ -269,7 +269,7 @@ class ScoresModeChildTest {
     @Test fun aMessageReadByNotificationAndScreenIsKeptOnceAndTheTwoThreadsOfOneLabelMerge() {
         activate()
         // Same unknown-kind thread read twice: once by notification, once from the screen.
-        capture(CapturedText("Friend", "same words ${secret}", "incoming", "Friend", "", "notification", clock++, "n1", false, "unknown"))
+        capture(CapturedText("Friend", "same words ${secret}", "incoming", "Friend", "", "notification", System.currentTimeMillis() - 5000, "n1", false, "unknown"))
         capture(screen("same words ${secret}", "incoming", "Friend"), screen("my reply ${secret}", "outgoing", "Friend"))
         assertEquals("the duplicate across routes is dropped", 2, count("risk_store"))
         // The notification's own direct thread for the same label is a second thread: merged by label in the report.

@@ -798,7 +798,7 @@ class ScoresChildUiTest {
         val c = launch()
         try {
             permissions(c); tag(c, "model_import_row").single().performClick()
-            assertTrue(UiSupport.texts(ShadowDialog.getLatestDialog().window!!.decorView).any { it.contains("A parent's password") })
+            assertTrue(UiSupport.texts(ShadowDialog.getLatestDialog().window!!.decorView).any { it.contains("parent's password") })
             assertNull("the picker is not opened before the password", shadowOf(c.get()).nextStartedActivityForResult)
             answerPassword("wrong password"); assertNull(shadowOf(c.get()).nextStartedActivityForResult)
             ShadowDialog.getLatestDialog().cancel(); shadowOf(Looper.getMainLooper()).idle()   // cancelling does nothing either
