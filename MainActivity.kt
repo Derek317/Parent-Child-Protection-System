@@ -47,6 +47,8 @@ import android.text.TextWatcher
 import android.text.Editable
 import android.util.Base64
 import android.view.View
+import android.view.MotionEvent
+import android.view.Window
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
@@ -2526,7 +2528,7 @@ class MainActivity : Activity() {
         }
         box.addView(TextView(this).apply {text="家長資料已鎖定\nParent data is locked";textSize=24f})
         box.addView(TextView(this).apply {text="使用手機的生物辨識或螢幕鎖驗證後查看。背景接收仍會繼續；請勿與其他人共用手機解鎖憑證。\nAuthenticate with your device lock to view family records. Background delivery continues.";textSize=16f;setPadding(0,dp(20),0,dp(20))})
-        box.addView(Button(this).apply {text="驗證並開啟 / Authenticate";tag="parent_authenticate";filterTouchesWhenObscured=true;setOnClickListener{requestParentAuthentication()}})
+        box.addView(Button(this).apply {text="驗證並開啟 / Authenticate";tag="parent_authenticate";setOnClickListener{requestParentAuthentication()}})
         box.addView(Button(this).apply {text="設定手機螢幕鎖 / Set device lock";setOnClickListener{
             try{startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))}catch(_:Exception){Toast.makeText(this@MainActivity,"請在 Android 設定啟用螢幕鎖。",Toast.LENGTH_LONG).show()}
         }})
@@ -2877,7 +2879,7 @@ class MainActivity : Activity() {
                 addView(password); addView(error)
             }
             lateinit var confirm: Button
-            confirm = actionButton("確認配對並切換為子女手機", t.btnPrimaryBg, t.btnPrimaryText) {
+            confirm = actionButton("確認配對並切換為子女手機", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
                 if (!childRepair) { if (acceptPairing(parsed)) onAccepted(); return@actionButton }
                 val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
                 if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒。"; return@actionButton }
@@ -2984,7 +2986,7 @@ class MainActivity : Activity() {
         }
         when (current) {
             "child" -> verifyParentForRoleChange(proceed)
-            "parent" -> alert().setTitle("離開家長身份？")
+            "parent" -> alert(critical = true).setTitle("離開家長身份？")
                 .setMessage("離開後，此手機會刪除家長主密碼與簽署金鑰，之後無法再管理已配對的子女手機。子女手機會一直受到保護，直到收到解除指令。已保存的家庭記錄會留在本機。")
                 .setNegativeButton("取消", null).setPositiveButton("離開家庭") { _, _ ->
                     requireFreshParentAuth { releaseChildSheet("離開家長身份", "下一步會顯示目前的家長主密碼，並可同時解除子女手機。", proceed) }
@@ -2999,7 +3001,7 @@ class MainActivity : Activity() {
             val password = inputBox(t, "家長主密碼", "", isPassword = true, remember = false).apply { tag = "role_password" }
             addView(password)
             val error = label("", 13f, t.warmCoral); addView(error)
-            addView(actionButton("驗證並繼續", t.btnPrimaryBg, t.btnPrimaryText) {
+            addView(actionButton("驗證並繼續", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
                 val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
                 if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒，或由家長手機遠端救援。"; return@actionButton }
                 val ok = GuardEngine.verifyParentPassword(this@MainActivity, password.text.toString())
@@ -3521,7 +3523,7 @@ class MainActivity : Activity() {
         }
         rootContainer.addView(textAction("重新同步可用記錄"){thread{GuardEngine.pollChannelOnce(applicationContext,since="all")};Toast.makeText(this,"正在同步；未擷取或中繼站已過期的內容無法復原。",Toast.LENGTH_LONG).show()})
         if(!inConversation)rootContainer.addView(textAction("刪除此家庭的全部證據"){
-            alert().setTitle("永久刪除證據？").setMessage("將刪除此家庭本機記錄及收藏。圖表統計保留；操作無法復原。")
+            alert(critical = true).setTitle("永久刪除證據？").setMessage("將刪除此家庭本機記錄及收藏。圖表統計保留；操作無法復原。")
                 .setNegativeButton("取消",null).setPositiveButton("永久刪除"){_,_->GuardEngine.clearParentAlerts(this);evidencePage=0;renderUi()}.show()
         })
     }
@@ -3722,7 +3724,7 @@ class MainActivity : Activity() {
             addView(label("兩部手機均需更新。家長在此傳送設定，再在子女手機的「權限 → 雙向對話記錄」閱讀並確認範圍。請只為你有權監護的子女設定，並與孩子說明範圍。",15f,t.textPrimary,bottomPad=16))
             addView(label("擴展模式會保留實際擷取的傳入訊息；傳出訊息及信任對象的一般脈絡須符合子女手機的選項及確認。一般內容不會逐則發出警報，家長可按對話對象及時間查看。",14f,t.textSecondary,bottomPad=14))
             addView(label("家長送出設定後，子女手機需閱讀並確認範圍。未確認前只維持原有保護。Instagram 未向通知或畫面提供的內容無法擷取；這不是完整對話備份。",14f,t.textSecondary,bottomPad=18))
-            addView(actionButton("傳送雙向擷取設定",t.btnPrimaryBg,t.btnPrimaryText) {
+            addView(actionButton("傳送雙向擷取設定",t.btnPrimaryBg,t.btnPrimaryText,critical=true) {
                 GuardEngine.requestFullCapture(this@MainActivity){success,_->runOnUiThread {
                     if(!isDestroyed && GuardEngine.isParentMode(this@MainActivity) && GuardEngine.getChannelTopic(this@MainActivity)==scope) {
                         Toast.makeText(this@MainActivity,if(success)"已傳送；請在子女手機確認範圍。" else "設定未送達，請保持連線後重試。",Toast.LENGTH_LONG).show();renderUi()
@@ -3753,7 +3755,7 @@ class MainActivity : Activity() {
             addView(label("內容會先在此手機加密，經本 App 的 Cloudflare 中繼傳送至配對家長手機。手機上新待傳記錄最多保留 72 小時；中繼站上未被取走的密文最多保留 7 天；家長新封存預設 30 天，可縮短為 7 天，個別記錄可明確保留一次 90 天。舊封存須預覽及確認採用期限。開發者及 Cloudflare 可處理密文及連線資料，中繼不會取得家庭解密金鑰。",14f,t.textSecondary,bottomPad=14))
             addView(label("只能保留通知及畫面實際提供的內容；未顯示、未擷取或已過期的內容無法復原。確認範圍不代表 App 已獲法律認證或 Meta 授權。可在「你的擷取範圍」停止擷取及待傳送，並選擇捨棄佇列；也可在 Android 撤銷權限。已送達家長的副本需另行刪除。",13f,t.textMuted,bottomPad=18))
             if(policy.isNotEmpty() && !GuardEngine.fullCaptureEnabled(this@MainActivity)) {
-                addView(actionButton("我已了解，啟用雙向擷取",t.btnPrimaryBg,t.btnPrimaryText) {
+                addView(actionButton("我已了解，啟用雙向擷取",t.btnPrimaryBg,t.btnPrimaryText,critical=true) {
                     if(GuardEngine.pendingCapturePolicy(this@MainActivity)==policy && GuardEngine.confirmFullCapture(this@MainActivity)) {
                         dialog.dismiss();renderUi()
                     } else Toast.makeText(this@MainActivity,"設定已變更，請重新確認家庭及擷取範圍。",Toast.LENGTH_LONG).show()
@@ -3909,8 +3911,8 @@ class MainActivity : Activity() {
                 addView(actionButton("例行更新金鑰（不能修復秘密外洩）", t.btnSecondaryBg, t.btnSecondaryText) {
                     sendParentCommand(resetChild = false); dialog.dismiss()
                 })
-                addView(actionButton("遠端解除子女保護並重設身份", t.btnSecondaryBg, t.btnSecondaryText) {
-                    alert().setTitle("遠端重設子女手機？").setMessage("發送加密救援指令，暫時解除子女手機保護並返回身份設定。")
+                addView(actionButton("遠端解除子女保護並重設身份", t.btnSecondaryBg, t.btnSecondaryText, critical = true) {
+                    alert(critical = true).setTitle("遠端重設子女手機？").setMessage("發送加密救援指令，暫時解除子女手機保護並返回身份設定。")
                         .setNegativeButton("取消", null).setPositiveButton("發送救援") { _, _ ->
                             sendParentCommand(resetChild = true); dialog.dismiss()
                         }.show()
@@ -3943,7 +3945,7 @@ class MainActivity : Activity() {
                 status.text = message; go.text = "我已記下，繼續"; go.isEnabled = true
                 go.setOnClickListener(sessionClick { dialog.dismiss(); proceed() })
             }
-            go = actionButton("繼續", t.btnPrimaryBg, t.btnPrimaryText) {
+            go = actionButton("繼續", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
                 go.isEnabled = false
                 if (!send.isChecked) { finished("你選擇不送出解除指令。子女手機仍受保護，請記下上面的主密碼。"); return@actionButton }
                 status.text = "正在送出解除指令…"
@@ -3980,7 +3982,7 @@ class MainActivity : Activity() {
                 }}
             }})
             addView(actionButton("無法連線：只建立新配對",t.btnSecondaryBg,t.btnSecondaryText){
-                alert().setTitle("未確認中繼刪除，仍要繼續？").setMessage("新秘密不會經舊通道傳送，但舊密文可能仍留在中繼直到到期。子女手機需離線停止舊擷取，然後在安全裝置重新配對；已送達或被複製資料不會刪除。")
+                alert(critical = true).setTitle("未確認中繼刪除，仍要繼續？").setMessage("新秘密不會經舊通道傳送，但舊密文可能仍留在中繼直到到期。子女手機需離線停止舊擷取，然後在安全裝置重新配對；已送達或被複製資料不會刪除。")
                     .setNegativeButton("取消",null).setPositiveButton("了解並建立新配對"){_,_->requireFreshParentAuth{fresh()}}.show()
             })
         }
@@ -4044,12 +4046,24 @@ class MainActivity : Activity() {
             else { dismissUiDialogs(); renderUi() }
         }
     }
-    private fun alert(): AlertDialog.Builder {
+    private fun warnObscured() { Toast.makeText(this, OBSCURED_TOUCH_MESSAGE, Toast.LENGTH_LONG).show() }
+    /** [critical] dialogs (destructive or identity-changing confirmations) ignore touches under another app's window and say so. */
+    private fun alert(critical: Boolean = false): AlertDialog.Builder {
         val session = GuardEngine.captureRelaySession(this)
         return object : AlertDialog.Builder(this@MainActivity) {
             override fun show(): AlertDialog = create().also { dialog ->
-                // Confirmation buttons ignore touches delivered while another app's window covers them.
-                dialog.setOnShowListener { for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) dialog.getButton(which)?.filterTouchesWhenObscured = true }
+                if (critical) dialog.setOnShowListener {
+                    for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) dialog.getButton(which)?.filterTouchesWhenObscured = true
+                    dialog.window?.let { window ->
+                        val inner = window.callback
+                        window.callback = object : Window.Callback by inner {
+                            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                                if (event.actionMasked == MotionEvent.ACTION_DOWN && event.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED != 0) warnObscured()
+                                return inner.dispatchTouchEvent(event)
+                            }
+                        }
+                    }
+                }
                 trackDialog(dialog);dialog.show()
             }
             override fun setPositiveButton(text: CharSequence?, listener: DialogInterface.OnClickListener?): AlertDialog.Builder =
@@ -4134,18 +4148,17 @@ class MainActivity : Activity() {
         minimumHeight = dp(54); setPadding(dp(14), dp(14), dp(14), dp(14)); isSaveEnabled = false
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(12)) }
     }
-    private fun actionButton(title: String, hexBg: String, hexText: String, onClick: () -> Unit): Button = Button(this).apply {
+    private fun actionButton(title: String, hexBg: String, hexText: String, critical: Boolean = false, onClick: () -> Unit): Button =
+        (if (critical) ObscuredAwareButton(this) { warnObscured() } else Button(this)).apply {
         text = title; textSize = 14f; typeface = font(true); isAllCaps = false
         setTextColor(color(hexText)); background = ripple(hexBg, 8, if (hexBg != currentTheme().btnPrimaryBg) currentTheme().accentPowderSky else null)
         minimumHeight = dp(52); setPadding(dp(14), dp(13), dp(14), dp(13)); setOnClickListener(sessionClick(onClick))
-        filterTouchesWhenObscured = true
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(5), 0, dp(8)) }
     }
     private fun textAction(title: String, onClick: () -> Unit): Button = Button(this).apply {
         val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
         setTextColor(color(t.accentSeafoam)); background = ripple(t.bgCard, 8, t.accentPowderSky); minimumHeight = dp(48)
         gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(dp(12), dp(10), dp(12), dp(10)); setOnClickListener(sessionClick(onClick))
-        filterTouchesWhenObscured = true
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply{setMargins(0,dp(4),0,dp(6))}
     }
     private fun checkInitialPairingConfirmation() {

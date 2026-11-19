@@ -3,6 +3,7 @@ package app.family.igguard
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -43,8 +44,8 @@ class ObscuredTouchTest {
         ctx.getSharedPreferences("ig_guard_consent",android.content.Context.MODE_PRIVATE).edit().clear().commit()
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val root=c.get().findViewById<View>(android.R.id.content)
         try {
-            assertGuarded(root.findViewWithTag("consent_accept"),"consent accept");assertGuarded(root.findViewWithTag("consent_decline"),"consent decline")
-            all(root).filterIsInstance<CheckBox>().forEach{assertGuarded(it,"acknowledgment ${it.tag}")}
+            assertGuarded(root.findViewWithTag("consent_accept"),"consent accept")
+            assertFalse("decline stays usable under overlays",root.findViewWithTag<View>("consent_decline").filterTouchesWhenObscured)
         } finally {c.pause().stop().destroy()}
     }
     @Test fun pairingConfirmationIsGuarded() {
@@ -58,6 +59,7 @@ class ObscuredTouchTest {
         try {
             call(child.get(),"showFullCaptureNotice",theme(child.get()))
             assertGuarded(button(ShadowDialog.getLatestDialog().window!!.decorView,"我已了解，啟用雙向擷取"),"child capture confirm")
+            assertFalse("non-critical buttons stay usable under overlays",button(ShadowDialog.getLatestDialog().window!!.decorView,"暫不啟用").filterTouchesWhenObscured)
         } finally {child.pause().stop().destroy()}
         GuardEngine.setRole(ctx,"parent")
         val parent=Robolectric.buildActivity(MainActivity::class.java).setup()
@@ -83,7 +85,7 @@ class ObscuredTouchTest {
         val parent=Robolectric.buildActivity(MainActivity::class.java).setup();val a=parent.get()
         try {
             call(a,"navigateTo","role");call(a,"selectEntryRole","child");call(a,"renderUi",false)
-            assertGuarded(all(a.window.decorView).first{it.tag=="continue_role"},"role continue")
+            assertFalse("ordinary navigation is not filtered",all(a.window.decorView).first{it.tag=="continue_role"}.filterTouchesWhenObscured)
             call(a,"continueEntryRole");idle()
             assertGuarded(dialogButton(true),"leave parent confirm")
         } finally {parent.pause().stop().destroy()}
@@ -94,5 +96,29 @@ class ObscuredTouchTest {
             call(b,"continueEntryRole")
             assertGuarded(button(ShadowDialog.getLatestDialog().window!!.decorView,"驗證並繼續"),"child role switch confirm")
         } finally {child.pause().stop().destroy()}
+    }
+
+    @Test fun aFilteredTouchExplainsWhyAndOnlyCriticalControlsFilter() {
+        ctx.getSharedPreferences("ig_guard_consent",android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val root=c.get().findViewById<View>(android.R.id.content)
+        try {
+            val accept=root.findViewWithTag<Button>("consent_accept")
+            val props=arrayOf(MotionEvent.PointerProperties().apply{id=0;toolType=MotionEvent.TOOL_TYPE_FINGER})
+            val coords=arrayOf(MotionEvent.PointerCoords().apply{x=1f;y=1f})
+            val event=MotionEvent.obtain(0,0,MotionEvent.ACTION_DOWN,1,props,coords,0,0,1f,1f,0,0,0,MotionEvent.FLAG_WINDOW_IS_OBSCURED)
+            assertFalse(accept.onFilterTouchEventForSecurity(event))
+            assertTrue(org.robolectric.shadows.ShadowToast.getTextOfLatestToast().contains("另一個 App"))
+            val plain=MotionEvent.obtain(0,0,MotionEvent.ACTION_DOWN,1f,1f,0)
+            assertTrue("an unobscured touch is accepted",accept.onFilterTouchEventForSecurity(plain))
+        } finally {c.pause().stop().destroy()}
+    }
+    @Test fun criticalDialogsAreGuardedAndOrdinaryOnesAreNot() {
+        GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            val ordinary=MainActivity::class.java.getDeclaredMethod("alert",Boolean::class.javaPrimitiveType).apply{isAccessible=true}
+            (ordinary.invoke(a,false) as android.app.AlertDialog.Builder).setMessage("x").setPositiveButton("ok",null).show();idle()
+            assertFalse(dialogButton(true).filterTouchesWhenObscured)
+        } finally {c.pause().stop().destroy()}
     }
 }
