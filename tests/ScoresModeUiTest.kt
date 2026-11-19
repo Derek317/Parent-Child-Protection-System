@@ -211,7 +211,7 @@ class ScoresParentUiTest {
     @Test fun unknownThreadCountIsShownWhenAReportExists() {
         enable(); report(unknown = 7)
         val c = launch()
-        try { page(c); assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("7 個") && it.contains("類型未能確認") }) } finally { c.pause().stop().destroy() }
+        try { page(c); assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("7 個") && it.contains("看似群組聊天") }) } finally { c.pause().stop().destroy() }
     }
     @Test fun overviewRowOpensThePage() {
         enable(); report(rows = listOf(row("amy", 80.0, System.currentTimeMillis() - 1000)))
@@ -739,7 +739,7 @@ class ScoresChildUiTest {
                 assertTrue(text.contains("AI 風險分析"))
                 for (needle in case.has) assertTrue("${case.expect} should say: $needle\n$text", text.contains(needle))
                 for (needle in case.hasNot) assertFalse("${case.expect} must not say: $needle\n$text", text.contains(needle))
-                if (RiskLocal.consentState(ctx) != "none") { assertTrue(text.contains("類型未明")); assertTrue(text.contains("Last run") || text.contains("Not run yet")) }
+                if (RiskLocal.consentState(ctx) != "none") { assertTrue(text.contains("未分析的對話")); assertTrue(text.contains("Last run") || text.contains("Not run yet")) }
                 labels.add(stateLabel(c))
             } finally { c.pause().stop().destroy() }
         }
@@ -753,7 +753,7 @@ class ScoresChildUiTest {
         val c = launch()
         try {
             val text = UiSupport.texts(tag(c, "scores_status_block").single()).joinToString("\n")
-            assertTrue(text.contains(ScoresUi.time(now)) && text.contains("14 個對話")); assertTrue(text.contains("類型未明）：1 個"))
+            assertTrue(text.contains(ScoresUi.time(now)) && text.contains("14 個對話")); assertTrue(text.contains("類型未能確認）：1 個"))
         } finally { c.pause().stop().destroy() }
     }
     @Test fun pauseResumeAndWithdrawCallTheEngineAndUpdateTheScreen() {
@@ -786,10 +786,24 @@ class ScoresChildUiTest {
             .invoke(c.get(), 9032, android.app.Activity.RESULT_OK, Intent().setData(uri))
         shadowOf(Looper.getMainLooper()).idle()
     }
-    @Test fun importRowOpensTheSystemPickerForAnyFile() {
+    private val parentVerifier by lazy { FamilySecurity.passwordVerifier("Parent12345") }
+    private fun answerPassword(password: String) {
+        val root = ShadowDialog.getLatestDialog().window!!.decorView
+        UiSupport.all(root).filterIsInstance<android.widget.EditText>().single { it.tag == "role_password" }.setText(password)
+        UiSupport.all(root).filterIsInstance<android.widget.Button>().single { it.text.toString() == "驗證並繼續" }.performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+    @Test fun importRowOpensTheSystemPickerForAnyFileOnlyAfterTheParentPassword() {
+        LocalVault.preferences(ctx).edit().putString("parent_password_verifier", parentVerifier).commit()
         val c = launch()
         try {
             permissions(c); tag(c, "model_import_row").single().performClick()
+            assertTrue(UiSupport.texts(ShadowDialog.getLatestDialog().window!!.decorView).any { it.contains("A parent's password") })
+            assertNull("the picker is not opened before the password", shadowOf(c.get()).nextStartedActivityForResult)
+            answerPassword("wrong password"); assertNull(shadowOf(c.get()).nextStartedActivityForResult)
+            ShadowDialog.getLatestDialog().cancel(); shadowOf(Looper.getMainLooper()).idle()   // cancelling does nothing either
+            assertNull(shadowOf(c.get()).nextStartedActivityForResult)
+            tag(c, "model_import_row").single().performClick(); answerPassword("Parent12345")
             val started = shadowOf(c.get()).nextStartedActivityForResult
             assertEquals(Intent.ACTION_OPEN_DOCUMENT, started.intent.action); assertEquals("*/*", started.intent.type); assertEquals(9032, started.requestCode)
         } finally { c.pause().stop().destroy() }
@@ -843,7 +857,8 @@ class ScoresChildUiTest {
             assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("不能使用 AI 風險分析") })
         } finally { c.pause().stop().destroy() }
     }
-    @Test fun installedModelCanBeRemovedAfterConfirmation() {
+    @Test fun installedModelCanBeRemovedAfterConfirmationAndTheParentPassword() {
+        LocalVault.preferences(ctx).edit().putString("parent_password_verifier", parentVerifier).commit()
         installModel()
         val c = launch()
         try {
@@ -852,6 +867,9 @@ class ScoresChildUiTest {
             tag(c, "scores_model_remove").single().performClick()
             assertTrue(RiskModelStore.file(ctx).exists())
             ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle()
+            assertTrue("confirmed, but the parent password has not been given", RiskModelStore.file(ctx).exists())
+            answerPassword("wrong password"); assertTrue(RiskModelStore.file(ctx).exists())
+            answerPassword("Parent12345")
             assertFalse(RiskModelStore.file(ctx).exists()); assertEquals(1, tag(c, "model_import_row").size)
         } finally { c.pause().stop().destroy() }
     }

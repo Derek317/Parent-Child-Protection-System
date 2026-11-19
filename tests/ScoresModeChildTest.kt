@@ -220,17 +220,67 @@ class ScoresModeChildTest {
     }
 
     // ---------- store ----------
-    @Test fun onlyDirectThreadsAreStoredUnknownOnesAreCountedAndGroupsIgnored() {
+    @Test fun directAndSingleAuthorUnknownThreadsAreStoredGroupsAreNot() {
         activate()
         capture(obs("hello ${secret}a"), obs("mine ${secret}b", "outgoing"), obs("dropped", "unknown", kind = "direct"))
         capture(obs("group ${secret}c", conversation = "club", kind = "group"))
-        capture(obs("screen ${secret}d", conversation = "screen friend", kind = "unknown"), obs("screen ${secret}e", conversation = "screen friend", kind = "unknown"),
-            obs("other ${secret}f", conversation = "other screen friend", kind = "unknown"))
-        assertEquals(2, count("risk_store")); assertEquals(2, count("risk_unknown"))
-        assertEquals(2, RiskLocal.status(ctx).unknownThreads)
+        capture(obs("screen ${secret}d", conversation = "screen friend", kind = "unknown"), obs("screen ${secret}e", "outgoing", conversation = "screen friend", kind = "unknown"))
+        assertEquals(4, count("risk_store")); assertEquals(0, count("risk_unknown"))   // the group is neither stored nor counted
         FamilyEvidence(ctx).use { db ->
-            assertEquals(listOf(RiskMessage("other", "hello ${secret}a"), RiskMessage("child", "mine ${secret}b")), db.riskThreadMessages(scope, db.riskDueThreads(scope).single().first))
+            assertEquals(2, db.riskDueThreads(scope).size)
         }
+    }
+    private fun screen(body: String, direction: String, conversation: String = "screen friend") =
+        CapturedText(conversation, body, direction, if (direction == "outgoing") "子女" else "", "", "visible_dm", 0L, "", false, "unknown", true)
+    @Test fun bothSidesOfAScreenThreadAreStoredPromptedInOrderAndScored() {
+        activate()
+        capture(screen("hi ${secret}1", "incoming"), screen("hello ${secret}2", "outgoing"), screen("how are you ${secret}3", "incoming"), screen("fine ${secret}4", "outgoing"))
+        assertEquals(4, count("risk_store"))
+        val scorer = FakeScorer(); val result = runBatch(scorer)
+        assertEquals(1, result.scored)
+        val instruction = ctx.resources.openRawResource(R.raw.risk_instruction_v1).readBytes().toString(Charsets.UTF_8)
+        assertEquals(RiskPrompt.render(instruction, listOf(RiskMessage("other", "hi ${secret}1"), RiskMessage("child", "hello ${secret}2"),
+            RiskMessage("other", "how are you ${secret}3"), RiskMessage("child", "fine ${secret}4"))), scorer.prompts.single())
+        assertEquals("screen friend", reports().last().getJSONArray("conversations").getJSONObject(0).getString("account_label"))
+    }
+    @Test fun aSecondIncomingAuthorTurnsAnUnknownThreadIntoAnExcludedGroup() {
+        activate()
+        fun person(author: String, body: String) = CapturedText("team", body, "incoming", author, "", "notification", clock++, "$author:$body", false, "unknown")
+        capture(person("anna", "one ${secret}"), obs("mine ${secret}", "outgoing", conversation = "team", kind = "unknown"))
+        runBatch()
+        assertEquals(2, count("risk_store")); assertEquals(1, count("risk_results")); assertEquals(0, count("risk_unknown"))
+        capture(person("anna", "again ${secret}")); assertEquals(3, count("risk_store"))   // the same author keeps it a one-to-one thread
+        capture(person("ben", "hi ${secret}"))
+        assertEquals(0, count("risk_store")); assertEquals(0, count("risk_results")); assertEquals(0, count("risk_threads")); assertEquals(0, count("risk_authors"))
+        assertEquals(1, count("risk_unknown")); assertEquals(1, RiskLocal.status(ctx).unknownThreads)
+        capture(person("anna", "later ${secret}"), obs("mine too ${secret}", "outgoing", conversation = "team", kind = "unknown"))
+        assertEquals("excluded threads are not stored again", 0, count("risk_store")); assertEquals(1, count("risk_unknown"))
+        assertTrue(RiskReporter.send(ctx)); assertEquals(1, reports().last().getJSONObject("state").getInt("unknown_threads"))
+        FamilyEvidence(ctx).use { db ->   // the marker expires with the 14-day window
+            val now = System.currentTimeMillis(); assertEquals(0, db.riskUnknownCount(scope, now + 15 * day)); db.pruneExpired(scope, now + 15 * day)
+        }
+        assertEquals(0, count("risk_unknown")); assertNoPrivateText()
+    }
+    @Test fun aScreenThreadHasNoIncomingAuthorSoItCanNeverBeToldFromAGroup() {
+        activate()
+        capture(screen("a ${secret}", "incoming", "team"), screen("b ${secret}", "incoming", "team"))   // two different people on screen: indistinguishable
+        assertEquals(2, count("risk_store")); assertEquals(0, count("risk_unknown"))
+    }
+    @Test fun aMessageReadByNotificationAndScreenIsKeptOnceAndTheTwoThreadsOfOneLabelMerge() {
+        activate()
+        // Same unknown-kind thread read twice: once by notification, once from the screen.
+        capture(CapturedText("Friend", "same words ${secret}", "incoming", "Friend", "", "notification", clock++, "n1", false, "unknown"))
+        capture(screen("same words ${secret}", "incoming", "Friend"), screen("my reply ${secret}", "outgoing", "Friend"))
+        assertEquals("the duplicate across routes is dropped", 2, count("risk_store"))
+        // The notification's own direct thread for the same label is a second thread: merged by label in the report.
+        capture(CapturedText("Friend", "direct side ${secret}", "incoming", "Friend", "", "notification", clock++, "n2", false, "direct"))
+        assertEquals(2, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
+        val scorer = FakeScorer(logits = { p -> if (p.contains("direct side")) FakeScorer.LOW else FakeScorer.HIGH })
+        runBatch(scorer)
+        assertEquals(2, scorer.prompts.size); assertEquals(1, scorer.prompts.count { it.contains("same words") })
+        assertEquals(1, scorer.prompts.first { it.contains("same words") }.split("same words").size - 1)
+        val rows = reports().last().getJSONArray("conversations")
+        assertEquals(1, rows.length()); assertEquals(100.0, rows.getJSONObject(0).getDouble("score"), 0.01)
     }
     @Test fun storedTextIsEncryptedAndRepeatedCaptureIsIdempotent() {
         activate()
@@ -264,16 +314,6 @@ class ScoresModeChildTest {
             assertEquals(60, count("risk_store"))
         }
     }
-    @Test fun unknownThreadCountsExpireWithoutHavingKeptText() {
-        activate(); capture(obs("x ${secret}", conversation = "screen friend", kind = "unknown"))
-        FamilyEvidence(ctx).use { db ->
-            val now = System.currentTimeMillis()
-            assertEquals(1, db.riskUnknownCount(scope, now)); assertEquals(0, db.riskUnknownCount(scope, now + 15 * day))
-            db.pruneExpired(scope, now + 15 * day)
-        }
-        assertEquals(0, count("risk_unknown")); assertEquals(0, count("risk_store"))
-    }
-
     // ---------- every child-to-parent path ----------
     @Test fun noPathSendsMessageTextWhileTheModeIsOn() {
         activate()

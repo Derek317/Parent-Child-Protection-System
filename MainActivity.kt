@@ -2800,9 +2800,9 @@ class MainActivity : Activity() {
         }
         if (current == "child") verifyParentForRoleChange(proceed) else proceed()
     }
-    private fun verifyParentForRoleChange(onSuccess: () -> Unit) {
+    private fun verifyParentForRoleChange(title: String = "切換身份，需要家長確認。", onSuccess: () -> Unit) {
         val t = currentTheme()
-        showSheet("切換身份，需要家長確認。") { dialog ->
+        showSheet(title) { dialog ->
             addView(label("為保護既有家庭設定，請輸入目前的家長主密碼。", 14f, t.textSecondary, bottomPad = 18))
             val password = inputBox(t, "家長主密碼", "", isPassword = true, remember = false).apply { tag = "role_password" }
             addView(password)
@@ -3736,10 +3736,10 @@ class MainActivity : Activity() {
             else -> {}
         }
         if (RiskModelStore.state(this) != RiskModelState.INSTALLED)
-            rootContainer.addView(row("plus", ScoresChildCopy.IMPORT_ROW, ScoresChildCopy.IMPORT_ROW_DESC, t) { pickModelFile() }.apply { getChildAt(0).tag = "model_import_row" })
+            rootContainer.addView(row("plus", ScoresChildCopy.IMPORT_ROW, ScoresChildCopy.IMPORT_ROW_DESC, t) { verifyParentForRoleChange(ScoresChildCopy.PASSWORD_IMPORT_TITLE) { pickModelFile() } }.apply { getChildAt(0).tag = "model_import_row" })
         if (RiskModelStore.file(this).isFile) rootContainer.addView(actionButton(ScoresChildCopy.REMOVE, t.btnSecondaryBg, t.btnSecondaryText) {
             alert().setTitle(ScoresChildCopy.REMOVE_TITLE).setMessage(ScoresChildCopy.REMOVE_BODY).setNegativeButton(ScoresChildCopy.CANCEL, null)
-                .setPositiveButton(ScoresChildCopy.REMOVE) { _, _ -> RiskLocal.removeModel(this); ModelImportJob.dismissResult(); renderUi() }.show()
+                .setPositiveButton(ScoresChildCopy.REMOVE) { _, _ -> verifyParentForRoleChange(ScoresChildCopy.PASSWORD_REMOVE_TITLE) { RiskLocal.removeModel(this); ModelImportJob.dismissResult(); renderUi() } }.show()
         }.apply { tag = "scores_model_remove" })
     }
     private fun pickModelFile() {
