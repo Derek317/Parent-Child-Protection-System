@@ -174,6 +174,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             val evidence=db.delete("evidence","scope=? AND expires<=?",arrayOf(scope,now.toString()))
             val fragments=db.delete("fragments","scope=? AND (expires<=? OR id IN (SELECT id FROM seen WHERE scope=? AND id NOT IN (SELECT id FROM evidence WHERE scope=?)))",arrayOf(scope,now.toString(),scope,scope))
             val outbox=db.delete("outbox","scope=? AND event_id IN (SELECT id FROM outbox_lifetimes WHERE scope=? AND expires<=?)",arrayOf(scope,scope,now.toString()))
+            // An expired lifetime row is only a guard while its outbox row exists; the seen tombstone written above keeps replay blocked.
+            db.execSQL("DELETE FROM outbox_lifetimes WHERE scope=? AND expires<=? AND NOT EXISTS(SELECT 1 FROM outbox o WHERE o.scope=outbox_lifetimes.scope AND o.event_id=outbox_lifetimes.id) AND EXISTS(SELECT 1 FROM capture_seen c WHERE c.scope=outbox_lifetimes.scope AND c.id=outbox_lifetimes.id)",arrayOf(scope,now))
             val windows=db.delete("capture_windows",if(evidence+fragments+outbox>0)"scope=?" else "scope=? AND updated<=?",
                 if(evidence+fragments+outbox>0)arrayOf(scope) else arrayOf(scope,(now-PENDING_TTL).toString()))
             db.setTransactionSuccessful();return evidence+fragments+outbox+windows

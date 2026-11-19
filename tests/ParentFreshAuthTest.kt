@@ -131,7 +131,7 @@ class ParentFreshAuthTest {
             button(openKeySheet(a),"秘密可能外洩：重新安全配對").performClick()
             val recovery=ShadowDialog.getLatestDialog()
             drain(a)
-            button(recovery,"無法連線：只建立新配對").performClick()
+            button(recovery,"只建立新配對（不刪除中繼資料）").performClick()
             (ShadowDialog.getLatestDialog() as android.app.AlertDialog).getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick().also{shadowOf(android.os.Looper.getMainLooper()).idle()}
             assertTrue(prompted(a));assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
             answer(a,false);assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
@@ -223,5 +223,16 @@ class ParentFreshAuthTest {
             answer(a,true)
             assertEquals(0,FamilyEvidence(ctx).use{it.retentionPreview(scope).legacyCount})
         } finally {c.pause().stop().destroy()}
+    }
+
+    @Test fun anAbandonedPromptDoesNotBlockTheNextFreshAuthentication() {
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            button(openKeySheet(a),"查看家長主密碼").performClick()
+            val pending=MainActivity::class.java.getDeclaredField("parentAuthPending").apply{isAccessible=true}
+            assertTrue(pending.getBoolean(a))
+            c.pause()
+            assertFalse("leaving the foreground clears an unanswered prompt",pending.getBoolean(a))
+        } finally {c.stop().destroy()}
     }
 }

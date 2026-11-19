@@ -164,4 +164,18 @@ class RetentionTest {
             assertNull(db.find("f","old"));assertTrue(db.hasSeen("f","old"))
         }
     }
+
+    @Test fun expiredLifetimeRowsAreRemovedOnceTheirOutboxRowsAreGoneButReplayStaysBlocked() {
+        val now=System.currentTimeMillis()
+        FamilyEvidence(ctx).use { db ->
+            db.enqueue("f","gone:0","cipher")
+            fun lifetimes()=db.readableDatabase.rawQuery("SELECT COUNT(*) FROM outbox_lifetimes WHERE scope='f'",null).use{it.moveToFirst();it.getInt(0)}
+            assertEquals(1,lifetimes())
+            db.pruneExpired("f",now+4*day)
+            assertEquals(0,db.pendingCount("f"))
+            assertEquals("no lifetime row outlives its outbox row after expiry",0,lifetimes())
+            db.enqueue("f","gone:0","replayed cipher")
+            assertEquals("the same event cannot be requeued",0,db.pendingCount("f"))
+        }
+    }
 }

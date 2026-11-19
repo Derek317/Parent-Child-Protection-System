@@ -31,7 +31,7 @@
 
 接受前停用收集／中繼。拒絕／返回會回 Android 主畫面，不產生接受收據；佇列暫存待處理，原期限不延長，既有雲端／父母副本不刪除。接受不會取消子女已設定的停止狀態。日常更新保留原同意記錄，不代表同意新修訂。
 
-子女可在「擷取範圍與停止」持續停止新擷取及本機待傳送，選擇捨棄待傳內容或在原期限內暫存。重新開始須明確選擇，會捨棄舊待傳內容並先恢復傳入提醒，擴展擷取須重新確認。儲存範圍選擇也會捨棄舊範圍待傳內容。可另在 Android 同時關閉通知存取及無障礙以撤銷兩種擷取權限；僅關閉權限不等於捨棄佇列。已轉傳或中繼已緩存的內容仍可能送達；已送達封存、Instagram 內容及外部副本須分別處理。每部手機須分別清除應用程式資料。
+子女可在「擷取範圍與停止」持續停止新擷取及本機待傳送（停止前會先向家長手機送出一則不含訊息內容的通知，並最多等候約 6 秒；之後不再傳送任何內容），選擇捨棄待傳內容或在原期限內暫存。重新開始須明確選擇，會捨棄舊待傳內容並先恢復傳入提醒，擴展擷取須重新確認。儲存範圍選擇也會捨棄舊範圍待傳內容。可另在 Android 同時關閉通知存取及無障礙以撤銷兩種擷取權限；僅關閉權限不等於捨棄佇列。已轉傳或中繼已緩存的內容仍可能送達；已送達封存、Instagram 內容及外部副本須分別處理。每部手機須分別清除應用程式資料。
 
 ### 5. 法律範圍
 
@@ -73,7 +73,7 @@ These exact GitHub terms appear offline. Three boxes start unticked; all are req
 
 Collection/relay stay off until acceptance. Decline/Back returns to Android Home without an acceptance receipt; queues stay pending within their original deadlines, and earlier cloud/parent copies remain. Acceptance does not cancel a child's persistent stop choice. Ordinary updates preserve the original receipt rather than recording agreement to revised Terms.
 
-The child can use **擷取範圍與停止** to persistently stop new capture and local pending transfer, choosing discard or hold within the original deadline. Explicit resume discards old pending content and first restarts incoming alerts; expanded capture requires renewed acknowledgment. Saving scope choices also discards old-scope pending content. Both Android notification access and accessibility can additionally be disabled to revoke both capture permissions; permission revocation alone does not discard queues. Already forwarded or relay-buffered content may still arrive. Delivered archives, Instagram content and external copies need separate handling. Clear app data on each phone separately.
+The child can use **擷取範圍與停止** (which first sends the parent phone one notice without message content and waits up to about 6 seconds; nothing is sent afterwards) to persistently stop new capture and local pending transfer, choosing discard or hold within the original deadline. Explicit resume discards old pending content and first restarts incoming alerts; expanded capture requires renewed acknowledgment. Saving scope choices also discards old-scope pending content. Both Android notification access and accessibility can additionally be disabled to revoke both capture permissions; permission revocation alone does not discard queues. Already forwarded or relay-buffered content may still arrive. Delivered archives, Instagram content and external copies need separate handling. Clear app data on each phone separately.
 
 ### 5. Legal scope
 

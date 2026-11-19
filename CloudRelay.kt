@@ -43,7 +43,12 @@ object CloudRelay {
             try {
                 client.newBuilder().readTimeout(12,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
                     val success=response.code in 200..299
-                    onComplete(success,if(success)"中繼已確認刪除及退役舊房間。" else "中繼未確認刪除（HTTP ${response.code}）；目前配對保留。")
+                    onComplete(success,when {
+                        success -> "中繼已確認刪除及退役舊房間。"
+                        // The current relay answers 426 before any state change: it simply cannot delete a room.
+                        response.code in setOf(426,404,405,501) -> "目前的中繼不能刪除房間，原有配對已保留。可改選「只建立新配對」。"
+                        else -> "中繼未確認刪除（HTTP ${response.code}）；目前配對保留。"
+                    })
                 }
             } catch(_:Exception){onComplete(false,"中繼未確認刪除；請檢查連線後重試。")}
         }

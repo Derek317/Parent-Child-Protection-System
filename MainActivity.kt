@@ -2972,6 +2972,8 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
         parentAccess.lock()
+        // A prompt abandoned in the background must not block the next fresh authentication request.
+        parentAuthSignal?.cancel(); parentAuthPending = false; parentAuthSession = null; parentAuthAction = null; parentAuthFresh = false; parentAuthSignal = null
         if(storageReady && !consentVisible && GuardEngine.isParentMode(this)) {
             dismissUiDialogs();inputDrafts.clear();displayed15MinCode="";renderParentLock()
         }
@@ -4010,7 +4012,7 @@ class MainActivity : Activity() {
     }
     private fun showCompromiseRecovery(t: ThemeColors) {
         showSheet("重新安全配對") { dialog ->
-            addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對及核對完整安全代碼。已被複製的舊資料無法收回。",14f,t.textSecondary,bottomPad=18))
+            addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對及核對完整安全代碼。已被複製的舊資料無法收回。 目前的中繼不能刪除房間；中繼上未被取走的舊密文最多保留 7 天。",14f,t.textSecondary,bottomPad=18))
             fun fresh() {
                 if(!parentUnlocked())return
                 releaseChildSheet("重新安全配對","新的家庭秘密不經舊通道傳送；子女手機須解除舊配對後才能重新配對。") {
@@ -4021,14 +4023,14 @@ class MainActivity : Activity() {
                     } catch(_:Exception){Toast.makeText(this@MainActivity,"未能完成；原有資料已保留。請重試或聯絡支援。",Toast.LENGTH_LONG).show()}
                 }
             }
-            addView(actionButton("先刪除舊中繼房間，再建立新配對",t.warningButtonBg,t.warningButtonText){requireFreshParentAuth {
+            addView(actionButton("嘗試刪除舊中繼房間，再建立新配對",t.warningButtonBg,t.warningButtonText){requireFreshParentAuth {
                 val expected=GuardEngine.captureRelaySession(this@MainActivity)
                 CloudRelay.retireRoom(this@MainActivity){ok,message->runOnUiThread{
                     if(isDestroyed || !parentUnlocked() || GuardEngine.captureRelaySession(this@MainActivity)!=expected)return@runOnUiThread
                     if(ok)fresh() else Toast.makeText(this@MainActivity,message,Toast.LENGTH_LONG).show()
                 }}
             }})
-            addView(actionButton("無法連線：只建立新配對",t.btnSecondaryBg,t.btnSecondaryText){
+            addView(actionButton("只建立新配對（不刪除中繼資料）",t.btnSecondaryBg,t.btnSecondaryText){
                 alert(critical = true).setTitle("未確認中繼刪除，仍要繼續？").setMessage("新秘密不會經舊通道傳送，但舊密文可能仍留在中繼直到到期。子女手機需離線停止舊擷取，然後在安全裝置重新配對；已送達或被複製資料不會刪除。")
                     .setNegativeButton("取消",null).setPositiveButton("了解並建立新配對"){_,_->requireFreshParentAuth{fresh()}}.show()
             })

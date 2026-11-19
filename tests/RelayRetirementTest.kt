@@ -18,10 +18,11 @@ import java.util.concurrent.TimeUnit
 class RelayRetirementTest {
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     @Before fun reset(){LocalVault.preferences(ctx).edit().clear().commit();GuardEngine.setRole(ctx,"parent")}
+    private var lastMessage=""
     private fun retire(url:String):Boolean {
         val method=CloudRelay::class.java.getDeclaredMethod("retireRoom",android.content.Context::class.java,String::class.java,kotlin.jvm.functions.Function2::class.java)
         val latch=CountDownLatch(1);var accepted=false
-        val callback:(Boolean,String)->Unit={ok,_->accepted=ok;latch.countDown()}
+        val callback:(Boolean,String)->Unit={ok,message->accepted=ok;lastMessage=message;latch.countDown()}
         method.invoke(CloudRelay,ctx,url,callback)
         assertTrue("retirement callback",latch.await(15,TimeUnit.SECONDS))
         return accepted
@@ -43,6 +44,20 @@ class RelayRetirementTest {
             val token=GuardEngine.getOrCreateFamilyToken(ctx)
             assertFalse(retire(server.url("/").toString().trimEnd('/')))
             assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
+        }
+    }
+    @Test fun aRelayThatCannotDeleteRoomsIsDescribedPlainlyWithoutAnHttpCode(){
+        MockWebServer().use{server->server.enqueue(MockResponse().setResponseCode(426));server.start()
+            assertFalse(retire(server.url("/").toString().trimEnd('/')))
+            assertFalse("no HTTP code for the parent",lastMessage.contains("HTTP"))
+            assertTrue(lastMessage.contains("不能刪除房間")&&lastMessage.contains("保留"))
+            assertFalse("not described as a connection problem",lastMessage.contains("連線"))
+        }
+    }
+    @Test fun otherFailuresStillMentionTheHttpStatusForSupport(){
+        MockWebServer().use{server->server.enqueue(MockResponse().setResponseCode(503));server.start()
+            assertFalse(retire(server.url("/").toString().trimEnd('/')))
+            assertTrue(lastMessage.contains("503"))
         }
     }
 }

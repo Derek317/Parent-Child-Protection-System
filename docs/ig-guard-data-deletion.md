@@ -10,7 +10,7 @@ Accepting saves an AES-GCM-encrypted local receipt in separate `ig_guard_consent
 
 ## Stop capture and pending local transfer
 
-On the **child phone**, open **擷取範圍與停止** from the protection overview. Choose either:
+On the **child phone**, open **擷取範圍與停止** (it first sends the parent one content-free notice, waiting up to about 6 seconds; nothing is sent afterwards) from the protection overview. Choose either:
 
 - **停止擷取及傳送，並捨棄待傳內容**: persistently stop new capture and local pending transfer, and discard queued content for this family on this phone.
 - **停止擷取及傳送，暫存待傳內容**: persistently stop both while holding pending content within its existing 72-hour deadline.

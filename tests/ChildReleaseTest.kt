@@ -106,7 +106,7 @@ class ChildReleaseTest {
             call(a,"navigateTo","settings")
             all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("家長主密碼與金鑰")==true}.performClick()
             button("秘密可能外洩：重新安全配對")!!.performClick()
-            button("無法連線：只建立新配對")!!.performClick();idle()
+            button("只建立新配對（不刪除中繼資料）")!!.performClick();idle()
             (latest() as android.app.AlertDialog).getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();idle()
             answer(a)
             assertTrue(texts().any{it.contains(secret)})
