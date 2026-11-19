@@ -111,5 +111,9 @@ class RiskModelTest {
         assertTrue(RiskModelFile.matches(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256))
         assertFalse(RiskModelFile.matches(RiskModelSpec.FILE_BYTES - 1, RiskModelSpec.FILE_SHA256))
         assertFalse(RiskModelFile.matches(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256.replace('a', 'b')))
+        // The pinned file is v4; the earlier v3 file (same size) is refused.
+        assertEquals("qwen3-1.7b-lora-v4-Q4_K_M.gguf", RiskModelSpec.FILE_NAME)
+        assertEquals("833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314", RiskModelSpec.FILE_SHA256)
+        assertFalse(RiskModelFile.matches(RiskModelSpec.FILE_BYTES, "14f2176d569772bcc8e0e0dcd97e59f7ac60d8c4f6e1cb5f6a45159b1892c293"))
     }
 }

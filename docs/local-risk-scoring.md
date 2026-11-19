@@ -12,7 +12,7 @@ Everything about the model's accuracy is measured on invented chats only (see `r
 | --- | --- | --- |
 | Where scoring runs | Derek | On the child's phone. |
 | How the model file arrives | Derek | A person imports the file by hand with a file picker. No download code, no hosting. |
-| Model | Research | `qwen3-1.7b-lora-v3-Q4_K_M.gguf`, 1,107,408,736 bytes, SHA-256 `14f2176d569772bcc8e0e0dcd97e59f7ac60d8c4f6e1cb5f6a45159b1892c293`. Any other file is refused. |
+| Model | Research | `qwen3-1.7b-lora-v4-Q4_K_M.gguf` (v4, retrained on the restyled data and chosen by Derek on 19 November 2026; v3 is no longer accepted), 1,107,408,736 bytes, SHA-256 `833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314`. Any other file is refused. |
 | Engine | Research | llama.cpp tag `b12503` (commit `4577932fab595eaa8b27ad71734d5de1f3c07d8c`), built for `arm64-v8a` with the NDK. |
 | Keyword detection | Derek | Unchanged. The model is an addition. |
 

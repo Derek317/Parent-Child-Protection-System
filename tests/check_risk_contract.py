@@ -16,7 +16,8 @@ class RiskContract(unittest.TestCase):
     def test_model_constants_match_the_stage4_report(self):
         report = (ROOT / "research/results/stage4-report.md").read_text(encoding="utf-8")
         kotlin = (ROOT / "RiskModel.kt").read_text(encoding="utf-8")
-        name, size, sha = re.search(r"`([\w.\-]+\.gguf)`, ([\d,]+) bytes.*?SHA-256 `([0-9a-f]{64})`", report).groups()
+        # The report lists each model file it evaluated; the app pins the latest one (v4 from the "Retrain on the restyled data" section).
+        name, size, sha = re.findall(r"`([\w.\-]+\.gguf)`, ([\d,]+) bytes.*?SHA-256 `([0-9a-f]{64})`", report)[-1]
         self.assertIn(f'FILE_NAME = "{name}"', kotlin)
         self.assertIn(f"FILE_BYTES = {int(size.replace(',', '')):_}L", kotlin)
         self.assertIn(f'FILE_SHA256 = "{sha}"', kotlin)

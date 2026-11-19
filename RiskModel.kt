@@ -6,10 +6,10 @@ import kotlin.math.exp
 
 /** Pure-Kotlin half of local risk scoring. Must match research/igrisk/scorers.py and train_lora.render. */
 internal object RiskModelSpec {
-    const val MODEL_NAME = "igguard/qwen3-1.7b-lora-v3-Q4_K_M"
-    const val FILE_NAME = "qwen3-1.7b-lora-v3-Q4_K_M.gguf"
+    const val MODEL_NAME = "igguard/qwen3-1.7b-lora-v4-Q4_K_M"
+    const val FILE_NAME = "qwen3-1.7b-lora-v4-Q4_K_M.gguf"
     const val FILE_BYTES = 1_107_408_736L
-    const val FILE_SHA256 = "14f2176d569772bcc8e0e0dcd97e59f7ac60d8c4f6e1cb5f6a45159b1892c293"
+    const val FILE_SHA256 = "833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314"
     val ANSWERS = listOf("0", "1", "2", "3", "U")
     val ANSWER_TOKEN_IDS = intArrayOf(15, 16, 17, 18, 52)
     const val WINDOW = 30

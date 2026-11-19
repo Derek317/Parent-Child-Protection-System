@@ -59,7 +59,8 @@ class RiskScoreReportTest {
     }
 
     private val d1 = "LiquidAI/d1-omni-600M" to "02b55d7076f15129e59ab3f94783f32c4b088674"
-    private val qwen = "igguard/qwen3-1.7b-lora-v3-Q4_K_M" to "14f2176d569772bcc8e0e0dcd97e59f7ac60d8c4f6e1cb5f6a45159b1892c293"
+    private val qwen = "igguard/qwen3-1.7b-lora-v4-Q4_K_M" to "833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314"
+    private val qwenV3 = "igguard/qwen3-1.7b-lora-v3-Q4_K_M" to "14f2176d569772bcc8e0e0dcd97e59f7ac60d8c4f6e1cb5f6a45159b1892c293"
     private fun withModel(model: String, revision: String) = RiskScoreReport.read(
         """{"revision":"$revision","schema":"igguard-d1-risk-v1","source":"local_research","model":"$model",
             "conversations":[{"conversation":"C001","score":50,"review_reason":null}]}""".byteInputStream()
@@ -70,12 +71,16 @@ class RiskScoreReportTest {
         val file = File(vector.parentFile, "../../research/results/style3-test/qwen3-1.7b-lora-v3-q4/score-report.json")
         val report = file.inputStream().use { RiskScoreReport.read(it) }
         assertEquals(270, report.scores.size + report.reviewCount)
-        assertEquals(qwen.first, report.model)
+        assertEquals(qwenV3.first, report.model)   // the checked-in report was produced with the earlier v3 file
     }
 
     @Test fun bothPinnedModelsParseRegardlessOfFieldOrder() {
         assertEquals(d1.first, parse("""{"conversation":"C001","score":1,"review_reason":null}""").model)
         assertEquals(qwen.first, withModel(qwen.first, qwen.second).model)
+        // Reports from the earlier v3 file stay readable; a mixed-up name and revision does not.
+        assertEquals(qwenV3.first, withModel(qwenV3.first, qwenV3.second).model)
+        assertThrows(Exception::class.java) { withModel(qwen.first, qwenV3.second) }
+        assertThrows(Exception::class.java) { withModel(qwenV3.first, qwen.second) }
     }
 
     @Test fun modelAndRevisionMustMatchAsAPair() {

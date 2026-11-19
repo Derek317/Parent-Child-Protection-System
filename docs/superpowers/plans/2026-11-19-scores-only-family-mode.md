@@ -10,7 +10,7 @@
 
 ## Global constraints
 
-- Model file: `qwen3-1.7b-lora-v3-Q4_K_M.gguf`, 1,107,408,736 bytes, SHA-256 `14f2176d569772bcc8e0e0dcd97e59f7ac60d8c4f6e1cb5f6a45159b1892c293`. Imported by hand on the child's phone. Anything else is refused. No download code.
+- Model file: `qwen3-1.7b-lora-v4-Q4_K_M.gguf` (the retrained v4, Derek's decision of 19 November 2026; v3 is no longer accepted), 1,107,408,736 bytes, SHA-256 `833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314`. Imported by hand on the child's phone. Anything else is refused. No download code.
 - In this mode no message text, quote or summary reaches the parent's phone.
 - Nothing is stored or scored before the child accepts; a visible status is always shown; pause works at once and the parent is told.
 - Store limits: latest 60 messages per thread, nothing older than 14 days. One-to-one threads only: kind `direct`, or kind `unknown` with at most one distinct incoming author (Derek's decision, 19 November 2026, a stated departure from the design's "threads whose kind is unknown are not stored or scored"). Group threads are never stored; an unknown-kind thread that shows a second incoming author is treated as a group, deleted, set aside and counted. Screen reads cannot show an author, so a group opened on the phone may be analysed.
