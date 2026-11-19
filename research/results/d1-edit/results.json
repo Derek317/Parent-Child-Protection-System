@@ -1,0 +1,1077 @@
+{
+  "frozen_patch_sha256": "9c240628a9f378627984ba8a2c278a7f102dc8654acbdd9a79ac2fca5955f518",
+  "sets": {
+    "tune": {
+      "file": "research/data/tune.jsonl",
+      "sha256": "8ba3de358375573ed1293989432763eb9f021a12565f4b30294d8a165b145136",
+      "n": 225,
+      "unedited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 51,
+              "n": 90,
+              "rate": 0.5666666666666667
+            },
+            "benign": {
+              "k": 10,
+              "n": 45,
+              "rate": 0.2222222222222222
+            },
+            "potential": {
+              "k": 13,
+              "n": 45,
+              "rate": 0.28888888888888886
+            },
+            "unresolved": {
+              "k": 9,
+              "n": 45,
+              "rate": 0.2
+            },
+            "auroc": 0.7437037037037038
+          },
+          "en": {
+            "risk": {
+              "k": 16,
+              "n": 30,
+              "rate": 0.5333333333333333
+            },
+            "benign": {
+              "k": 1,
+              "n": 15,
+              "rate": 0.06666666666666667
+            },
+            "potential": {
+              "k": 3,
+              "n": 15,
+              "rate": 0.2
+            },
+            "unresolved": {
+              "k": 1,
+              "n": 15,
+              "rate": 0.06666666666666667
+            },
+            "auroc": 0.8133333333333334
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 23,
+              "n": 30,
+              "rate": 0.7666666666666667
+            },
+            "benign": {
+              "k": 9,
+              "n": 15,
+              "rate": 0.6
+            },
+            "potential": {
+              "k": 7,
+              "n": 15,
+              "rate": 0.4666666666666667
+            },
+            "unresolved": {
+              "k": 7,
+              "n": 15,
+              "rate": 0.4666666666666667
+            },
+            "auroc": 0.6
+          },
+          "mixed": {
+            "risk": {
+              "k": 12,
+              "n": 30,
+              "rate": 0.4
+            },
+            "benign": {
+              "k": 0,
+              "n": 15,
+              "rate": 0.0
+            },
+            "potential": {
+              "k": 3,
+              "n": 15,
+              "rate": 0.2
+            },
+            "unresolved": {
+              "k": 1,
+              "n": 15,
+              "rate": 0.06666666666666667
+            },
+            "auroc": 0.8777777777777778
+          }
+        },
+        "pass_mark": {
+          "pass": false,
+          "failed": [
+            "all risk 0.567 (needs >= 0.8)",
+            "all benign 0.222 (needs <= 0.2)",
+            "en risk 0.533 (needs >= 0.7)",
+            "zh-Hant-yue benign 0.600 (needs <= 0.3)",
+            "mixed risk 0.400 (needs >= 0.7)"
+          ]
+        }
+      },
+      "edited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 87,
+              "n": 90,
+              "rate": 0.9666666666666667
+            },
+            "benign": {
+              "k": 11,
+              "n": 45,
+              "rate": 0.24444444444444444
+            },
+            "potential": {
+              "k": 9,
+              "n": 45,
+              "rate": 0.2
+            },
+            "unresolved": {
+              "k": 16,
+              "n": 45,
+              "rate": 0.35555555555555557
+            },
+            "auroc": 0.9740740740740741
+          },
+          "en": {
+            "risk": {
+              "k": 28,
+              "n": 30,
+              "rate": 0.9333333333333333
+            },
+            "benign": {
+              "k": 4,
+              "n": 15,
+              "rate": 0.26666666666666666
+            },
+            "potential": {
+              "k": 1,
+              "n": 15,
+              "rate": 0.06666666666666667
+            },
+            "unresolved": {
+              "k": 3,
+              "n": 15,
+              "rate": 0.2
+            },
+            "auroc": 0.9488888888888889
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 30,
+              "n": 30,
+              "rate": 1.0
+            },
+            "benign": {
+              "k": 6,
+              "n": 15,
+              "rate": 0.4
+            },
+            "potential": {
+              "k": 5,
+              "n": 15,
+              "rate": 0.3333333333333333
+            },
+            "unresolved": {
+              "k": 9,
+              "n": 15,
+              "rate": 0.6
+            },
+            "auroc": 0.9844444444444445
+          },
+          "mixed": {
+            "risk": {
+              "k": 29,
+              "n": 30,
+              "rate": 0.9666666666666667
+            },
+            "benign": {
+              "k": 1,
+              "n": 15,
+              "rate": 0.06666666666666667
+            },
+            "potential": {
+              "k": 3,
+              "n": 15,
+              "rate": 0.2
+            },
+            "unresolved": {
+              "k": 4,
+              "n": 15,
+              "rate": 0.26666666666666666
+            },
+            "auroc": 0.9911111111111112
+          }
+        },
+        "pass_mark": {
+          "pass": false,
+          "failed": [
+            "all benign 0.244 (needs <= 0.2)",
+            "zh-Hant-yue benign 0.400 (needs <= 0.3)"
+          ]
+        }
+      }
+    },
+    "check": {
+      "file": "research/data/check.jsonl",
+      "sha256": "cf0cad5ea6825c492fae4a2f79b0760c2817faac44f704c287645be936d05ea3",
+      "n": 225,
+      "unedited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 38,
+              "n": 90,
+              "rate": 0.4222222222222222
+            },
+            "benign": {
+              "k": 3,
+              "n": 45,
+              "rate": 0.06666666666666667
+            },
+            "potential": {
+              "k": 6,
+              "n": 45,
+              "rate": 0.13333333333333333
+            },
+            "unresolved": {
+              "k": 5,
+              "n": 45,
+              "rate": 0.1111111111111111
+            },
+            "auroc": 0.759753086419753
+          },
+          "en": {
+            "risk": {
+              "k": 13,
+              "n": 30,
+              "rate": 0.43333333333333335
+            },
+            "benign": {
+              "k": 0,
+              "n": 15,
+              "rate": 0.0
+            },
+            "potential": {
+              "k": 2,
+              "n": 15,
+              "rate": 0.13333333333333333
+            },
+            "unresolved": {
+              "k": 1,
+              "n": 15,
+              "rate": 0.06666666666666667
+            },
+            "auroc": 0.8311111111111111
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 17,
+              "n": 30,
+              "rate": 0.5666666666666667
+            },
+            "benign": {
+              "k": 3,
+              "n": 15,
+              "rate": 0.2
+            },
+            "potential": {
+              "k": 3,
+              "n": 15,
+              "rate": 0.2
+            },
+            "unresolved": {
+              "k": 4,
+              "n": 15,
+              "rate": 0.26666666666666666
+            },
+            "auroc": 0.7022222222222222
+          },
+          "mixed": {
+            "risk": {
+              "k": 8,
+              "n": 30,
+              "rate": 0.26666666666666666
+            },
+            "benign": {
+              "k": 0,
+              "n": 15,
+              "rate": 0.0
+            },
+            "potential": {
+              "k": 1,
+              "n": 15,
+              "rate": 0.06666666666666667
+            },
+            "unresolved": {
+              "k": 0,
+              "n": 15,
+              "rate": 0.0
+            },
+            "auroc": 0.8
+          }
+        },
+        "pass_mark": {
+          "pass": false,
+          "failed": [
+            "all risk 0.422 (needs >= 0.8)",
+            "en risk 0.433 (needs >= 0.7)",
+            "zh-Hant-yue risk 0.567 (needs >= 0.7)",
+            "mixed risk 0.267 (needs >= 0.7)"
+          ]
+        }
+      },
+      "edited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 85,
+              "n": 90,
+              "rate": 0.9444444444444444
+            },
+            "benign": {
+              "k": 3,
+              "n": 45,
+              "rate": 0.06666666666666667
+            },
+            "potential": {
+              "k": 7,
+              "n": 45,
+              "rate": 0.15555555555555556
+            },
+            "unresolved": {
+              "k": 17,
+              "n": 45,
+              "rate": 0.37777777777777777
+            },
+            "auroc": 0.9753086419753086
+          },
+          "en": {
+            "risk": {
+              "k": 29,
+              "n": 30,
+              "rate": 0.9666666666666667
+            },
+            "benign": {
+              "k": 1,
+              "n": 15,
+              "rate": 0.06666666666666667
+            },
+            "potential": {
+              "k": 2,
+              "n": 15,
+              "rate": 0.13333333333333333
+            },
+            "unresolved": {
+              "k": 4,
+              "n": 15,
+              "rate": 0.26666666666666666
+            },
+            "auroc": 0.9911111111111112
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 30,
+              "n": 30,
+              "rate": 1.0
+            },
+            "benign": {
+              "k": 2,
+              "n": 15,
+              "rate": 0.13333333333333333
+            },
+            "potential": {
+              "k": 3,
+              "n": 15,
+              "rate": 0.2
+            },
+            "unresolved": {
+              "k": 8,
+              "n": 15,
+              "rate": 0.5333333333333333
+            },
+            "auroc": 0.9933333333333333
+          },
+          "mixed": {
+            "risk": {
+              "k": 26,
+              "n": 30,
+              "rate": 0.8666666666666667
+            },
+            "benign": {
+              "k": 0,
+              "n": 15,
+              "rate": 0.0
+            },
+            "potential": {
+              "k": 2,
+              "n": 15,
+              "rate": 0.13333333333333333
+            },
+            "unresolved": {
+              "k": 5,
+              "n": 15,
+              "rate": 0.3333333333333333
+            },
+            "auroc": 0.96
+          }
+        },
+        "pass_mark": {
+          "pass": true,
+          "failed": []
+        }
+      }
+    },
+    "style3-test": {
+      "file": "research/data/style3-test.jsonl",
+      "sha256": "c84c4d52494d3214a5842e19dc6bd2183b8c01861ff88d107984378d8b2086de",
+      "n": 270,
+      "unedited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 30,
+              "n": 120,
+              "rate": 0.25
+            },
+            "benign": {
+              "k": 14,
+              "n": 55,
+              "rate": 0.2545454545454545
+            },
+            "potential": {
+              "k": 6,
+              "n": 49,
+              "rate": 0.12244897959183673
+            },
+            "unresolved": {
+              "k": 10,
+              "n": 46,
+              "rate": 0.21739130434782608
+            },
+            "auroc": 0.56
+          },
+          "en": {
+            "risk": {
+              "k": 4,
+              "n": 40,
+              "rate": 0.1
+            },
+            "benign": {
+              "k": 4,
+              "n": 19,
+              "rate": 0.21052631578947367
+            },
+            "potential": {
+              "k": 0,
+              "n": 16,
+              "rate": 0.0
+            },
+            "unresolved": {
+              "k": 1,
+              "n": 16,
+              "rate": 0.0625
+            },
+            "auroc": 0.5592105263157895
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 16,
+              "n": 40,
+              "rate": 0.4
+            },
+            "benign": {
+              "k": 8,
+              "n": 18,
+              "rate": 0.4444444444444444
+            },
+            "potential": {
+              "k": 6,
+              "n": 17,
+              "rate": 0.35294117647058826
+            },
+            "unresolved": {
+              "k": 6,
+              "n": 17,
+              "rate": 0.35294117647058826
+            },
+            "auroc": 0.45694444444444443
+          },
+          "mixed": {
+            "risk": {
+              "k": 10,
+              "n": 40,
+              "rate": 0.25
+            },
+            "benign": {
+              "k": 2,
+              "n": 18,
+              "rate": 0.1111111111111111
+            },
+            "potential": {
+              "k": 0,
+              "n": 16,
+              "rate": 0.0
+            },
+            "unresolved": {
+              "k": 3,
+              "n": 13,
+              "rate": 0.23076923076923078
+            },
+            "auroc": 0.7069444444444445
+          }
+        },
+        "pass_mark": {
+          "pass": false,
+          "failed": [
+            "all risk 0.250 (needs >= 0.8)",
+            "all benign 0.255 (needs <= 0.2)",
+            "en risk 0.100 (needs >= 0.7)",
+            "zh-Hant-yue risk 0.400 (needs >= 0.7)",
+            "zh-Hant-yue benign 0.444 (needs <= 0.3)",
+            "mixed risk 0.250 (needs >= 0.7)"
+          ]
+        }
+      },
+      "edited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 77,
+              "n": 120,
+              "rate": 0.6416666666666667
+            },
+            "benign": {
+              "k": 18,
+              "n": 55,
+              "rate": 0.32727272727272727
+            },
+            "potential": {
+              "k": 5,
+              "n": 49,
+              "rate": 0.10204081632653061
+            },
+            "unresolved": {
+              "k": 8,
+              "n": 46,
+              "rate": 0.17391304347826086
+            },
+            "auroc": 0.7577272727272727
+          },
+          "en": {
+            "risk": {
+              "k": 19,
+              "n": 40,
+              "rate": 0.475
+            },
+            "benign": {
+              "k": 5,
+              "n": 19,
+              "rate": 0.2631578947368421
+            },
+            "potential": {
+              "k": 1,
+              "n": 16,
+              "rate": 0.0625
+            },
+            "unresolved": {
+              "k": 0,
+              "n": 16,
+              "rate": 0.0
+            },
+            "auroc": 0.7328947368421053
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 33,
+              "n": 40,
+              "rate": 0.825
+            },
+            "benign": {
+              "k": 10,
+              "n": 18,
+              "rate": 0.5555555555555556
+            },
+            "potential": {
+              "k": 4,
+              "n": 17,
+              "rate": 0.23529411764705882
+            },
+            "unresolved": {
+              "k": 5,
+              "n": 17,
+              "rate": 0.29411764705882354
+            },
+            "auroc": 0.7652777777777777
+          },
+          "mixed": {
+            "risk": {
+              "k": 25,
+              "n": 40,
+              "rate": 0.625
+            },
+            "benign": {
+              "k": 3,
+              "n": 18,
+              "rate": 0.16666666666666666
+            },
+            "potential": {
+              "k": 0,
+              "n": 16,
+              "rate": 0.0
+            },
+            "unresolved": {
+              "k": 3,
+              "n": 13,
+              "rate": 0.23076923076923078
+            },
+            "auroc": 0.8694444444444445
+          }
+        },
+        "pass_mark": {
+          "pass": false,
+          "failed": [
+            "all risk 0.642 (needs >= 0.8)",
+            "all benign 0.327 (needs <= 0.2)",
+            "en risk 0.475 (needs >= 0.7)",
+            "zh-Hant-yue benign 0.556 (needs <= 0.3)",
+            "mixed risk 0.625 (needs >= 0.7)"
+          ]
+        }
+      }
+    },
+    "blind90": {
+      "file": "research/data/handoff/blind.jsonl",
+      "sha256": "4fcf4a33536006a92512426533cb2eadcce1d4717caa6a58cbd06d5fdc934be1",
+      "n": 90,
+      "unedited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 32,
+              "n": 36,
+              "rate": 0.8888888888888888
+            },
+            "benign": {
+              "k": 29,
+              "n": 36,
+              "rate": 0.8055555555555556
+            },
+            "potential": {
+              "k": 0,
+              "n": 0,
+              "rate": null
+            },
+            "unresolved": {
+              "k": 15,
+              "n": 18,
+              "rate": 0.8333333333333334
+            },
+            "auroc": 0.5347222222222222
+          },
+          "en": {
+            "risk": {
+              "k": 11,
+              "n": 12,
+              "rate": 0.9166666666666666
+            },
+            "benign": {
+              "k": 9,
+              "n": 12,
+              "rate": 0.75
+            },
+            "potential": {
+              "k": 0,
+              "n": 0,
+              "rate": null
+            },
+            "unresolved": {
+              "k": 4,
+              "n": 6,
+              "rate": 0.6666666666666666
+            },
+            "auroc": 0.5069444444444444
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 10,
+              "n": 12,
+              "rate": 0.8333333333333334
+            },
+            "benign": {
+              "k": 10,
+              "n": 12,
+              "rate": 0.8333333333333334
+            },
+            "potential": {
+              "k": 0,
+              "n": 0,
+              "rate": null
+            },
+            "unresolved": {
+              "k": 6,
+              "n": 6,
+              "rate": 1.0
+            },
+            "auroc": 0.5625
+          },
+          "mixed": {
+            "risk": {
+              "k": 11,
+              "n": 12,
+              "rate": 0.9166666666666666
+            },
+            "benign": {
+              "k": 10,
+              "n": 12,
+              "rate": 0.8333333333333334
+            },
+            "potential": {
+              "k": 0,
+              "n": 0,
+              "rate": null
+            },
+            "unresolved": {
+              "k": 5,
+              "n": 6,
+              "rate": 0.8333333333333334
+            },
+            "auroc": 0.5277777777777778
+          }
+        },
+        "pass_mark": {
+          "pass": false,
+          "failed": [
+            "all benign 0.806 (needs <= 0.2)",
+            "en benign 0.750 (needs <= 0.3)",
+            "zh-Hant-yue benign 0.833 (needs <= 0.3)",
+            "mixed benign 0.833 (needs <= 0.3)"
+          ]
+        }
+      },
+      "edited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 35,
+              "n": 36,
+              "rate": 0.9722222222222222
+            },
+            "benign": {
+              "k": 36,
+              "n": 36,
+              "rate": 1.0
+            },
+            "potential": {
+              "k": 0,
+              "n": 0,
+              "rate": null
+            },
+            "unresolved": {
+              "k": 17,
+              "n": 18,
+              "rate": 0.9444444444444444
+            },
+            "auroc": 0.5239197530864198
+          },
+          "en": {
+            "risk": {
+              "k": 12,
+              "n": 12,
+              "rate": 1.0
+            },
+            "benign": {
+              "k": 12,
+              "n": 12,
+              "rate": 1.0
+            },
+            "potential": {
+              "k": 0,
+              "n": 0,
+              "rate": null
+            },
+            "unresolved": {
+              "k": 5,
+              "n": 6,
+              "rate": 0.8333333333333334
+            },
+            "auroc": 0.5555555555555556
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 12,
+              "n": 12,
+              "rate": 1.0
+            },
+            "benign": {
+              "k": 12,
+              "n": 12,
+              "rate": 1.0
+            },
+            "potential": {
+              "k": 0,
+              "n": 0,
+              "rate": null
+            },
+            "unresolved": {
+              "k": 6,
+              "n": 6,
+              "rate": 1.0
+            },
+            "auroc": 0.4791666666666667
+          },
+          "mixed": {
+            "risk": {
+              "k": 11,
+              "n": 12,
+              "rate": 0.9166666666666666
+            },
+            "benign": {
+              "k": 12,
+              "n": 12,
+              "rate": 1.0
+            },
+            "potential": {
+              "k": 0,
+              "n": 0,
+              "rate": null
+            },
+            "unresolved": {
+              "k": 6,
+              "n": 6,
+              "rate": 1.0
+            },
+            "auroc": 0.5347222222222222
+          }
+        },
+        "pass_mark": {
+          "pass": false,
+          "failed": [
+            "all benign 1.000 (needs <= 0.2)",
+            "en benign 1.000 (needs <= 0.3)",
+            "zh-Hant-yue benign 1.000 (needs <= 0.3)",
+            "mixed benign 1.000 (needs <= 0.3)"
+          ]
+        }
+      }
+    },
+    "severity60": {
+      "file": "research/data/handoff/severity-test.jsonl",
+      "sha256": "e4e7a141039d85f8952fe657d5d9d6b55ab4ad60d76c901d81429f5ae2358dd8",
+      "n": 60,
+      "unedited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 16,
+              "n": 24,
+              "rate": 0.6666666666666666
+            },
+            "benign": {
+              "k": 7,
+              "n": 12,
+              "rate": 0.5833333333333334
+            },
+            "potential": {
+              "k": 6,
+              "n": 12,
+              "rate": 0.5
+            },
+            "unresolved": {
+              "k": 7,
+              "n": 12,
+              "rate": 0.5833333333333334
+            },
+            "auroc": 0.5763888888888888
+          },
+          "en": {
+            "risk": {
+              "k": 3,
+              "n": 8,
+              "rate": 0.375
+            },
+            "benign": {
+              "k": 1,
+              "n": 4,
+              "rate": 0.25
+            },
+            "potential": {
+              "k": 2,
+              "n": 4,
+              "rate": 0.5
+            },
+            "unresolved": {
+              "k": 2,
+              "n": 4,
+              "rate": 0.5
+            },
+            "auroc": 0.5
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 7,
+              "n": 8,
+              "rate": 0.875
+            },
+            "benign": {
+              "k": 3,
+              "n": 4,
+              "rate": 0.75
+            },
+            "potential": {
+              "k": 3,
+              "n": 4,
+              "rate": 0.75
+            },
+            "unresolved": {
+              "k": 4,
+              "n": 4,
+              "rate": 1.0
+            },
+            "auroc": 0.5
+          },
+          "mixed": {
+            "risk": {
+              "k": 6,
+              "n": 8,
+              "rate": 0.75
+            },
+            "benign": {
+              "k": 3,
+              "n": 4,
+              "rate": 0.75
+            },
+            "potential": {
+              "k": 1,
+              "n": 4,
+              "rate": 0.25
+            },
+            "unresolved": {
+              "k": 1,
+              "n": 4,
+              "rate": 0.25
+            },
+            "auroc": 0.53125
+          }
+        },
+        "pass_mark": {
+          "pass": false,
+          "failed": [
+            "all risk 0.667 (needs >= 0.8)",
+            "all benign 0.583 (needs <= 0.2)",
+            "en risk 0.375 (needs >= 0.7)",
+            "zh-Hant-yue benign 0.750 (needs <= 0.3)",
+            "mixed benign 0.750 (needs <= 0.3)"
+          ]
+        }
+      },
+      "edited": {
+        "groups": {
+          "all": {
+            "risk": {
+              "k": 21,
+              "n": 24,
+              "rate": 0.875
+            },
+            "benign": {
+              "k": 7,
+              "n": 12,
+              "rate": 0.5833333333333334
+            },
+            "potential": {
+              "k": 7,
+              "n": 12,
+              "rate": 0.5833333333333334
+            },
+            "unresolved": {
+              "k": 6,
+              "n": 12,
+              "rate": 0.5
+            },
+            "auroc": 0.7465277777777778
+          },
+          "en": {
+            "risk": {
+              "k": 7,
+              "n": 8,
+              "rate": 0.875
+            },
+            "benign": {
+              "k": 3,
+              "n": 4,
+              "rate": 0.75
+            },
+            "potential": {
+              "k": 3,
+              "n": 4,
+              "rate": 0.75
+            },
+            "unresolved": {
+              "k": 2,
+              "n": 4,
+              "rate": 0.5
+            },
+            "auroc": 0.71875
+          },
+          "zh-Hant-yue": {
+            "risk": {
+              "k": 8,
+              "n": 8,
+              "rate": 1.0
+            },
+            "benign": {
+              "k": 3,
+              "n": 4,
+              "rate": 0.75
+            },
+            "potential": {
+              "k": 3,
+              "n": 4,
+              "rate": 0.75
+            },
+            "unresolved": {
+              "k": 3,
+              "n": 4,
+              "rate": 0.75
+            },
+            "auroc": 0.65625
+          },
+          "mixed": {
+            "risk": {
+              "k": 6,
+              "n": 8,
+              "rate": 0.75
+            },
+            "benign": {
+              "k": 1,
+              "n": 4,
+              "rate": 0.25
+            },
+            "potential": {
+              "k": 1,
+              "n": 4,
+              "rate": 0.25
+            },
+            "unresolved": {
+              "k": 1,
+              "n": 4,
+              "rate": 0.25
+            },
+            "auroc": 0.84375
+          }
+        },
+        "pass_mark": {
+          "pass": false,
+          "failed": [
+            "all benign 0.583 (needs <= 0.2)",
+            "en benign 0.750 (needs <= 0.3)",
+            "zh-Hant-yue benign 0.750 (needs <= 0.3)"
+          ]
+        }
+      }
+    }
+  }
+}

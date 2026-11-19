@@ -1,0 +1,109 @@
+{
+  "total": 750,
+  "kept": 662,
+  "set_aside": 88,
+  "set_aside_rate": 0.1173,
+  "per_language": {
+    "en": {
+      "total": 250,
+      "set_aside": 24,
+      "rate": 0.096
+    },
+    "zh-Hant-yue": {
+      "total": 250,
+      "set_aside": 30,
+      "rate": 0.12
+    },
+    "mixed": {
+      "total": 250,
+      "set_aside": 34,
+      "rate": 0.136
+    }
+  },
+  "per_ending": {
+    "low": {
+      "total": 150,
+      "set_aside": 0,
+      "rate": 0.0
+    },
+    "potential": {
+      "total": 150,
+      "set_aside": 31,
+      "rate": 0.2067
+    },
+    "moderate": {
+      "total": 150,
+      "set_aside": 0,
+      "rate": 0.0
+    },
+    "high": {
+      "total": 150,
+      "set_aside": 0,
+      "rate": 0.0
+    },
+    "unresolved": {
+      "total": 150,
+      "set_aside": 57,
+      "rate": 0.38
+    }
+  },
+  "confusion_intended_by_blind_answer": {
+    "low": {
+      "0": 150,
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "U": 0
+    },
+    "potential": {
+      "0": 31,
+      "1": 119,
+      "2": 0,
+      "3": 0,
+      "U": 0
+    },
+    "moderate": {
+      "0": 0,
+      "1": 0,
+      "2": 140,
+      "3": 10,
+      "U": 0
+    },
+    "high": {
+      "0": 0,
+      "1": 0,
+      "2": 0,
+      "3": 150,
+      "U": 0
+    },
+    "unresolved": {
+      "0": 29,
+      "1": 27,
+      "2": 1,
+      "3": 0,
+      "U": 93
+    }
+  },
+  "kept_2_vs_3_mismatches": 10,
+  "remaining_per_language": {
+    "en": {
+      "risk": 100,
+      "benign": 50,
+      "potential": 41,
+      "unresolved": 35
+    },
+    "zh-Hant-yue": {
+      "risk": 100,
+      "benign": 50,
+      "potential": 40,
+      "unresolved": 30
+    },
+    "mixed": {
+      "risk": 100,
+      "benign": 50,
+      "potential": 38,
+      "unresolved": 28
+    }
+  },
+  "over_15_percent": false
+}

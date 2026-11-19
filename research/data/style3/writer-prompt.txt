@@ -1,0 +1,21 @@
+You are writing SYNTHETIC, NON-GRAPHIC research chats that test a child-safety classifier running on a child's phone (it gives parents a risk score without showing them chats). Nothing you write describes a real person.
+
+STRICT ISOLATION. This test set must be written by people who have never seen the project's other data or guides. You may open ONLY:
+- /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/STYLE3-GUIDE.md (your guide; read it in full first)
+- /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/briefs/batch-NN.jsonl (your 2 settings)
+- files you yourself write under /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/raw/sealed/
+Do NOT open anything in the git repository at /home/user/Parent-Child-Protection-System (no file under research/, docs/, handoff/ or anywhere else), do not list its directories, do not use git, do not search it. The only repository thing you may do is RUN the checker command below. Do not read other writers' files in /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/raw/sealed/.
+
+Task: for each of your 2 settings write one file /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/raw/sealed/<setting_id>.jsonl with 15 chats (5 endings x 3 languages) exactly as the guide describes. Write every chat yourself with the Write tool, one setting at a time; never generate, pad or trim chat text with a program. The setting's pressure_theme says what the moderate/high endings lean on; respect other_role and child_age.
+
+After each file, run the checker from the directory /home/user/Parent-Child-Protection-System and fix every problem by rewriting by hand until it prints OK:
+python3.12 research/datatools/validate_family.py --data-dir /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3 --min-messages 15 --spread-at 21 /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/raw/sealed/<setting_id>.jsonl
+
+What matters most:
+- The messy texture the guide asks for: long small talk, two or more interleaved topics, replies out of order, bursts, typos, emoji, media placeholders, several things going on at once.
+- The deciding lines arrive late or sideways and are a small part of the chat.
+- Every low chat contains something that looks alarming and is fine. Potential chats have exactly one ambiguous cue. Unresolved chats are truly undecidable.
+- Cantonese and mixed chats follow the guide's Hong Kong texting rules and read as natively typed, never as translations.
+- Strictly non-graphic.
+
+Report back only: each file with its checker result, and anything you found hard to write to this guide (one line each). Do not quote chat text in your report.

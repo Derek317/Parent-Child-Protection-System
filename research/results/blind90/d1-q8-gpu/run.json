@@ -1,0 +1,29 @@
+{
+  "name": "d1-q8-gpu",
+  "kind": "d1",
+  "set": "blind90",
+  "input": {
+    "path": "research/data/handoff/blind.jsonl",
+    "sha256": "4fcf4a33536006a92512426533cb2eadcce1d4717caa6a58cbd06d5fdc934be1",
+    "mode": "binary",
+    "n": 90
+  },
+  "python": "3.12.0",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "template": "server",
+  "rubric_sha256": "c29aa02c8f34cff78d4da62095eeb3c3f0efacc4957cd6dbc3f9abc218fe19e5",
+  "question_sha256": "f4097ca86b5a3f2638453ad2415e03097a51c89916d818dc48aec3976573e661",
+  "server": {
+    "model_name": "d1-omni-600M-Q8_0.gguf",
+    "model_path": "research/models/d1-omni-600M-Q8_0.gguf",
+    "build_info": "b12503-4577932fa",
+    "total_slots": 4,
+    "chat_template": "{%- for message in messages -%}\n  {{- '<|im_start|>' + message.role + '\n' + message.content + '<|im_end|>\n' -}}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n  {{- '<|im_start|>assistant\n' -}}\n{%- endif -%}"
+  },
+  "model": "d1-omni-600M-Q8_0.gguf",
+  "timing": {
+    "wall_seconds_this_invocation": 0.00014709999959450215,
+    "chats_run_this_invocation": 0,
+    "workers": 4
+  }
+}

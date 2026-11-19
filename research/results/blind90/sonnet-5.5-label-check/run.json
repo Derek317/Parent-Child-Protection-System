@@ -1,0 +1,20 @@
+{
+  "name": "sonnet-5.5-label-check",
+  "kind": "labels",
+  "set": "blind90",
+  "input": {
+    "path": "research/data/handoff/blind.jsonl",
+    "sha256": "4fcf4a33536006a92512426533cb2eadcce1d4717caa6a58cbd06d5fdc934be1",
+    "mode": "binary",
+    "n": 90
+  },
+  "python": "3.12.3",
+  "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+  "template": "server",
+  "labels_sha256": "643a09b060b46831f7376580fbe4b9e59ad70a8651599f6ec59c2f75217d87ba",
+  "timing": {
+    "wall_seconds_this_invocation": 0.002142868000191811,
+    "chats_run_this_invocation": 90,
+    "workers": 1
+  }
+}
