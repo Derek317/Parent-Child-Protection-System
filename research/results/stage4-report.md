@@ -74,3 +74,32 @@ Cells are risk flagged · benign flagged.
 ## Note added 19 November 2026: the sealed set changed after this report
 
 The Cantonese and mixed chats in the sealed set were reworded a second time and relabelled blind (661 kept, 89 set aside; new hashes in `research/data/SEALED.sha256`). The figures above were measured on the earlier wording (662 kept). A new sealed score on the reworded set is a second use, not a clean first look. See `research/HANDOVER-GPU.md`.
+
+## Retrain on the restyled data: v4 (19 November 2026)
+
+After Derek passed the round 3 Cantonese sample, Qwen3 1.7B was retrained with the v3 recipe unchanged, on `research/data/train-mixed-v3-restyled.jsonl`:
+
+`python research/train_lora.py --base research/models/hf/Qwen3-1.7B --family qwen3 --out research/models/lora/qwen3-1.7b-lora-v4 --train research/data/train-mixed-v3-restyled.jsonl --epochs 3 --batch 2 --lr 1e-4 --merge`
+
+Then `convert_hf_to_gguf.py` (llama.cpp b12503 source, `--outtype f16`) on the merged folder and `llama-quantize.exe <f16> <out> Q4_K_M`. The same two commands produced v3.
+
+- File: `qwen3-1.7b-lora-v4-Q4_K_M.gguf`, 1,107,408,736 bytes, SHA-256 `833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314`.
+- Frozen at pass 3 and the 0.5 cutoff after the tuning set only. Sealed checksums verified before opening.
+
+4-bit file through the harness, risk flagged · benign flagged:
+
+| Set | v4 | v3 | Note |
+| --- | --- | --- | --- |
+| Tuning | 87/90 · 2/45, pass | 89/90 · 1/45, pass | v3 scored on the earlier wording |
+| Check | 87/90 · 0/45, pass | 89/90 · 0/45, pass | v3 scored on the earlier wording |
+| Sealed test | 287/298 · 0/144, pass | 300/300 · 0/150, pass | Second use of the sealed set, after a restyle and relabel. Not a clean first look. |
+| Third-style test | 103/120 · 2/55, pass | 112/120 · 6/55, pass | Repeat use; same file for both |
+| Handoff 90-chat | 26/36 · 4/36, AUROC 0.92, fail | 30/36 · 2/36, AUROC 0.97, pass | Context only; same file for both |
+| Handoff 60-chat | 24/24 · 3/12, fail by one | 22/24 · 3/12, fail by one | Context only; same file for both |
+
+v4 by language, risk · benign: sealed English 98/100 · 0/49, Cantonese 96/100 · 0/48, mixed 93/98 · 0/47. Third-style English 35/40 · 0/19, Cantonese 35/40 · 1/18, mixed 33/40 · 1/18. Handoff 90-chat English 10/12 · 1/12, Cantonese 7/12 · 1/12, mixed 9/12 · 2/12.
+
+- **v4 passes every set it was required to pass.**
+- **On the three files both models saw unchanged, v4 is not better than v3.** It flags fewer risk chats on the third-style test and the handoff 90-chat set, where it falls below the pass mark, mostly in Cantonese (7/12). It raises fewer false alarms on the third-style test.
+- **The differences are small against the sample sizes** (9 chats of 120; 4 of 36), and one training run each cannot separate a real effect of the restyle from run-to-run variation.
+- **Which model the app ships is Derek's decision.** v4 was trained on the Cantonese wording Derek approved; v3 has the slightly better numbers on wording neither was trained on. Both files are kept.
