@@ -10,6 +10,8 @@ release_commit="${GITHUB_SHA:?}"
 if [[ "$source_tag" =~ ^([0-9]+\.[0-9]+(\.[0-9]+)?)-hotfix\.[1-9][0-9]*$ ]]; then
   release_tag="${BASH_REMATCH[1]}"
   hotfix=true
+  # A hotfix updates an existing release; never change which release is marked latest.
+  release_flags=()
 elif [[ "$source_tag" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?-beta\.[1-9][0-9]*$ ]]; then
   release_flags=(--prerelease --latest=false)
 elif [[ ! "$release_tag" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then

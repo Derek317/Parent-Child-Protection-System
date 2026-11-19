@@ -137,6 +137,17 @@ if args[:2]==['release','upload'] and os.environ.get('FAKE_UPLOAD_FAIL')=='1':sy
         self.assertIn('IG-Guard-4.7.apk',upload['assets'])
         self.assertEqual(original,self.git('rev-parse','refs/tags/4.7').strip())
 
+    def test_hotfix_never_changes_which_release_is_latest(self):
+        # A hotfix of an older release must not be promoted over a newer final release.
+        self.prepare_hotfix()
+        result,rows=self.publish(GITHUB_REF_NAME='4.7-hotfix.1',FAKE_RELEASE_EXISTS='1')
+        self.assertEqual(0,result.returncode,result.stderr)
+        edit=next(row for row in rows if row['args'][:2]==['release','edit'])
+        self.assertFalse([a for a in edit['args'] if a.startswith('--latest')],edit['args'])
+        # Replacing the hotfix APK of the same release is deliberate and documented (hotfix.2 -> hotfix.3).
+        upload=next(row for row in rows if row['args'][:2]==['release','upload'])
+        self.assertIn('--clobber',upload['args'])
+
     def test_failed_hotfix_never_changes_existing_notes_or_apk(self):
         self.prepare_hotfix()
         result,rows=self.publish(GITHUB_REF_NAME='4.7-hotfix.1',FAKE_RELEASE_EXISTS='1',BUILD_RESULT='failure')
