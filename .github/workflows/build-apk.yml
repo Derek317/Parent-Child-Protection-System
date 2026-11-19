@@ -286,6 +286,57 @@ jobs:
           </manifest>
           EOF
 
+      # Robolectric normally downloads one android-all-instrumented jar per emulated SDK from Maven
+      # Central while the tests run; a failed download there fails every Robolectric test. The jars
+      # are fetched here instead, with retries and checksum verification, cached between runs, and
+      # the tests run with robolectric.offline=true. Update the list and the cache key when the
+      # Robolectric version or the `sdk =` values in tests/*.kt change (26, 28, 34 for 4.14.1).
+      - name: Restore Robolectric Android runtimes
+        id: robolectric-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.robolectric-android-all
+          key: robolectric-android-all-4.14.1-i7-sdk26-28-34
+
+      - name: Fetch Robolectric Android runtimes
+        run: |
+          set -euo pipefail
+          dir="$HOME/.robolectric-android-all"
+          base=https://repo.maven.apache.org/maven2/org/robolectric/android-all-instrumented
+          mkdir -p "$dir"
+          for version in 8.0.0_r4-robolectric-r1-i7 9-robolectric-4913185-2-i7 14-robolectric-10818077-i7; do
+            jar="android-all-instrumented-$version.jar"
+            if [ -s "$dir/$jar" ] && unzip -tq "$dir/$jar" >/dev/null 2>&1; then
+              echo "$jar: present"
+              continue
+            fi
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              if curl -fsSL --connect-timeout 20 --max-time 600 -o "$dir/$jar.part" "$base/$version/$jar" \
+                && expected="$(curl -fsSL --connect-timeout 20 --max-time 60 "$base/$version/$jar.sha1" | cut -c1-40)" \
+                && [ "$(sha1sum "$dir/$jar.part" | cut -d' ' -f1)" = "$expected" ]; then
+                mv "$dir/$jar.part" "$dir/$jar"
+                ok=1
+                break
+              fi
+              echo "::warning::$jar: download attempt $attempt failed"
+              rm -f "$dir/$jar.part"
+              sleep $((attempt * 15))
+            done
+            if [ "$ok" != 1 ]; then
+              echo "::error::Could not download $jar from Maven Central after 5 attempts."
+              exit 1
+            fi
+            echo "$jar: downloaded"
+          done
+
+      - name: Save Robolectric Android runtimes
+        if: steps.robolectric-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.robolectric-android-all
+          key: ${{ steps.robolectric-cache.outputs.cache-primary-key }}
+
       - name: Run regression checks
         run: |
           python3 -m unittest discover -s tests -p 'check_*.py'
@@ -298,6 +349,8 @@ jobs:
               unitTests.includeAndroidResources = true
               unitTests.all {
                   maxHeapSize = '1g'
+                  systemProperty 'robolectric.offline', 'true'
+                  systemProperty 'robolectric.dependency.dir', new File(System.getProperty('user.home'), '.robolectric-android-all').absolutePath
                   systemProperty 'igguard.protocol.vector', new File(rootDir, 'relay/test/protocol-vector.json').absolutePath
               }
           } }
