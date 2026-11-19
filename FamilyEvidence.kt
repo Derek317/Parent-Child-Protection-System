@@ -267,7 +267,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 put("sort_order",if(captured && alert.has("screen_order"))alert.getLong("screen_order") else getAsLong("capture_order"))
                 put("body",alert.optString("text"));put("payload",payload.toString());put("legacy",if(legacy)1 else 0);put("help_seen",if(legacy)1 else 0)
                 if(!legacy) {
-                    val base=minOf(getAsLong("stamp"),System.currentTimeMillis())
+                    // Retention runs from the parent's receipt time; the child-supplied stamp (its clock) is for display only.
+                    val base=System.currentTimeMillis()
                     put("retention_base",base);put("expires",base+retentionDays(scope)*DAY)
                 }
             }

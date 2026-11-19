@@ -27,7 +27,7 @@ class RetentionTest {
             db.save("f","a",true)
             db.pruneExpired("f",now+30*day-1)
             assertNotNull(db.find("f","a"))
-            db.pruneExpired("f",now+30*day)
+            db.pruneExpired("f",now+30*day+5_000)   // retention runs from receipt time, a few ms after `now`
             assertNull(db.find("f","a"));assertTrue(db.hasSeen("f","a"))
             assertFalse(db.append("f","a",event("a",now+30*day)))
             db.enqueue("f","a:0","replayed cipher")
@@ -110,7 +110,7 @@ class RetentionTest {
         FamilyEvidence(ctx).use { db ->
             db.append("f","a",event("a",now));db.append("other","a",event("a",now))
             db.setRetentionDays("f",7);db.setRetentionDays("f",30)
-            db.pruneExpired("f",now+7*day)
+            db.pruneExpired("f",now+7*day+5_000)
             assertNull(db.find("f","a"));assertNotNull(db.find("other","a"))
             for(invalid in listOf(0,31,Int.MAX_VALUE))try {db.setRetentionDays("f",invalid);fail("Invalid retention accepted")}catch(_:IllegalArgumentException){}
         }

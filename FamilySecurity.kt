@@ -148,11 +148,12 @@ object FamilySecurity {
 
     /** The pre-update software identity, accepted only if its private key really matches the public key the child trusts.
      * Used when the Keystore import fails, so reception and signing keep working exactly as before the update. */
-    fun verifiedLegacyIdentity(legacyPrivate: String, expectedPublic: String): SigningIdentity {
-        require(validPublicKey(expectedPublic) && !legacyPrivate.startsWith(KEYSTORE_REFERENCE_PREFIX)) { "Invalid legacy parent identity" }
-        verifyPossession(KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(decoder.decode(legacyPrivate))), publicKey(expectedPublic))
-        return SigningIdentity(legacyPrivate, expectedPublic)
-    }
+    fun verifiedLegacyIdentity(legacyPrivate: String, expectedPublic: String): SigningIdentity =
+        identityOperation {
+            require(validPublicKey(expectedPublic) && !legacyPrivate.startsWith(KEYSTORE_REFERENCE_PREFIX)) { "Invalid legacy parent identity" }
+            verifyPossession(KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(decoder.decode(legacyPrivate))), publicKey(expectedPublic))
+            SigningIdentity(legacyPrivate, expectedPublic)
+        }
 
     /** Stage without changing active trust; the caller journals its family transaction before activation. */
     fun stageFreshParentIdentity(ctx: Context): SigningIdentity = synchronized(identityLock) {
