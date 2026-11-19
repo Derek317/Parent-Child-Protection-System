@@ -3729,7 +3729,7 @@ class MainActivity : Activity() {
             card.addView(label(outcome.second, 14f, t.textSecondary, bottomPad = 6))
             card.addView(actionButton(ScoresChildCopy.OK_DISMISS, t.btnSecondaryBg, t.btnSecondaryText) { ModelImportJob.dismissResult(); renderUi() })
             if (job.bundled && job.result != RiskImportResult.OK && job.result != RiskImportResult.UNSUPPORTED_DEVICE)
-                card.addView(actionButton(ScoresChildCopy.RETRY, t.btnPrimaryBg, t.btnPrimaryText) { ModelImportJob.dismissResult(); startBundledInstall() }.apply { tag = "scores_bundled_retry" })
+                card.addView(actionButton(ScoresChildCopy.RETRY, t.btnPrimaryBg, t.btnPrimaryText) { startBundledInstall() }.apply { tag = "scores_bundled_retry" })
             rootContainer.addView(card)
         }
         if (job.running) {
@@ -3754,7 +3754,7 @@ class MainActivity : Activity() {
         if (RiskModelStore.state(this) == RiskModelState.MISSING && bundledHere && !(job.bundled && job.result != null && job.result != RiskImportResult.OK)) {
             val password = BundledModel.needsPassword(this)
             rootContainer.addView(row("plus", ScoresChildCopy.BUNDLED_ROW, if (password) ScoresChildCopy.BUNDLED_ROW_DESC_PASSWORD else ScoresChildCopy.BUNDLED_ROW_DESC, t) {
-                if (password) verifyParentForRoleChange(ScoresChildCopy.PASSWORD_BUNDLED_TITLE) { startBundledInstall() } else startBundledInstall()
+                startBundledInstall()
             }.apply { getChildAt(0).tag = "model_bundled_row" })
         }
         if (RiskModelStore.state(this) != RiskModelState.INSTALLED)
@@ -3770,8 +3770,11 @@ class MainActivity : Activity() {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), modelPickRequest)
         } catch (_: Exception) { modelPickAuthorized = false; Toast.makeText(this, "找不到檔案選擇器。\nNo file picker is available.", Toast.LENGTH_LONG).show() }
     }
-    private fun startBundledInstall() {
+    /** The one entry for installing the included copy (row and Retry): after a parent removed the model it always asks for the password first. */
+    private fun startBundledInstall(authorized: Boolean = false) {
         if (!GuardEngine.isChildMode(this)) return
+        if (BundledModel.needsPassword(this) && !authorized) { verifyParentForRoleChange(ScoresChildCopy.PASSWORD_BUNDLED_TITLE) { startBundledInstall(true) }; return }
+        ModelImportJob.dismissResult()
         ModelImportJob.startBundled(this)
         renderUi()
     }

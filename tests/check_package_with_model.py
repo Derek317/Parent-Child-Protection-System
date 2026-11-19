@@ -308,6 +308,110 @@ class ToolLookup(Dirs):
         self.assertIsNone(pkg.parse_cert_digest('nothing'))
 
 
+class SyncedFolders(Dirs):
+    def test_names_and_environment_variables_are_recognised(self):
+        for part in ('OneDrive', 'OneDrive - Contoso', 'Dropbox', 'Google Drive', 'iCloudDrive', 'GoogleDrive'):
+            self.assertIsNotNone(pkg.synced_folder_reason(self.dir / part / 'x.apk'), part)
+        self.assertIsNone(pkg.synced_folder_reason(self.dir / 'dist' / 'x.apk'))
+        synced = self.dir / 'Users' / 'me' / 'Cloud'
+        for var in ('OneDrive', 'OneDriveConsumer', 'OneDriveCommercial'):
+            self.assertIn(var, pkg.synced_folder_reason(synced / 'dist' / 'x.apk', {var: str(synced)}))
+        self.assertIsNone(pkg.synced_folder_reason(self.dir / 'other' / 'x.apk', {'OneDrive': str(synced)}))
+
+    def test_output_or_model_in_a_synced_folder_is_refused_before_anything_is_written(self):
+        apk = self.dir / 'in.apk'; fake_apk(apk)
+        tools, opts = pkg.Tools('za', 'as'), pkg.SigningOptions('k', 'a', 'p', 'p')
+        calls = []
+        run = lambda c, e=None: (calls.append(c), subprocess.CompletedProcess(c, 1, '', ''))[1]
+        out = self.dir / 'Dropbox' / 'sub' / 'x.apk'
+        with self.assertRaisesRegex(pkg.PackagingError, 'cloud-synced'):
+            pkg.run_packaging(apk, self.model, out, FAKE, tools, opts, runner=run, check_space=False)
+        self.assertFalse((self.dir / 'Dropbox').exists())
+        synced_model = self.dir / 'OneDrive' / 'model.gguf'; synced_model.parent.mkdir(); synced_model.write_bytes(MODEL)
+        with self.assertRaisesRegex(pkg.PackagingError, 'model'):
+            pkg.run_packaging(apk, synced_model, self.dir / 'dist' / 'x.apk', FAKE, tools, opts, runner=run, check_space=False)
+        self.assertEqual(calls, [])
+        self.assertFalse((self.dir / 'dist').exists())
+
+    def test_the_override_flag_allows_it(self):
+        self.assertTrue(pkg.build_parser().parse_args(['--apk', 'a', '--model', 'm', '--out', 'o.apk', '--keystore', 'k', '--allow-synced-folder']).allow_synced_folder)
+        apk = self.dir / 'in.apk'; fake_apk(apk)
+        out = self.dir / 'Dropbox' / 'x.apk'
+        def run(cmd, env=None):
+            return subprocess.CompletedProcess(cmd, 1, '', 'stop here')
+        with self.assertRaisesRegex(pkg.PackagingError, 'stop here'):   # got past the synced-folder check and into the tools
+            pkg.run_packaging(apk, self.model, out, FAKE, pkg.Tools('za', 'as'), pkg.SigningOptions('k', 'a', 'p', 'p'), runner=run, check_space=False, allow_synced_folder=True)
+
+
+class Hardening(Dirs):
+    def test_the_script_imports_no_network_modules(self):
+        import ast
+        tree = ast.parse((ROOT / 'tools/package_with_model.py').read_text(encoding='utf-8'))
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names |= {a.name.split('.')[0] for a in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                names.add((node.module or '').split('.')[0])
+        self.assertFalse(names & {'socket', 'urllib', 'http', 'ftplib', 'smtplib', 'requests', 'ssl', 'telnetlib', 'xmlrpc', 'asyncio'}, names)
+
+    def test_the_keystore_passwords_are_not_passed_to_other_programs(self):
+        from unittest import mock
+        code = 'import os;print(os.environ.get("IG_GUARD_KEYSTORE_PASSWORD"),os.environ.get("IG_GUARD_KEY_PASSWORD"),os.environ.get("IG_PACKAGE_TOOL_KS_PASS"),os.environ.get("CUSTOM_PW"))'
+        with mock.patch.dict(os.environ, {'IG_GUARD_KEYSTORE_PASSWORD': 'a', 'IG_GUARD_KEY_PASSWORD': 'b', 'CUSTOM_PW': 'c'}), mock.patch.object(pkg, 'SECRET_ENV_NAMES', set(pkg.SECRET_ENV_NAMES) | {'CUSTOM_PW'}):
+            out = pkg.default_runner([sys.executable, '-c', code]).stdout.split()
+            self.assertEqual(out, ['None', 'None', 'None', 'None'])
+            out = pkg.default_runner([sys.executable, '-c', code], {'IG_PACKAGE_TOOL_KS_PASS': 'tool'}).stdout.split()
+            self.assertEqual(out, ['None', 'None', 'tool', 'None'])
+
+    def test_a_large_stored_entry_has_no_zip64_records_and_there_is_headroom(self):
+        apk = self.dir / 'in.apk'; fake_apk(apk)
+        out = self.dir / 'o.zip'; pkg.rewrite_apk(apk, self.model, out, FAKE)
+        raw = out.read_bytes()
+        self.assertNotIn(b'PK\x06\x06', raw); self.assertNotIn(b'PK\x06\x07', raw)   # zip64 end-of-central-directory record and locator
+        with zipfile.ZipFile(out) as z:
+            self.assertTrue(all(i.extra == b'' for i in z.infolist()), 'no zip64 extra fields')
+        real = pkg.load_spec()
+        self.assertLess(real.size * 1.05, zipfile.ZIP64_LIMIT)   # the real model is well under 2 GiB, as the docs say
+        self.assertLess(real.size + 300 * 2**20, zipfile.ZIP64_LIMIT)
+
+    def test_a_package_that_would_pass_2_gib_is_refused(self):
+        apk = self.dir / 'in.apk'; fake_apk(apk)
+        big = pkg.ModelSpec('big.gguf', 2**31, FAKE.sha256)
+        with self.assertRaisesRegex(pkg.PackagingError, 'zip64'):
+            pkg.run_packaging(apk, self.model, self.dir / 'dist' / 'x.apk', big, pkg.Tools('za', 'as'), pkg.SigningOptions('k', 'a', 'p', 'p'), runner=lambda c, e=None: None, check_space=False)
+
+    def _main(self, out, extra=()):
+        import io
+        tools = self.dir / 'bt'; tools.mkdir(exist_ok=True)
+        for n in ('zipalign', 'apksigner'):
+            (tools / n).write_text('')
+        ks = self.dir / 'k.jks'; ks.write_text('x')
+        apk = self.dir / 'in.apk'; fake_apk(apk)
+        from unittest import mock
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {'IG_GUARD_KEYSTORE_PASSWORD': 'pw'}), mock.patch('sys.stderr', err):
+            code = pkg.main(['--apk', str(apk), '--model', str(self.model), '--out', str(out), '--keystore', str(ks), '--build-tools', str(tools), *extra])
+        return code, err.getvalue()
+
+    def test_an_os_error_prints_a_plain_message(self):
+        blocker = self.dir / 'file'; blocker.write_text('not a folder')
+        code, err = self._main(blocker / 'sub' / 'x.apk')
+        self.assertEqual(code, 2); self.assertTrue(err.startswith('ERROR:'), err); self.assertNotIn('Traceback', err)
+
+    def test_ctrl_c_message_depends_on_whether_the_output_was_written(self):
+        from unittest import mock
+        out = self.dir / 'dist' / 'x.apk'
+        with mock.patch.object(pkg, 'run_packaging', side_effect=KeyboardInterrupt):
+            code, err = self._main(out)
+        self.assertEqual(code, 130); self.assertIn('No output was written', err)
+        def written(*a, **k):
+            out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b'x'); raise KeyboardInterrupt
+        with mock.patch.object(pkg, 'run_packaging', side_effect=written):
+            code, err = self._main(out, ['--force'])
+        self.assertEqual(code, 130); self.assertIn('was written', err); self.assertNotIn('No output was written', err)
+
+
 def real_tools():
     bt = SDK / 'build-tools'
     if not bt.is_dir() or not shutil.which('keytool'):

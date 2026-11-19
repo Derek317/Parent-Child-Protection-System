@@ -73,11 +73,20 @@ class SigningOptions:
 Runner = Callable[[Sequence[str], Optional[dict]], "subprocess.CompletedProcess[str]"]
 
 
+# Names of environment variables that hold the keystore passwords; main() adds any custom names. They are removed from the
+# environment of every subprocess: the signing tool gets the passwords only under the private names in sign().
+SECRET_ENV_NAMES = {DEFAULT_KS_PASS_ENV, DEFAULT_KEY_PASS_ENV}
+
+
+def clean_env(extra: Optional[dict] = None) -> dict:
+    env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV_NAMES}
+    if extra:
+        env.update(extra)
+    return env
+
+
 def default_runner(cmd: Sequence[str], env: Optional[dict] = None) -> "subprocess.CompletedProcess[str]":
-    full_env = dict(os.environ)
-    if env:
-        full_env.update(env)
-    return subprocess.run(list(cmd), capture_output=True, text=True, env=full_env, check=False)
+    return subprocess.run(list(cmd), capture_output=True, text=True, env=clean_env(env), check=False)
 
 
 def say(message: str = "") -> None:
@@ -213,7 +222,7 @@ def git_root(path: Path) -> Optional[Path]:
 def git_ignored(path: Path, root: Path) -> bool:
     """True when git says [path] is ignored (a tracked file is never ignored). Refuses when git cannot answer."""
     try:
-        result = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(path.resolve())], capture_output=True, text=True, check=False)
+        result = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(path.resolve())], capture_output=True, text=True, check=False, env=clean_env())
     except OSError:
         raise PackagingError("The output folder is inside a git work tree and git is not available to check .gitignore. Choose an output outside the repository.") from None
     if result.returncode == 0:
@@ -234,6 +243,36 @@ def ensure_output_allowed(out: Path) -> None:
             raise PackagingError(
                 f"{candidate} is inside the git work tree {root} and is not git-ignored. The package contains the model and must never be committed. "
                 "Use a path under /dist/ (ignored) or outside the repository.")
+
+
+# ---------------------------------------------------------------- cloud-sync folders
+SYNC_ENV_VARS = ("OneDrive", "OneDriveConsumer", "OneDriveCommercial")
+SYNC_COMPONENTS = ("onedrive", "dropbox", "google drive", "googledrive", "iclouddrive", "icloud drive", "com~apple~clouddocs", "mobile documents")
+
+
+def synced_folder_reason(path: Path, environ=os.environ) -> Optional[str]:
+    """Why [path] looks like it is inside a cloud-synced folder (OneDrive, Dropbox, Google Drive, iCloud), or None."""
+    resolved = Path(os.path.normcase(str(path.resolve())))
+    for var in SYNC_ENV_VARS:
+        root = environ.get(var)
+        if root:
+            base = Path(os.path.normcase(str(Path(root).resolve())))
+            if resolved == base or base in resolved.parents:
+                return f"it is under the folder named by %{var}%"
+    for part in resolved.parts:
+        for name in SYNC_COMPONENTS:
+            if name in part.lower():
+                return f'its path contains "{part}"'
+    return None
+
+
+def refuse_synced(paths: dict, environ=os.environ) -> None:
+    """The model and the packaged APK must not be copied to a cloud by a sync client."""
+    for label, p in paths.items():
+        why = synced_folder_reason(p, environ)
+        if why:
+            raise PackagingError(f"The {label} ({p}) looks like a cloud-synced folder: {why}. A sync client would upload the model. "
+                                 "Use a local folder that is not synced, or pass --allow-synced-folder if you are sure it is not.")
 
 
 # ---------------------------------------------------------------- Android tools
@@ -329,10 +368,15 @@ def verify_signed(tools: Tools, apk: Path, runner: Runner) -> tuple[str, str]:
 # ---------------------------------------------------------------- the whole job
 def run_packaging(apk: Path, model: Path, out: Path, spec: ModelSpec, tools: Tools, opts: SigningOptions,
                   runner: Runner = default_runner, workflow: Path = WORKFLOW_FILE, force: bool = False,
-                  sign_extra: Sequence[str] = (), check_space: bool = True) -> dict:
+                  sign_extra: Sequence[str] = (), check_space: bool = True, allow_synced_folder: bool = False) -> dict:
     if not apk.is_file():
         raise PackagingError(f"APK not found: {apk}")
     out = out.resolve()
+    if not allow_synced_folder:
+        refuse_synced({"output": out, "model": model})
+    # Python writes zip64 records (which Android may reject) once an entry or the archive passes 2 GiB.
+    if apk.stat().st_size + spec.size + (1 << 20) > zipfile.ZIP64_LIMIT:
+        raise PackagingError("The APK plus the model would pass about 2 GiB, where the zip format needs zip64 records that Android may reject. Nothing was written.")
     if out.exists() and not force:
         raise PackagingError(f"{out} already exists. Choose another name or pass --force.")
     if out.suffix.lower() != ".apk":
@@ -417,6 +461,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--key-pass-env", default=DEFAULT_KEY_PASS_ENV, help=f"environment variable holding the key password (default {DEFAULT_KEY_PASS_ENV}); the keystore password is used when unset or empty")
     p.add_argument("--build-tools", help="Android SDK build-tools folder with zipalign and apksigner (found from ANDROID_HOME / ANDROID_SDK_ROOT when omitted)")
     p.add_argument("--force", action="store_true", help="overwrite an existing output file")
+    p.add_argument("--allow-synced-folder", action="store_true", help="allow the model or the output to be in a folder that looks cloud-synced (OneDrive, Dropbox, Google Drive, iCloud); not recommended")
     return p
 
 
@@ -425,18 +470,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         spec = load_spec()
         tools = find_tools(args.build_tools)
+        SECRET_ENV_NAMES.update({args.ks_pass_env, args.key_pass_env})
+        out_path = Path(args.out).resolve()
+        before = out_path.stat().st_mtime_ns if out_path.exists() else None
         keystore = Path(args.keystore)
         if not keystore.is_file():
             raise PackagingError(f"Keystore not found: {keystore}")
         ks_pass = read_password(args.ks_pass_env, "Keystore password: ")
         key_pass = read_password(args.key_pass_env, "Key password (Enter = same as the keystore password): ", fallback=ks_pass) or ks_pass
         opts = SigningOptions(str(keystore), args.ks_alias, ks_pass, key_pass)
-        result = run_packaging(Path(args.apk), Path(args.model), Path(args.out), spec, tools, opts, force=args.force)
+        result = run_packaging(Path(args.apk), Path(args.model), Path(args.out), spec, tools, opts, force=args.force, allow_synced_folder=args.allow_synced_folder)
     except PackagingError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
+    except OSError as e:
+        where = f" ({e.filename})" if getattr(e, "filename", None) else ""
+        print(f"ERROR: {e.strerror or e}{where}. Nothing more was done.", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
-        print("Cancelled. No output was written.", file=sys.stderr)
+        after = out_path.stat().st_mtime_ns if "out_path" in locals() and out_path.exists() else None
+        if "out_path" in locals() and after is not None and after != before:
+            print(f"Interrupted after {out_path} was written. It may be complete but was not checked: delete it and run again.", file=sys.stderr)
+        else:
+            print("Cancelled. No output was written.", file=sys.stderr)
         return 130
     report(result)
     return 0

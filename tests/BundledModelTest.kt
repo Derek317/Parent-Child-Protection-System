@@ -104,9 +104,9 @@ class BundledModelTest {
         assertEquals(RiskImportResult.NOT_ENOUGH_SPACE, ModelImportJob.result)
         assertEquals("the asset was only probed for, never read", 1, opened)
         assertFalse(RiskModelStore.file(ctx).exists()); assertFalse(part().exists())
-        val (title, body) = ScoresChildCopy.result(ModelImportJob.result, false, true, 500L * 1024 * 1024)!!
-        assertTrue(title.contains("Not enough free space")); assertTrue(body.contains("0.49 GB") && body.contains("free space"))
-        assertTrue(body.contains("%.2f GB".format(RiskModelStore.spaceNeeded() / 1073741824.0)))
+        val (title, body) = ScoresChildCopy.result(ModelImportJob.result, false, true, 10L * 1024 * 1024)!!
+        assertTrue(title.contains("Not enough free space")); assertTrue(body.contains("0.0 GB") && body.contains("free space"))
+        assertTrue(body.contains("%.1f GB".format(RiskModelStore.spaceNeeded() / 1073741824.0)))
         // not a permanent failure: the next start tries again, and succeeds once there is room
         RiskModelStore.freeSpaceProbe = { it.usableSpace }; ModelImportJob.dismissResult()
         assertTrue(BundledModel.maybeAutoInstall(ctx)); assertEquals(RiskModelState.INSTALLED, RiskModelStore.state(ctx))
@@ -213,5 +213,54 @@ class BundledModelTest {
             assertTrue(texts.contains("Installing the model included in this app") && texts.contains("取消安裝"))
             assertEquals(1, tag(c, "scores_import_cancel").size)
         } finally { ModelImportJob.running = false; c.pause().stop().destroy() }
+    }
+
+    @Test fun retryAfterARemovalAlsoAsksForThePassword() {
+        prefs.edit().putString("parent_password_verifier", parentVerifier).commit(); asset()
+        assertTrue(BundledModel.maybeAutoInstall(ctx)); RiskLocal.removeModel(ctx); assertTrue(BundledModel.needsPassword(ctx))
+        RiskModelStore.freeSpaceProbe = { 1_000L }   // the password-authorised reinstall runs out of space
+        val c = launch()
+        try {
+            tag(c, "model_bundled_row").single().performClick(); answerPassword("Parent12345")
+            assertEquals(RiskImportResult.NOT_ENOUGH_SPACE, ModelImportJob.result); assertTrue(BundledModel.needsPassword(ctx))
+            RiskModelStore.freeSpaceProbe = { it.usableSpace }
+            UiSupport.nav(c.get(), "overview"); UiSupport.nav(c.get(), "permissions")
+            tag(c, "scores_bundled_retry").single().performClick()
+            assertFalse("Retry must not install before the password", RiskModelStore.file(ctx).exists())
+            assertTrue(UiSupport.texts(ShadowDialog.getLatestDialog().window!!.decorView).any { it.contains("parent's password") })
+            answerPassword("wrong password"); assertFalse(RiskModelStore.file(ctx).exists())
+            ShadowDialog.getLatestDialog().cancel(); shadowOf(Looper.getMainLooper()).idle()
+            UiSupport.nav(c.get(), "overview"); UiSupport.nav(c.get(), "permissions")
+            tag(c, "scores_bundled_retry").single().performClick(); answerPassword("Parent12345")
+            assertEquals(RiskModelState.INSTALLED, RiskModelStore.state(ctx))
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun aSpaceMessageNeverShowsMoreFreeSpaceThanNeededAndSaysAboutOnePointOneGb() {
+        RiskModelStore.expectation = RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256)
+        val low = ScoresChildCopy.result(RiskImportResult.NOT_ENOUGH_SPACE, false, true, 400L * 1024 * 1024)!!.second
+        assertTrue(low, low.contains("about 1.1 GB") && low.contains("has 0.4 GB") && low.contains("需要約 1.1 GB"))
+        val midway = ScoresChildCopy.result(RiskImportResult.NOT_ENOUGH_SPACE, false, true, 5L * 1024 * 1024 * 1024)!!.second
+        assertTrue(midway, midway.contains("about 1.1 GB") && midway.contains("ran out while copying") && !midway.contains("5.0 GB") && !midway.contains("has "))
+        assertTrue(ScoresChildCopy.result(RiskImportResult.NOT_ENOUGH_SPACE, false, true, -1L)!!.second.contains("ran out while copying"))
+    }
+    @Test fun aNewAppInstallClearsTheAutoInstallBlock() {
+        asset(tiny.copyOf(5))
+        assertTrue(BundledModel.maybeAutoInstall(ctx)); assertEquals(RiskImportResult.WRONG_FILE, ModelImportJob.result)
+        ModelImportJob.dismissResult(); asset()
+        assertFalse(BundledModel.maybeAutoInstall(ctx)); assertTrue(RiskModelStore.autoBlocked(ctx))
+        shadowOf(ctx.packageManager).getInternalMutablePackageInfo(ctx.packageName).lastUpdateTime += 1000   // the app was updated
+        assertFalse(RiskModelStore.autoBlocked(ctx))
+        assertTrue(BundledModel.maybeAutoInstall(ctx)); assertEquals(RiskModelState.INSTALLED, RiskModelStore.state(ctx))
+    }
+    @Test fun theParentIsToldTheModelIsValidAfterABundledInstall() {
+        val authority = FamilySecurity.newSigningIdentity(); val id = UUID.randomUUID().toString()
+        prefs.edit().putString("parent_command_public_key", authority.publicKey).putString("capture_policy_id", id).putString("capture_local_ack_id", id).commit()
+        val token = GuardEngine.getOrCreateFamilyToken(ctx); val scope = GuardEngine.getChannelTopic(ctx)
+        fun models() = FamilyEvidence(ctx).use { db -> db.readableDatabase.rawQuery("SELECT wire FROM outbox WHERE scope=?", arrayOf(scope)).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } } }
+            .mapNotNull { GuardEngine.decryptPayload(token, it) }.filter { it.optBoolean("relay_control") }.map { it.getJSONObject("envelope") }
+            .filter { it.optString("type") == "scores_mode_report" }.map { it.getJSONObject("state").getString("model") }
+        assertEquals(emptyList<String>(), models())
+        asset(); assertTrue(BundledModel.maybeAutoInstall(ctx))
+        assertEquals(listOf("valid"), models())
     }
 }

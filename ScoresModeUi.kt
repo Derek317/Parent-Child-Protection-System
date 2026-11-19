@@ -392,9 +392,13 @@ internal object ScoresChildCopy {
     /** [bundled] is true for the copy included in the app; [freeBytes] is the free space at that moment, or negative when unknown. */
     fun result(r: RiskImportResult?, cancelled: Boolean, bundled: Boolean = false, freeBytes: Long = -1L): Pair<String, String>? = when {
         bundled && cancelled -> "已取消安裝 / Install cancelled" to "沒有保存任何內容。可以隨時再安裝。\nNothing was saved. You can install it again at any time."
+        // Free space can read higher than the need when the copy itself ran out of room (other apps filled the phone): then no figure for it is shown.
+        bundled && r == RiskImportResult.NOT_ENOUGH_SPACE && freeBytes >= 0 && freeBytes < RiskModelStore.spaceNeeded() -> "手機儲存空間不足 / Not enough free space" to
+            "安裝 App 內附的模型需要約 %.1f GB 可用空間，這部手機目前只有 %.1f GB。請先釋放空間，再按「重試」。沒有保存任何部分檔案。\nInstalling the model included in this app needs about %.1f GB of free space, and this phone has %.1f GB. Free some space, then tap Retry. No partial file was kept."
+                .format(RiskModelStore.spaceNeeded() / GIB, freeBytes / GIB, RiskModelStore.spaceNeeded() / GIB, freeBytes / GIB)
         bundled && r == RiskImportResult.NOT_ENOUGH_SPACE -> "手機儲存空間不足 / Not enough free space" to
-            "安裝 App 內附的模型需要約 %.2f GB 可用空間，這部手機目前只有 %.2f GB。請先釋放空間，再按「重試」。沒有保存任何部分檔案。\nInstalling the model included in this app needs about %.2f GB of free space, and this phone has %.2f GB. Free some space, then tap Retry. No partial file was kept."
-                .format(RiskModelStore.spaceNeeded() / GIB, maxOf(0L, freeBytes) / GIB, RiskModelStore.spaceNeeded() / GIB, maxOf(0L, freeBytes) / GIB)
+            "安裝 App 內附的模型需要約 %.1f GB 可用空間，但複製途中空間用完了。請先釋放空間，再按「重試」。沒有保存任何部分檔案。\nInstalling the model included in this app needs about %.1f GB of free space, and the space ran out while copying. Free some space, then tap Retry. No partial file was kept."
+                .format(RiskModelStore.spaceNeeded() / GIB, RiskModelStore.spaceNeeded() / GIB)
         bundled && r == RiskImportResult.WRONG_FILE -> BUNDLED_FAILED to "App 內附的模型與指定的檔案不符（大小或校驗碼不同），所以沒有安裝，也不會被使用。請改用完整的安裝包，或用檔案匯入模型。\nThe model inside this app does not match the expected file (its size or checksum differs), so it was not installed and will not be used. Use a complete package, or import the file by hand."
         bundled && r == RiskImportResult.IO_ERROR -> BUNDLED_FAILED to "複製時出錯，沒有保存任何部分檔案。請重試。\nSomething went wrong while copying. No partial file was kept. Try again."
         cancelled -> "已取消匯入 / Import cancelled" to "沒有保存任何內容。\nNothing was saved."

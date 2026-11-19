@@ -2,6 +2,8 @@
 
 **Read this first.** The packaged APK contains the analysis model. The model was trained partly on real conversations. **Never upload the packaged APK to GitHub (not as a release, an artifact, an attachment or an issue), never put it in a cloud drive or a chat, and never share it with anyone.** Keep it on your PC and your own phones. The GitHub build never contains the model, and nothing in the app downloads it.
 
+**Keep everything out of cloud-synced folders.** The repository clone, the model, the keystore and the output must not be inside a OneDrive, Dropbox, Google Drive or iCloud folder, because the sync program would upload the model. On Windows, **Documents**, **Desktop** and **Pictures** are often synced by OneDrive without you noticing. Use a plain local folder such as `C:\work\ig-guard` and pass `--out` a path there. The script refuses when the model or the output is under a folder named by `%OneDrive%`, `%OneDriveConsumer%` or `%OneDriveCommercial%`, or whose path contains `OneDrive`, `Dropbox`, `Google Drive` or `iCloudDrive`; `--allow-synced-folder` overrides that, and you should not need it.
+
 The result is one file you install like any app. On the child's phone the app copies the model out of itself on first start, so nothing has to be copied or picked by hand. If you prefer, the older way still works: install the normal APK and import the file with the file picker.
 
 ## What you need (once)
@@ -43,9 +45,12 @@ py -3.12 tools\package_with_model.py `
 
 (On Linux or macOS use `python3.12`, `/` in paths and `\` instead of the backtick.)
 
-- It asks for the keystore password with a hidden prompt, and then for the key password (press Enter if you used one password for both, which `signing.md` supports). To avoid the prompt set `IG_GUARD_KEYSTORE_PASSWORD` and `IG_GUARD_KEY_PASSWORD` in that terminal first. Passwords are never taken from the command line and never printed.
+- It asks for the keystore password with a hidden prompt, and then for the key password (press Enter if you used one password for both, which `signing.md` supports). **Prefer the hidden prompt.** Setting `$env:IG_GUARD_KEYSTORE_PASSWORD = '...'` in PowerShell leaves the password in your session and may leave it in the command history; the variables `IG_GUARD_KEYSTORE_PASSWORD` and `IG_GUARD_KEY_PASSWORD` exist for automation only. Passwords are never taken from the command line, never printed, and not handed to any program except the signing tool.
+- Keep every path free of the characters `&`, `^` and `%` (and avoid spaces if you can); Windows command handling of `apksigner.bat` can misread them. Put the model, keystore and output in simple folders such as `C:\work\ig-guard`.
 - `--build-tools` can be left out if `ANDROID_HOME` or `ANDROID_SDK_ROOT` points at your SDK; the script then uses the newest build-tools folder.
 - `--out` must end in `.apk`. The script refuses to write inside the git work tree unless the path is ignored by git. `dist\` and `*.apk` are ignored, so `dist\ig-guard-with-model.apk` is fine. Add `--force` to overwrite an earlier output.
+
+The APK plus the model must stay under about 2 GiB (the current build is roughly 1.1 GB plus the APK). Above that the zip format needs zip64 records, which Android may reject, so the script refuses.
 
 It takes a few minutes. It checks the model, copies the APK entry by entry (keeping each entry's compression, dropping the old signature files), adds the model as `assets/risk/qwen3-1.7b-lora-v7-Q4_K_M.gguf` **uncompressed**, runs `zipalign -p -f 4`, signs with `apksigner` (v2 and v3), and verifies the result. At the end it prints the output path, its size and SHA-256, the signing certificate's SHA-256, and writes `dist\ig-guard-with-model.apk.sha256` next to it.
 
@@ -66,7 +71,9 @@ If the input APK was unsigned, only the comparison with the workflow's pinned di
 
 Then delete the copy of the packaged APK from the phone's Downloads folder and from any other place you copied it. The installed app still holds the model inside itself.
 
-**Space on the phone.** The APK is about 1.1 GB, and the first start copies the model out of the APK into the app's private storage, which is another 1.1 GB. Keep about **2.3 GB** free for the first start (and a bit more while Android installs the APK). If there is not enough room, the app says how much is needed and offers a Retry button; nothing partial is kept. After the copy the phone holds the model twice (the installed APK and the app's copy); that is a trade-off of this method.
+**Space on the phone.** Counting the copy of the APK you put on the phone (for example in Downloads) and installing it from the Files app, the phone needs about **3.5 GB** free in total: about 1.1 GB for the APK copy, 1.1 GB for the installed app, and 1.1 GB for the model that the first start copies out of the app. **Delete the copied APK from Downloads right after installing** to get 1.1 GB back (with `adb install` there is no extra copy). If there is not enough room, the app says how much it needs (about 1.1 GB) and offers a Retry button; nothing partial is kept. After the copy the phone holds the model twice (inside the installed app and as the app's own copy); that is a trade-off of this method.
+
+The copy takes several minutes. If Android stops the app while it runs (the screen is turned off and the app is closed, or memory is short), the partial copy is thrown away and the copy starts again from the beginning the next time the app is opened. Keep the app open and the phone awake the first time.
 
 **What happens on the child's phone.** When the phone is set up as a child phone (and each time the app starts while the model is missing), a progress card appears under Permissions and the copy runs in the background. The app checks the size and SHA-256 again. A wrong or cut-off file is rejected, deleted and reported; the mode stays off. Installing the model does not turn anything on: nothing is stored or analysed until a parent switches the mode on and the child agrees. The parent's phone is told the model is valid.
 
