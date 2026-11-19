@@ -24,7 +24,7 @@ Legacy signing-key migration; queued/in-flight packets after withdrawal; expired
 
 ### Task 4: Retention and relay erasure
 - [x] Add failing storage/relay tests for expiry, preservation, legacy preview, no resurrection and authenticated retirement.
-- [x] Implement 30-day new archives, 72-hour queued records, 90-day explicit preservation; bounded relay metadata; integrate settings and deletion UI.
+- [x] Implement 30-day new archives, 72-hour queued records, 90-day explicit preservation; integrate settings and deletion UI (relay-side lifetime and retirement changes deferred pending compatibility review).
 
 ### Task 5: d1 experiment branch
 - [x] Inspect pinned model licence/code, implement synthetic multilingual benchmark with rules baseline and metrics, run real inference if runtime permits, document Android runtime evidence and limits.

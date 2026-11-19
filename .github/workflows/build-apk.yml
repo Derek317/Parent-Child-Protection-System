@@ -7,19 +7,44 @@ on:
 permissions:
   contents: read
 
+# One queue per ref: a push to an experimental branch can never evict or cancel a pending
+# main deploy/build or a release-tag run. Relay deploys have their own fixed group below.
 concurrency:
-  group: ig-guard-relay-and-release
+  group: ig-guard-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  relay:
+  # Protected refs are main and the version tags scripts/publish-release.sh accepts. Only they may
+  # sign, bind the `release` environment or publish. Keep this in step with that script.
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      protected: ${{ steps.ref.outputs.protected }}
+      environment: ${{ steps.ref.outputs.environment }}
+    steps:
+      - name: Classify the ref
+        id: ref
+        run: |
+          set -euo pipefail
+          protected=false
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            protected=true
+          elif [[ "$GITHUB_REF" =~ ^refs/tags/[0-9]+\.[0-9]+(\.[0-9]+)?(-beta\.[1-9][0-9]*|-hotfix\.[1-9][0-9]*)?$ ]]; then
+            protected=true
+          fi
+          environment=ci-unprotected
+          if [ "$protected" = true ]; then environment=release; fi
+          echo "protected=$protected" >> "$GITHUB_OUTPUT"
+          echo "environment=$environment" >> "$GITHUB_OUTPUT"
+
+  relay-test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout relay source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '24'
           cache: npm
@@ -29,8 +54,31 @@ jobs:
         working-directory: relay
         run: npm ci && npm test
 
+  # Production deploy. Only this job can see Cloudflare secrets, and only on main or a hotfix tag.
+  relay-deploy:
+    needs: relay-test
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/4.8-hotfix.') }}
+    environment: relay-prod
+    concurrency:
+      group: ig-guard-relay-deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout relay source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: relay
+        run: npm ci
+
       - name: Deploy to the configured Cloudflare account
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/4.8-hotfix.')
         working-directory: relay
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -66,19 +114,23 @@ jobs:
           exit "$status"
 
   build:
-    needs: relay
+    needs: [plan, relay-test, relay-deploy]
+    # relay-deploy is skipped on refs that do not deploy; a failed or cancelled test/deploy stops the build.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.relay-test.result == 'success' && (needs.relay-deploy.result == 'success' || needs.relay-deploy.result == 'skipped') }}
+    # `release` (protected refs only) holds the signing secrets; other refs get an empty, unprotected environment.
+    environment: ${{ needs.plan.outputs.environment }}
     runs-on: ubuntu-24.04
     env:
       RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
     outputs:
-      artifact_name: ${{ steps.package.outputs.artifact_name }}
+      artifact_name: ${{ steps.package_signed.outputs.artifact_name || steps.package_unsigned.outputs.artifact_name }}
       signed_verified: ${{ steps.verify.outputs.signed_verified }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '17'
@@ -88,7 +140,7 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
         with:
           gradle-version: '8.7'
 
@@ -317,8 +369,19 @@ jobs:
           EOF
           gradle testDebugUnitTest lintDebug --no-daemon
 
-      - name: Compile APK
-        id: package
+      - name: Compile unsigned APK
+        id: package_unsigned
+        if: needs.plan.outputs.protected != 'true'
+        run: |
+          set -euo pipefail
+          unset APK_KEYSTORE_PATH
+          echo "Signing secrets are not available on this ref. This unsigned APK is for CI inspection only and cannot update an installed IG Guard." >> "$GITHUB_STEP_SUMMARY"
+          gradle assembleRelease --no-daemon
+          echo "artifact_name=ig-guard-unsigned-apk" >> "$GITHUB_OUTPUT"
+
+      - name: Compile Signed APK
+        id: package_signed
+        if: needs.plan.outputs.protected == 'true'
         env:
           APK_KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
           APK_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
@@ -366,7 +429,7 @@ jobs:
 
       - name: Verify signed APK
         id: verify
-        if: steps.package.outputs.artifact_name == 'ig-guard-signed-apk'
+        if: steps.package_signed.outputs.artifact_name == 'ig-guard-signed-apk'
         run: |
           set -euo pipefail
           for apk in app/build/outputs/apk/release/*.apk; do
@@ -388,22 +451,27 @@ jobs:
           echo "signed_verified=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ${{ steps.package.outputs.artifact_name }}
+          name: ${{ steps.package_signed.outputs.artifact_name || steps.package_unsigned.outputs.artifact_name }}
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           overwrite: true
+          retention-days: 7
 
   release:
-    needs: build
-    if: ${{ always() && !cancelled() && startsWith(github.ref, 'refs/tags/') && github.event.deleted != true }}
+    needs: [plan, relay-test, relay-deploy, build]
+    # A tag whose build FAILED still publishes the documented notes-only release (docs/releases/4.7.md),
+    # so a failed build is accepted here. It does not publish when the relay tests or deploy failed (build is
+    # then skipped), when the run was cancelled, or for refs that are not release tags. A rejected
+    # environment approval also appears as a failed build; see docs/ci-secrets-hardening.md.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') && github.event.deleted != true && needs.plan.outputs.protected == 'true' && needs.relay-test.result == 'success' && (needs.relay-deploy.result == 'success' || needs.relay-deploy.result == 'skipped') && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - name: Checkout tagged source and release notes
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
 
@@ -411,7 +479,7 @@ jobs:
         id: download
         if: needs.build.result == 'success' && needs.build.outputs.artifact_name == 'ig-guard-signed-apk' && needs.build.outputs.signed_verified == 'true'
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ig-guard-signed-apk
           path: release-artifacts

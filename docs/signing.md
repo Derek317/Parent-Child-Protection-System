@@ -28,9 +28,9 @@ gh secret set APK_KEY_ALIAS --repo Derek317/Parent-Child-Protection-System
 gh secret set APK_KEY_PASSWORD --repo Derek317/Parent-Child-Protection-System
 ```
 
-The last three commands prompt for values. Run the workflow manually after all four secrets are set. CI uses them only in the packaging step and removes its temporary keystore afterward. Partial configuration fails with a clear error.
+The last three commands prompt for values. For protection against branch pushers, store these four values as secrets of a GitHub **environment** named `release` (add `--env release` to each command) rather than as repository secrets, and follow [ci-secrets-hardening.md](ci-secrets-hardening.md). Run the workflow manually on `main` after all four secrets are set. CI uses them only in the signing step of the build job on `main` or a release tag and removes its temporary keystore afterward. Partial configuration fails with a clear error.
 
-Without secrets, tests and release compilation still run and upload **`ig-guard-unsigned-apk`**. This artifact requires private signing before installation. With all four secrets configured, the artifact is **`ig-guard-signed-apk`**. A new key normally requires reinstalling existing installations; arrange records/backups or a signing-lineage migration before replacing an installed production APK.
+**Signing happens only on `main` and on release tags** (`4.9`, `4.9.1`, `4.9-beta.N`, `4.8-hotfix.N`). On every other branch or tag the signing secrets are not passed to any step, and the build uploads **`ig-guard-unsigned-apk`** for seven days; it cannot update an installed IG Guard. On `main` or a release tag without secrets the artifact is also unsigned and requires private signing before installation. With all four secrets configured on those refs, the artifact is **`ig-guard-signed-apk`**. This restriction is only a boundary once the secrets are moved into protected environments; until then a branch push that edits the workflow can still read repository secrets. A new key normally requires reinstalling existing installations; arrange records/backups or a signing-lineage migration before replacing an installed production APK.
 
 ## Diagnose signing failures
 
