@@ -25,6 +25,10 @@ class Checks(unittest.TestCase):
  def test_pairing_does_not_depend_on_temporary_unlock(self):
   body=S.split('fun applyPairing(',1)[1].split('private fun announceRepair(',1)[0]
   self.assertNotIn('isTemporarilyUnlocked',body)
+ def test_checkpoint_logs_never_interpolate_contact_identifiers(self):
+  for line in S.splitlines():
+   if 'addCheckpointLog(' in line and 'fun addCheckpointLog' not in line:
+    self.assertNotRegex(line,r'sender|Sender|@\$|handle',line.strip())
  def test_monitoring_is_declared(self):
   workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/build-apk.yml').read_text()
   self.assertTrue('android:name="isMonitoringTool" android:value="child_monitoring"' in workflow, "Missing parental-monitoring declaration")

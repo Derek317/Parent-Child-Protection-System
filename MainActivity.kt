@@ -689,17 +689,31 @@ object GuardEngine {
         newToken
     }
 
+    /** Diagnostics never hold contact identifiers. Earlier versions wrote sender names and @handles into some steps;
+     * those lines are rewritten without the name whenever the log is read or extended. */
+    private fun scrubCheckpointLine(line: String): String = when {
+        " CP4-RECV: " in line -> line.substringBefore(" from ")
+        " CP2-TRUSTED: " in line -> line.substringBefore(" CP2-TRUSTED: ") + " CP2-TRUSTED: Ignored trusted/self/status message"
+        " CP1-ID: " in line -> line.substringBefore(" CP1-ID: ") + " CP1-ID: Auto-detected Child IG ID"
+        " CP4-ID: " in line -> line.substringBefore(" CP4-ID: ") + " CP4-ID: Auto-synced Child IG ID from child phone"
+        else -> line
+    }
+    private fun scrubbedCheckpointLines(raw: String): List<String> = if (raw.isEmpty()) emptyList() else raw.split("\n").map { scrubCheckpointLine(it) }
+
     @Synchronized
     fun addCheckpointLog(ctx: Context, step: String, detail: String) {
         val entry = "[${nowTimeStr()}] $step: $detail"
-        val raw = prefs(ctx).getString("checkpoint_logs", "") ?: ""
-        val lines = if (raw.isEmpty()) emptyList() else raw.split("\n")
+        val lines = scrubbedCheckpointLines(prefs(ctx).getString("checkpoint_logs", "") ?: "")
         val updated = (listOf(entry) + lines).take(40).joinToString("\n")
         prefs(ctx).edit().putString("checkpoint_logs", updated).apply()
     }
 
+    @Synchronized
     fun getCheckpointLogs(ctx: Context): String {
-        return prefs(ctx).getString("checkpoint_logs", "No checkpoint events recorded yet.") ?: ""
+        val raw = prefs(ctx).getString("checkpoint_logs", null) ?: return "No checkpoint events recorded yet."
+        val clean = scrubbedCheckpointLines(raw).joinToString("\n")
+        if (clean != raw) prefs(ctx).edit().putString("checkpoint_logs", clean).apply()
+        return clean
     }
 
     fun clearCheckpointLogs(ctx: Context) {
@@ -1076,7 +1090,7 @@ object GuardEngine {
         val existing = getChildSelfHandle(ctx)
         if (clean == existing) return
         setChildSelfHandle(ctx, clean)
-        addCheckpointLog(ctx, "CP1-ID", "Auto-detected Child IG ID: @$clean")
+        addCheckpointLog(ctx, "CP1-ID", "Auto-detected Child IG ID")
         if (isChildMode(ctx)) {
             val token = getOrCreateFamilyToken(ctx)
             val topic = getChannelTopicForToken(token)
@@ -1524,7 +1538,7 @@ object GuardEngine {
                     val detected = inner.optString("child_self_handle")
                     if (detected.isNotEmpty()) {
                         setChildSelfHandle(ctx, detected)
-                        addCheckpointLog(ctx, "CP4-ID", "Auto-synced Child IG ID from child phone: @$detected")
+                        addCheckpointLog(ctx, "CP4-ID", "Auto-synced Child IG ID from child phone")
                         ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                     }
                 }
@@ -1581,7 +1595,7 @@ object GuardEngine {
                     }
                     val pending = try { JSONObject(prefs(ctx).getString("pending_rotation_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
                     if (token == pending.optString("new_token")) prefs(ctx).edit().remove("pending_rotation_json").apply()
-                    addCheckpointLog(ctx, "CP4-RECV", "Decrypted $reason from ${inner.optString("sender")}")
+                    addCheckpointLog(ctx, "CP4-RECV", "Decrypted $reason")
                     if(ConversationCapture.actionable(inner) || reason=="test_alert")onNewAlertForParent?.invoke(inner)
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
@@ -1701,7 +1715,8 @@ object GuardEngine {
         check(prefs(ctx).edit().putString("weekly_stats_json",statistics.state.toString()).commit())
         migrateEvidence(ctx)
         FamilyEvidence(ctx).use { it.deleteArchive(getChannelTopic(ctx)) }
-        prefs(ctx).edit().remove("parent_alerts_json").commit()
+        // Diagnostics must not outlive the evidence they describe.
+        prefs(ctx).edit().remove("parent_alerts_json").putString("checkpoint_logs", "").commit()
     }
 
     fun isNotificationListenerEnabledStatic(ctx: Context): Boolean {
@@ -1869,7 +1884,7 @@ class IgNotificationListener : NotificationListenerService() {
         if(GuardEngine.captureRelaySession(this)!=observationSession)return
         val reason = GuardEngine.evaluateMessage(this, resolvedSender, resolvedMessage)
         if (reason == null) {
-            GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "Ignored trusted/self/status: @$resolvedSender")
+            GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "Ignored trusted/self/status message")
             return
         }
 
