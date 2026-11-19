@@ -225,7 +225,7 @@ class ScoresModeChildTest {
         capture(obs("hello ${secret}a"), obs("mine ${secret}b", "outgoing"), obs("dropped", "unknown", kind = "direct"))
         capture(obs("group ${secret}c", conversation = "club", kind = "group"))
         capture(obs("screen ${secret}d", conversation = "screen friend", kind = "unknown"), obs("screen ${secret}e", "outgoing", conversation = "screen friend", kind = "unknown"))
-        assertEquals(4, count("risk_store")); assertEquals(0, count("risk_unknown"))   // the group is neither stored nor counted
+        assertEquals(4, count("risk_store")); assertEquals("the group is not stored but is counted as set aside", 1, count("risk_unknown"))
         FamilyEvidence(ctx).use { db ->
             assertEquals(2, db.riskDueThreads(scope).size)
         }
@@ -266,21 +266,44 @@ class ScoresModeChildTest {
         capture(screen("a ${secret}", "incoming", "team"), screen("b ${secret}", "incoming", "team"))   // two different people on screen: indistinguishable
         assertEquals(2, count("risk_store")); assertEquals(0, count("risk_unknown"))
     }
-    @Test fun aMessageReadByNotificationAndScreenIsKeptOnceAndTheTwoThreadsOfOneLabelMerge() {
+    private fun note(label: String, body: String, direction: String, ago: Long, kind: String = "unknown", author: String = "", account: String = "", key: String = "$label:$body:$ago:$direction") =
+        CapturedText(label, body, direction, author.ifEmpty { if (direction == "incoming") label else "子女" }, account, "notification", System.currentTimeMillis() - ago, key, false, kind)
+    private fun storedTexts(): List<String> = FamilyEvidence(ctx).use { db -> db.riskDueThreads(scope).flatMap { db.riskThreadMessages(scope, it.first, 100).map { m -> m.text.removeSuffix(secret) } } }
+    @Test fun aMessageReadByNotificationAndScreenIsKeptOnceAndIdenticalMessagesStayTwo() {
         activate()
-        // Same unknown-kind thread read twice: once by notification, once from the screen.
-        capture(CapturedText("Friend", "same words ${secret}", "incoming", "Friend", "", "notification", System.currentTimeMillis() - 5000, "n1", false, "unknown"))
-        capture(screen("same words ${secret}", "incoming", "Friend"), screen("my reply ${secret}", "outgoing", "Friend"))
-        assertEquals("the duplicate across routes is dropped", 2, count("risk_store"))
-        // The notification's own direct thread for the same label is a second thread: merged by label in the report.
-        capture(CapturedText("Friend", "direct side ${secret}", "incoming", "Friend", "", "notification", clock++, "n2", false, "direct"))
-        assertEquals(2, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
-        val scorer = FakeScorer(logits = { p -> if (p.contains("direct side")) FakeScorer.LOW else FakeScorer.HIGH })
-        runBatch(scorer)
-        assertEquals(2, scorer.prompts.size); assertEquals(1, scorer.prompts.count { it.contains("same words") })
-        assertEquals(1, scorer.prompts.first { it.contains("same words") }.split("same words").size - 1)
-        val rows = reports().last().getJSONArray("conversations")
-        assertEquals(1, rows.length()); assertEquals(100.0, rows.getJSONObject(0).getDouble("score"), 0.01)
+        capture(note("Pal", "ok ${secret}", "incoming", 9000, key = "a"), note("Pal", "ok ${secret}", "incoming", 8000, key = "b"))
+        capture(screen("ok ${secret}", "incoming", "Pal"), screen("ok ${secret}", "incoming", "Pal"))
+        assertEquals("two real messages, two rows", 2, count("risk_store"))
+        reset(); activate()
+        capture(note("Pal", "ok ${secret}", "incoming", 9000))
+        capture(screen("ok ${secret}", "incoming", "Pal"), screen("ok ${secret}", "incoming", "Pal"))
+        assertEquals("one notification can explain only one screen row", 2, count("risk_store"))
+        reset(); activate()   // the screen read first, notifications after
+        capture(screen("ok ${secret}", "incoming", "Pal"), screen("ok ${secret}", "incoming", "Pal"))
+        capture(note("Pal", "ok ${secret}", "incoming", 5000, key = "a"), note("Pal", "ok ${secret}", "incoming", 4000, key = "b"), note("Pal", "ok ${secret}", "incoming", 3000, key = "c"))
+        assertEquals("the third notification has no screen row left to match", 3, count("risk_store"))
+    }
+    @Test fun aNotificationMatchesAScreenReadWhateverTheGap() {
+        activate()
+        capture(note("Pal", "long ago ${secret}", "incoming", 3_600_000L))
+        capture(screen("long ago ${secret}", "incoming", "Pal"))
+        assertEquals(1, count("risk_store"))
+    }
+    @Test fun mixedSourcesKeepTheScreenPositionAndASensiblePromptOrder() {
+        activate()
+        capture(note("Pal", "older notification", "incoming", 500_000L, key = "o"), note("Pal", "on screen too", "incoming", 300_000L, key = "n"))
+        capture(screen("s1", "incoming", "Pal"), screen("on screen too", "incoming", "Pal"), screen("s2", "outgoing", "Pal"))
+        assertEquals(listOf("older notification", "s1", "on screen too", "s2"), storedTexts().map { it.trim() })
+        FamilyEvidence(ctx).use { db ->
+            val m = db.riskThreadMessages(scope, db.riskDueThreads(scope).single().first, 100)
+            assertEquals(listOf("other", "other", "other", "child"), m.map { it.speaker })
+        }
+    }
+    @Test fun anInlineReplyAndALaterIdenticalTypedMessageAreBothKept() {
+        activate()
+        capture(note("Pal", "yes", "outgoing", 4000))
+        capture(screen("yes", "outgoing", "Pal"), screen("yes", "outgoing", "Pal"))
+        assertEquals(2, count("risk_store"))
     }
     @Test fun storedTextIsEncryptedAndRepeatedCaptureIsIdempotent() {
         activate()
@@ -571,16 +594,81 @@ class ScoresModeChildTest {
         reset(); assertTrue(installModel()); RiskModelStore.abiProbe = { false }
         assertEquals(RiskModelState.UNSUPPORTED_DEVICE, RiskModelStore.state(ctx))
     }
-    @Test fun twoThreadsSharingALabelAreMergedIntoOneRow() {
+    @Test fun oneConversationLabelIsOneThreadWhateverTheAccountOrKind() {
         activate()
-        fun t(account: String, body: String) = CapturedText("Friend", body, "incoming", "Friend", account, "notification", clock++, "$account:$body", false, "direct")
-        capture(t("a1", "high ${secret}"), t("a2", "low ${secret}"))
-        assertEquals(2, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
-        runBatch(FakeScorer(logits = { p -> if (p.contains("high ")) FakeScorer.HIGH else FakeScorer.LOW }))
+        fun t(account: String, body: String, kind: String) = CapturedText("Friend", body, "incoming", "Friend", account, "notification", System.currentTimeMillis() - 9000 + body.length, "$account:$body", false, kind)
+        capture(t("a1", "high ${secret}", "direct"), t("a2", "low ${secret}", "unknown"))
+        assertEquals("one thread, one prompt", 1, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
+        val scorer = FakeScorer(logits = { FakeScorer.HIGH }); runBatch(scorer)
+        assertEquals(1, scorer.prompts.size); assertTrue(scorer.prompts.single().contains("high ") && scorer.prompts.single().contains("low "))
         val rows = reports().last().getJSONArray("conversations")
         assertEquals(1, rows.length()); assertEquals("Friend", rows.getJSONObject(0).getString("account_label")); assertEquals(100.0, rows.getJSONObject(0).getDouble("score"), 0.01)
-        FamilyEvidence(ctx).use { db -> assertTrue("both members were marked sent", db.riskReportRows(scope, System.currentTimeMillis()).none { it.changed }) }
         assertNotNull(ScoresReportCodec.parse(reports().last(), scope, System.currentTimeMillis()))
+    }
+    @Test fun aGroupKnownByNotificationIsAlsoSetAsideWhenItsTitleIsReadFromTheScreen() {
+        activate()
+        capture(note("Club", "hi ${secret}", "incoming", 3000, kind = "group", author = "anna"))
+        capture(screen("a ${secret}", "incoming", "Club"), screen("b ${secret}", "outgoing", "Club"))
+        assertEquals(0, count("risk_store")); assertEquals(1, count("risk_unknown")); assertEquals(1, RiskLocal.status(ctx).unknownThreads)
+        assertEquals(0, runBatch().scored)
+    }
+    @Test fun aSecondAuthorSeenUnderAnAccountAlsoSetsAsideTheScreenThread() {
+        activate()
+        capture(note("team", "one ${secret}", "incoming", 3000, author = "anna", account = "X"), note("team", "two ${secret}", "incoming", 2000, author = "ben", account = "X"))
+        capture(screen("c ${secret}", "incoming", "team"))
+        assertEquals(0, count("risk_store")); assertEquals(1, count("risk_unknown"))
+    }
+    @Test fun settingAThreadAsideDeletesItsUndeliveredReportAndSendsAFreshOne() {
+        activate()
+        capture(note("team", "one ${secret}", "incoming", 3000, author = "anna"), note("keep", "fine ${secret}", "incoming", 2000))
+        runBatch()
+        assertTrue(reports().any { r -> (0 until r.getJSONArray("conversations").length()).any { r.getJSONArray("conversations").getJSONObject(it).getString("account_label") == "team" } })
+        capture(note("team", "two ${secret}", "incoming", 1000, author = "ben"))
+        RiskLocal.awaitBackground()
+        val labels = reports().flatMap { r -> (0 until r.getJSONArray("conversations").length()).map { r.getJSONArray("conversations").getJSONObject(it).getString("account_label") } }
+        assertFalse("the undelivered report no longer names the thread", labels.contains("team")); assertTrue(labels.contains("keep"))
+        assertEquals(1, reports().last().getJSONObject("state").getInt("unknown_threads"))
+    }
+    @Test fun anUpgradeFromAVersionEightDatabaseDropsTheOldMeaningOfTheCounter() {
+        FamilyEvidence(ctx).use { db ->
+            val sql = db.writableDatabase
+            db.storeRiskMessage(scope, "m1", "k", "friend", "incoming", "x", System.currentTimeMillis(), 1, 1, System.currentTimeMillis())
+            db.noteRiskUnknown(scope, "old counted thread", System.currentTimeMillis())
+            sql.execSQL("DROP TABLE risk_authors")
+            val columns = sql.rawQuery("PRAGMA table_info(risk_store)", null).use { c -> buildList { while (c.moveToNext()) { val n = c.getString(1); if (n !in setOf("body_hash", "source", "matched")) add(n) } } }
+            sql.execSQL("CREATE TABLE store_v8 AS SELECT ${columns.joinToString(",")} FROM risk_store"); sql.execSQL("DROP TABLE risk_store"); sql.execSQL("ALTER TABLE store_v8 RENAME TO risk_store")
+            sql.version = 8
+        }
+        FamilyEvidence(ctx).use { db ->
+            assertEquals(9, db.readableDatabase.version)
+            assertEquals("v8 'counted, not stored' rows are not excluded groups", 0, count("risk_unknown")); assertEquals(0, count("risk_store")); assertEquals(0, count("risk_authors"))
+            val columns = db.readableDatabase.rawQuery("PRAGMA table_info(risk_store)", null).use { c -> buildList { while (c.moveToNext()) add(c.getString(1)) } }
+            assertTrue(columns.containsAll(listOf("body_hash", "source", "matched")))
+        }
+    }
+    @Test fun agreementToOlderWordingIsAskedForAgainWithoutStoringOrForwardingText() {
+        activate(); capture(obs(text(1)))
+        val old = JSONObject().put("version", "2026-11-19-scores-v1").put("policy_id", RiskLocal.policyId(ctx)).put("accepted_at", 1L).put("withdrawn_at", 0L)
+        ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).edit().putString("receipt", LocalVault.seal(ctx, "scores_consent_receipt", old.toString())).commit()
+        assertEquals("none", RiskLocal.consentState(ctx)); assertTrue(RiskLocal.pendingPolicy(ctx)); assertFalse(RiskLocal.active(ctx))
+        assertTrue("alerts stay content-free while the child is asked again", RiskLocal.contentFree(ctx)); assertEquals(RiskCapture.CONTENT_FREE, RiskLocal.captureMode(ctx))
+        val before = count("risk_store")
+        assertTextFree(obs("send nudes ${secret}y", conversation = "badguy"), obs(text(2)))
+        assertEquals("nothing is stored or scored until the child accepts", before, count("risk_store")); assertEquals(RiskBatch.Outcome.INACTIVE, runBatch().outcome)
+        assertTrue(RiskReporter.send(ctx)); assertEquals("none", reports().last().getJSONObject("state").getString("consent"))
+        assertTrue(RiskLocal.accept(ctx)); assertEquals("accepted", RiskLocal.consentState(ctx)); assertTrue(RiskLocal.active(ctx))
+        val fresh = JSONObject(LocalVault.open(ctx, "scores_consent_receipt", ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).getString("receipt", "")!!))
+        assertEquals("2026-11-19-scores-v2", fresh.getString("version"))
+    }
+    @Test fun theChildsOwnHandleIsNotAnotherAuthorAndAPausedPhoneStillSpotsAGroup() {
+        activate(); GuardEngine.setChildSelfHandle(ctx, "mychild")
+        capture(note("team", "one ${secret}", "incoming", 3000, author = "anna"), note("team", "mine ${secret}", "incoming", 2000, author = "MyChild"))
+        assertEquals(0, count("risk_unknown")); assertEquals(2, count("risk_store"))
+        assertTrue(RiskLocal.pause(ctx))
+        capture(note("team", "two ${secret}", "incoming", 1000, author = "ben"))
+        assertEquals("a second author during a pause is noticed (blind index only)", 1, count("risk_unknown")); assertEquals(0, count("risk_store"))
+        assertTrue(RiskLocal.resume(ctx)); capture(note("team", "later ${secret}", "incoming", 500, author = "anna"))
+        assertEquals(0, count("risk_store"))
     }
     @Test fun theDailyReportIsStateOnlyAndRowsAreResentOnlyAfterAnUndeliveredReportWasPurged() {
         activate(); capture(obs(text(1))); runBatch()

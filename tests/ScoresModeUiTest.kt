@@ -211,7 +211,7 @@ class ScoresParentUiTest {
     @Test fun unknownThreadCountIsShownWhenAReportExists() {
         enable(); report(unknown = 7)
         val c = launch()
-        try { page(c); assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("7 個") && it.contains("看似群組聊天") }) } finally { c.pause().stop().destroy() }
+        try { page(c); assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("7 個") && it.contains("被視為群組聊天") }) } finally { c.pause().stop().destroy() }
     }
     @Test fun overviewRowOpensThePage() {
         enable(); report(rows = listOf(row("amy", 80.0, System.currentTimeMillis() - 1000)))
@@ -739,7 +739,7 @@ class ScoresChildUiTest {
                 assertTrue(text.contains("AI 風險分析"))
                 for (needle in case.has) assertTrue("${case.expect} should say: $needle\n$text", text.contains(needle))
                 for (needle in case.hasNot) assertFalse("${case.expect} must not say: $needle\n$text", text.contains(needle))
-                if (RiskLocal.consentState(ctx) != "none") { assertTrue(text.contains("未分析的對話")); assertTrue(text.contains("Last run") || text.contains("Not run yet")) }
+                if (RiskLocal.consentState(ctx) != "none") { assertTrue(text.contains("未分析的聊天")); assertTrue(text.contains("Last run") || text.contains("Not run yet")) }
                 labels.add(stateLabel(c))
             } finally { c.pause().stop().destroy() }
         }
@@ -753,7 +753,7 @@ class ScoresChildUiTest {
         val c = launch()
         try {
             val text = UiSupport.texts(tag(c, "scores_status_block").single()).joinToString("\n")
-            assertTrue(text.contains(ScoresUi.time(now)) && text.contains("14 個對話")); assertTrue(text.contains("類型未能確認）：1 個"))
+            assertTrue(text.contains(ScoresUi.time(now)) && text.contains("14 個對話")); assertTrue(text.contains("被視為群組而未分析的聊天：1 個"))
         } finally { c.pause().stop().destroy() }
     }
     @Test fun pauseResumeAndWithdrawCallTheEngineAndUpdateTheScreen() {
@@ -779,7 +779,8 @@ class ScoresChildUiTest {
 
     // ---------------- model import ----------------
     private fun permissions(c: org.robolectric.android.controller.ActivityController<MainActivity>) { UiSupport.nav(c.get(), "permissions") }
-    private fun pick(c: org.robolectric.android.controller.ActivityController<MainActivity>, bytes: ByteArray = tiny) {
+    private fun pick(c: org.robolectric.android.controller.ActivityController<MainActivity>, bytes: ByteArray = tiny, authorized: Boolean = true) {
+        MainActivity::class.java.getDeclaredField("modelPickAuthorized").apply { isAccessible = true }.setBoolean(c.get(), authorized)
         val uri = Uri.parse("content://test.picker/model")
         shadowOf(ctx.contentResolver).registerInputStream(uri, ByteArrayInputStream(bytes))
         MainActivity::class.java.getDeclaredMethod("onActivityResult", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Intent::class.java).apply { isAccessible = true }
@@ -806,6 +807,13 @@ class ScoresChildUiTest {
             tag(c, "model_import_row").single().performClick(); answerPassword("Parent12345")
             val started = shadowOf(c.get()).nextStartedActivityForResult
             assertEquals(Intent.ACTION_OPEN_DOCUMENT, started.intent.action); assertEquals("*/*", started.intent.type); assertEquals(9032, started.requestCode)
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun aPickerResultWithoutAnAcceptedPasswordIsIgnored() {
+        val c = launch()
+        try {
+            pick(c, authorized = false)
+            assertEquals(RiskModelState.MISSING, RiskModelStore.state(ctx)); assertFalse(ModelImportJob.running)
         } finally { c.pause().stop().destroy() }
     }
     private fun resultText(c: org.robolectric.android.controller.ActivityController<MainActivity>) = UiSupport.texts(tag(c, "scores_import_result").single()).joinToString("\n")
