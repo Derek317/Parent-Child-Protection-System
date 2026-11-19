@@ -1,5 +1,7 @@
 # Local risk scoring in the app
 
+> **Superseded in part.** The approved design is `docs/superpowers/specs/2026-11-19-automatic-on-phone-scoring-design.md` and the plan is `docs/superpowers/plans/2026-11-19-scores-only-family-mode.md`. Where this note differs (90 messages, multi-window scoring, unknown-kind threads, the `risk_report` record), the design and plan win. The "Scoring contract" section here is still correct for a single window.
+
 Build spec, 19 November 2026. Status: in progress on branch `app/local-risk-scoring`. Not released.
 
 Everything about the model's accuracy is measured on invented chats only (see `research/results/stage4-report.md`). Nothing here is validated on real conversations.
