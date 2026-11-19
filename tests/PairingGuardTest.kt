@@ -6,6 +6,7 @@ import android.net.Uri
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -65,5 +66,85 @@ class PairingGuardTest {
     @Test fun cleanUnconfiguredPhoneCanStillPair() {
         assertTrue(GuardEngine.applyPairing(ctx,foreignInvite()))
         assertEquals("child",GuardEngine.getRole(ctx))
+    }
+
+    // ---- F2(a): a temporary unlock alone never allows re-pairing a child phone ----
+    private fun pairedChild():FamilySecurity.Invite {
+        GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
+        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
+        GuardEngine.setRole(ctx,"unconfigured")
+        prefs.edit().remove("parent_master_password").remove("parent_share_verifier").remove("parent_signing_public").commit()
+        assertTrue(GuardEngine.applyPairing(ctx,invite));assertEquals("child",GuardEngine.getRole(ctx))
+        return invite
+    }
+    @Test fun temporaryUnlockAloneCannotRepairAChildPhone() {
+        val first=pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx)
+        GuardEngine.grantTemporaryUnlock(ctx,15*60_000L);assertTrue(GuardEngine.isTemporarilyUnlocked(ctx))
+        assertFalse(GuardEngine.applyPairing(ctx,foreignInvite()))
+        assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx));assertEquals(first.parentPublicKey,prefs.getString("parent_command_public_key",null))
+    }
+    @Test fun deepLinkOnUnlockedChildAsksForTheParentPasswordAndDoesNotSwitchWithoutIt() {
+        pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx)
+        GuardEngine.grantTemporaryUnlock(ctx,15*60_000L)
+        val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,link(foreignInvite()))).setup()
+        try {
+            val sheet=ShadowDialog.getLatestDialog()
+            val views=all(sheet.window!!.decorView)
+            assertTrue("the confirmation must ask for the parent password",views.any{it is android.widget.EditText})
+            views.filterIsInstance<Button>().first{it.text.toString().contains("確認配對")}.performClick()
+            assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx));assertEquals("child",GuardEngine.getRole(ctx))
+        } finally {c.pause().stop().destroy()}
+    }
+
+    @After fun clearHook(){GuardEngine.beforeFamilySwitch=null}
+    private fun queuedAlerts(token:String,topic:String):List<org.json.JSONObject> =
+        FamilyEvidence(ctx).use{it.due(topic,Long.MAX_VALUE)}.mapNotNull{GuardEngine.decryptPayload(token,it.wire)}
+    @Test fun correctParentPasswordRepairsAfterQueueingATamperAlertToTheOldFamily() {
+        pairedChild();val oldToken=GuardEngine.getOrCreateFamilyToken(ctx);val oldTopic=GuardEngine.getChannelTopic(ctx)
+        val other=foreignInvite();var seen:List<org.json.JSONObject> = emptyList()
+        GuardEngine.beforeFamilySwitch={seen=queuedAlerts(oldToken,oldTopic)}
+        assertTrue(GuardEngine.applyPairing(ctx,other,"ParentPrivate928!"))
+        assertEquals("child",GuardEngine.getRole(ctx));assertEquals(other.token,GuardEngine.getOrCreateFamilyToken(ctx))
+        val notice=seen.filter{it.optString("reason")=="tamper_attempt"}
+        assertEquals("notice must be queued to the old family before switching",1,notice.size)
+        assertTrue(notice[0].optString("text").contains("另一個家庭"))
+    }
+    @Test fun wrongOrMissingPasswordNeverRepairsAndRepeatedFailuresLockOut() {
+        pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx)
+        assertFalse(GuardEngine.applyPairing(ctx,foreignInvite(),null))
+        assertFalse(GuardEngine.applyPairing(ctx,foreignInvite(),""))
+        repeat(5){assertFalse(GuardEngine.applyPairing(ctx,foreignInvite(),"WrongPassword928!"))}
+        assertTrue(GuardEngine.checkPasswordLockoutRemainingSec(ctx)>0)
+        assertFalse("lockout also blocks the right password",GuardEngine.applyPairing(ctx,foreignInvite(),"ParentPrivate928!"))
+        assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
+    }
+    @Test fun signedRemoteResetLetsTheUnconfiguredChildPairWithoutAPassword() {
+        val first=pairedChild()
+        val key=FamilySecurity.loadOrCreateParentIdentity(ctx,null,first.parentPublicKey).privateKey
+        val command=org.json.JSONObject().put("type","remote_reset_child").put("scope",GuardEngine.getChannelTopic(ctx))
+            .put("command_id",UUID.randomUUID().toString()).put("ts_ms",System.currentTimeMillis())
+        val wire=GuardEngine.encryptPayload(GuardEngine.getOrCreateFamilyToken(ctx),FamilySecurity.signCommand(command,key).toString())
+        val line=org.json.JSONObject().put("event","message").put("id",UUID.randomUUID().toString()).put("message",wire)
+        assertEquals(RelayConsumption.CONSUMED,GuardEngine.processIncomingRelayLine(ctx,line.toString(),"child",null))
+        assertEquals("unconfigured",GuardEngine.getRole(ctx))
+        assertTrue(GuardEngine.applyPairing(ctx,foreignInvite()))
+        assertEquals("child",GuardEngine.getRole(ctx))
+    }
+    @Test fun deepLinkConfirmationRepairsOnlyWithTheRightPassword() {
+        pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx);val other=foreignInvite()
+        val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,link(other))).setup()
+        try {
+            val views=all(ShadowDialog.getLatestDialog().window!!.decorView)
+            val box=views.filterIsInstance<android.widget.EditText>().first{it.tag=="repair_password"}
+            val confirm=views.filterIsInstance<Button>().first{it.text.toString().contains("確認配對")}
+            fun press(pw:String,until:()->Boolean){
+                box.setText(pw);confirm.performClick()
+                repeat(80){org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();if(until())return;Thread.sleep(100)}
+            }
+            press("WrongPassword928!"){confirm.isEnabled}
+            assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
+            press("ParentPrivate928!"){GuardEngine.getOrCreateFamilyToken(ctx)==other.token}
+            assertEquals(other.token,GuardEngine.getOrCreateFamilyToken(ctx))
+        } finally {c.pause().stop().destroy()}
     }
 }

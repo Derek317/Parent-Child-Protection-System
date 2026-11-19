@@ -273,6 +273,13 @@ object GuardEngine {
     @Volatile
     var pauseTamperUntilMs: Long = 0L
 
+    // Clock sources are replaceable only so tests can simulate reboots and wall-clock changes.
+    @Volatile internal var wallClock: () -> Long = { System.currentTimeMillis() }
+    @Volatile internal var monotonicClock: () -> Long = { SystemClock.elapsedRealtime() }
+    @Volatile internal var bootMarker: (Context) -> String = { c ->
+        try { Settings.Global.getInt(c.contentResolver, "boot_count", -1).toString() } catch (_: Exception) { "-1" }
+    }
+
     private fun prefs(ctx: Context) = LocalVault.preferences(ctx)
 
     fun nowTimeStr(): String = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
@@ -339,6 +346,7 @@ object GuardEngine {
 
     fun checkAndSendChildHeartbeatIfDue(ctx: Context, force: Boolean = false) {
         if (!isChildMode(ctx)) return
+        noteClockIntegrity(ctx)
         val now = System.currentTimeMillis()
         var nextAt = prefs(ctx).getLong("next_heartbeat_at_ms", 0L)
         if (nextAt == 0L) {
@@ -472,20 +480,48 @@ object GuardEngine {
         }
     }
 
-    fun checkPasswordLockoutRemainingSec(ctx: Context): Long {
-        val until = prefs(ctx).getLong("pw_lockout_until_ms", 0L)
-        return maxOf(0L, (until - System.currentTimeMillis()) / 1000L)
+    private const val LOCKOUT_MS = 10 * 60_000L
+    private const val UNLOCK_CODE_MS = 15 * 60_000L
+    private const val CLOCK_BACK_TOLERANCE_MS = 5 * 60_000L
+    private const val CLOCK_ALERT_WINDOW_MS = 60 * 60_000L
+
+    /** Remaining wrong-password lockout. Counted on the monotonic clock, so wall-clock changes cannot skip it;
+     * a reboot restarts the whole lockout instead of ending it (elapsedRealtime cannot be compared across boots). */
+    private fun lockoutRemainingMs(ctx: Context): Long {
+        val p = prefs(ctx); val now = monotonicClock(); val boot = bootMarker(ctx)
+        var until = p.getLong("pw_lockout_rt", 0L)
+        if (until == 0L) {
+            // Lockout begun by an older version used the wall clock: adopt it once, capped to the normal length.
+            val legacy = p.getLong("pw_lockout_until_ms", 0L); val left = legacy - wallClock()
+            if (left <= 0L) { if (legacy != 0L) p.edit().remove("pw_lockout_until_ms").apply(); return 0L }
+            val length = minOf(left, LOCKOUT_MS)
+            p.edit().putLong("pw_lockout_rt", now + length).putLong("pw_lockout_start_rt", now).putString("pw_lockout_boot", boot).apply()
+            return length
+        }
+        if (p.getString("pw_lockout_boot", "") != boot || now < p.getLong("pw_lockout_start_rt", 0L)) {
+            until = now + LOCKOUT_MS
+            p.edit().putLong("pw_lockout_rt", until).putLong("pw_lockout_start_rt", now).putString("pw_lockout_boot", boot).apply()
+        }
+        val left = until - now
+        if (left <= 0L) { clearLockout(ctx); return 0L }
+        return left
     }
+    private fun clearLockout(ctx: Context) {
+        prefs(ctx).edit().remove("pw_lockout_rt").remove("pw_lockout_start_rt").remove("pw_lockout_boot").remove("pw_lockout_until_ms").apply()
+    }
+    fun checkPasswordLockoutRemainingSec(ctx: Context): Long = (lockoutRemainingMs(ctx) + 999L) / 1000L
 
     fun recordPasswordAttempt(ctx: Context, success: Boolean) {
         if (success) {
-            prefs(ctx).edit().putInt("pw_failed_count", 0).putLong("pw_lockout_until_ms", 0L).apply()
+            prefs(ctx).edit().putInt("pw_failed_count", 0).apply()
+            clearLockout(ctx)
             return
         }
         val count = prefs(ctx).getInt("pw_failed_count", 0) + 1
         if (count >= 5) {
-            val lockUntil = System.currentTimeMillis() + 10 * 60_000L
-            prefs(ctx).edit().putInt("pw_failed_count", 0).putLong("pw_lockout_until_ms", lockUntil).apply()
+            prefs(ctx).edit().putInt("pw_failed_count", 0).remove("pw_lockout_until_ms")
+                .putLong("pw_lockout_rt", monotonicClock() + LOCKOUT_MS).putLong("pw_lockout_start_rt", monotonicClock())
+                .putString("pw_lockout_boot", bootMarker(ctx)).apply()
             sendAlertFromChild(
                 ctx,
                 "tamper_attempt",
@@ -498,23 +534,32 @@ object GuardEngine {
         }
     }
 
-    fun isTemporarilyUnlocked(ctx: Context): Boolean {
-        val persistedUntil = prefs(ctx).getLong("unlock_until_ms", 0L)
-        val effectiveUntil = maxOf(pauseTamperUntilMs, persistedUntil)
-        pauseTamperUntilMs = effectiveUntil
-        return System.currentTimeMillis() < effectiveUntil
+    private fun clearTemporaryUnlock(ctx: Context) {
+        prefs(ctx).edit().remove("unlock_until_ms").remove("unlock_until_rt").remove("unlock_start_rt").remove("unlock_boot").apply()
+        pauseTamperUntilMs = 0L
+    }
+    /** An unlock is valid only on the monotonic clock of the boot that granted it (it ends at reboot),
+     * and additionally only before its absolute wall-clock expiry. Moving the wall clock back cannot extend it. */
+    fun isTemporarilyUnlocked(ctx: Context): Boolean = unlockRemainingMs(ctx) > 0L
+    private fun unlockRemainingMs(ctx: Context): Long {
+        val p = prefs(ctx)
+        val until = p.getLong("unlock_until_rt", 0L)
+        if (until == 0L) { pauseTamperUntilMs = 0L; return 0L }
+        val now = monotonicClock(); val wallUntil = p.getLong("unlock_until_ms", 0L)
+        val valid = p.getString("unlock_boot", "") == bootMarker(ctx) && now >= p.getLong("unlock_start_rt", 0L) && now < until && wallClock() < wallUntil
+        if (!valid) { clearTemporaryUnlock(ctx); return 0L }
+        pauseTamperUntilMs = wallUntil
+        return minOf(until - now, wallUntil - wallClock())
     }
 
-    fun getUnlockRemainingSeconds(ctx: Context): Long {
-        val persistedUntil = prefs(ctx).getLong("unlock_until_ms", 0L)
-        val effectiveUntil = maxOf(pauseTamperUntilMs, persistedUntil)
-        return maxOf(0L, (effectiveUntil - System.currentTimeMillis()) / 1000L)
-    }
+    fun getUnlockRemainingSeconds(ctx: Context): Long = unlockRemainingMs(ctx) / 1000L
 
     fun grantTemporaryUnlock(ctx: Context, durationMs: Long) {
-        val until = System.currentTimeMillis() + durationMs
-        pauseTamperUntilMs = until
-        prefs(ctx).edit().putLong("unlock_until_ms", until).apply()
+        if (durationMs <= 0L) { clearTemporaryUnlock(ctx); return }
+        val now = monotonicClock(); val wallUntil = wallClock() + durationMs
+        pauseTamperUntilMs = wallUntil
+        prefs(ctx).edit().putLong("unlock_until_ms", wallUntil).putLong("unlock_until_rt", now + durationMs)
+            .putLong("unlock_start_rt", now).putString("unlock_boot", bootMarker(ctx)).apply()
     }
 
     fun generate15MinUnlockCode(ctx: Context): String {
@@ -522,10 +567,22 @@ object GuardEngine {
         return FamilySecurity.randomUnlockCode()
     }
 
+    /** Checks a code without using it. Production unlock paths call [redeem15MinUnlockCode]. */
     fun verify15MinUnlockCode(ctx: Context, inputCode: String): Boolean {
         val clean = inputCode.trim().uppercase(Locale.US)
-        val code = prefs(ctx).getString("synced_15m_code", "") ?: ""
-        return FamilySecurity.validCode(clean) && System.currentTimeMillis() < prefs(ctx).getLong("synced_15m_exp", 0L) && constantTimeEquals(clean, code)
+        val p = prefs(ctx)
+        val code = p.getString("synced_15m_code", "") ?: ""
+        val now = monotonicClock(); val until = p.getLong("synced_15m_rt", 0L)
+        return FamilySecurity.validCode(clean) && wallClock() < p.getLong("synced_15m_exp", 0L) &&
+            until > 0L && p.getString("synced_15m_boot", "") == bootMarker(ctx) && now >= p.getLong("synced_15m_start_rt", 0L) && now < until &&
+            constantTimeEquals(clean, code)
+    }
+    /** Unlock codes are single-use: a correct code is removed in the same step that accepts it. */
+    fun redeem15MinUnlockCode(ctx: Context, inputCode: String): Boolean = synchronized(pollLock) {
+        if (!verify15MinUnlockCode(ctx, inputCode)) return@synchronized false
+        check(prefs(ctx).edit().remove("synced_15m_code").remove("synced_15m_exp").remove("synced_15m_rt")
+            .remove("synced_15m_start_rt").remove("synced_15m_boot").commit())
+        true
     }
 
     fun push15MinUnlockCodeFromParent(ctx: Context, code: String) {
@@ -547,6 +604,28 @@ object GuardEngine {
         postEncryptedToChannel(ctx, topic, token, plain, null)
     }
 
+    /** Child only: a wall clock that moved back by more than a few minutes (beyond what the monotonic clock explains)
+     * is reported to the parent once per hour. The baseline always follows the current clock. */
+    private fun noteClockIntegrity(ctx: Context) {
+        val p = prefs(ctx); val wall = wallClock(); val now = monotonicClock(); val boot = bootMarker(ctx)
+        val lastWall = p.getLong("clock_last_wall", 0L)
+        var backBy = 0L
+        if (lastWall != 0L) {
+            val sameBoot = p.getString("clock_last_boot", "") == boot && now >= p.getLong("clock_last_rt", 0L)
+            val expected = lastWall + if (sameBoot) now - p.getLong("clock_last_rt", 0L) else 0L
+            if (wall < expected - CLOCK_BACK_TOLERANCE_MS) backBy = expected - wall
+        }
+        val editor = p.edit().putLong("clock_last_wall", wall).putLong("clock_last_rt", now).putString("clock_last_boot", boot)
+        var alert = false
+        if (backBy > 0L) {
+            val quiet = p.getString("clock_alert_boot", "") == boot && now >= p.getLong("clock_alert_rt", 0L) && now - p.getLong("clock_alert_rt", 0L) < CLOCK_ALERT_WINDOW_MS
+            if (!quiet) { editor.putLong("clock_alert_rt", now).putString("clock_alert_boot", boot); alert = true }
+        }
+        editor.apply()
+        if (alert) sendAlertFromChild(ctx, "tamper_attempt", "Clock Guard",
+            "子女手機的系統時間被往回調整約 ${backBy / 60_000L} 分鐘。這可能令此手機拒收家長的已簽署指令，請當面查看。", bypassDedupe = true)
+    }
+
     private fun recoverFreshFamily(ctx: Context) {
         val raw=prefs(ctx).getString("fresh_family_recovery_json",null) ?: return
         check(getRole(ctx)=="parent")
@@ -560,7 +639,8 @@ object GuardEngine {
             "capture_policy_id","capture_local_ack_id","capture_child_ack_id","capture_sequence","parent_master_password","parent_share_verifier",
             "parent_password_verifier","parent_command_public_key","trusted_csv","flagged_offenders_csv","child_self_handle","sent_setup_ok",
             "parent_last_child_hb_ms","parent_last_child_hb_text","parent_hb_missing_alerted","weekly_stats_json","parent_alerts_json",
-            "synced_15m_code","synced_15m_exp","unlock_until_ms"))editor.remove(key)
+            "synced_15m_code","synced_15m_exp","unlock_until_ms","synced_15m_rt","synced_15m_start_rt","synced_15m_boot",
+            "unlock_until_rt","unlock_start_rt","unlock_boot","pw_lockout_rt","pw_lockout_start_rt","pw_lockout_boot"))editor.remove(key)
         check(editor.remove("fresh_family_recovery_json").commit())
         pauseTamperUntilMs=0L;relayGeneration++;CloudRelay.disconnect()
     }
@@ -728,6 +808,8 @@ object GuardEngine {
                 CloudRelay.disconnect()
                 if (!preserveFamilyHistory) {
                     for (key in listOf("control_state_json", "last_control_ts_ms", "pending_rotation_json", "synced_15m_code", "synced_15m_exp", "unlock_until_ms",
+                        "synced_15m_rt", "synced_15m_start_rt", "synced_15m_boot", "unlock_until_rt", "unlock_start_rt", "unlock_boot",
+                        "pw_lockout_rt", "pw_lockout_start_rt", "pw_lockout_boot",
                         "capture_policy_id","capture_local_ack_id","capture_child_ack_id","capture_sequence",
                         "parent_master_password", "parent_share_verifier", "parent_password_verifier", "parent_command_public_key", "trusted_csv", "flagged_offenders_csv",
                         "child_self_handle", "pw_failed_count", "pw_lockout_until_ms", "sent_setup_ok", "next_heartbeat_at_ms", "checkpoint_logs")) editor.remove(key)
@@ -824,20 +906,49 @@ object GuardEngine {
         else -> null
     }
 
-    fun applyPairing(ctx: Context, invite: FamilySecurity.Invite): Boolean = synchronized(pollLock) {
-        if (!AppConsent.hasAccepted(ctx) || !FamilySecurity.validToken(invite.token) || !FamilySecurity.isVerifier(invite.passwordVerifier) ||
-            (invite.parentPublicKey.isNotEmpty() && !FamilySecurity.validPublicKey(invite.parentPublicKey)) ||
-            pairingBlock(ctx) != null ||
-            (isChildMode(ctx) && !isTemporarilyUnlocked(ctx))) return@synchronized false
-        setFamilyToken(ctx, invite.token)
-        // Pairing is a fresh authorization, even if the same family invite is reused.
-        grantTemporaryUnlock(ctx, 0)
-        storeChildVerifier(ctx, invite.passwordVerifier)
-        prefs(ctx).edit().putString("parent_command_public_key", invite.parentPublicKey)
-            .remove("capture_policy_id").remove("capture_local_ack_id").remove("capture_child_ack_id")
-            .remove("synced_15m_code").remove("synced_15m_exp").putBoolean("sent_setup_ok", false).apply()
-        setRole(ctx, "child"); scheduleNextRandomHeartbeat(ctx)
-        true
+    /** Test hook: runs after the re-pair notice is queued/delivered and before the old family is replaced. */
+    @Volatile internal var beforeFamilySwitch: ((Context) -> Unit)? = null
+    private fun inviteUsable(ctx: Context, invite: FamilySecurity.Invite): Boolean =
+        AppConsent.hasAccepted(ctx) && FamilySecurity.validToken(invite.token) && FamilySecurity.isVerifier(invite.passwordVerifier) &&
+            (invite.parentPublicKey.isEmpty() || FamilySecurity.validPublicKey(invite.parentPublicKey)) && pairingBlock(ctx) == null
+
+    /**
+     * Only an unconfigured phone may pair freely. A child phone may be re-paired only with the current parent password
+     * (checked against the stored verifier, with the normal lockout); a temporary unlock alone is not enough.
+     * Before the old family is replaced, a tamper alert is queued to it; with [noticeWaitMs] > 0 (background thread only)
+     * delivery is awaited for that long. Relay delivery after the switch is impossible, so a notice not yet accepted is lost.
+     */
+    fun applyPairing(ctx: Context, invite: FamilySecurity.Invite, parentPassword: String? = null, noticeWaitMs: Long = 0L): Boolean {
+        if (!inviteUsable(ctx, invite)) return false
+        if (isChildMode(ctx)) {
+            if (parentPassword.isNullOrBlank() || lockoutRemainingMs(ctx) > 0L) return false
+            val verified = verifyParentPassword(ctx, parentPassword)
+            recordPasswordAttempt(ctx, verified)
+            if (!verified) return false
+            announceRepair(ctx, noticeWaitMs)
+        }
+        return synchronized(pollLock) {
+            if (!inviteUsable(ctx, invite)) return@synchronized false
+            setFamilyToken(ctx, invite.token)
+            // Pairing is a fresh authorization, even if the same family invite is reused.
+            grantTemporaryUnlock(ctx, 0)
+            storeChildVerifier(ctx, invite.passwordVerifier)
+            prefs(ctx).edit().putString("parent_command_public_key", invite.parentPublicKey)
+                .remove("capture_policy_id").remove("capture_local_ack_id").remove("capture_child_ack_id")
+                .remove("synced_15m_code").remove("synced_15m_exp").remove("synced_15m_rt").remove("synced_15m_start_rt").remove("synced_15m_boot")
+                .putBoolean("sent_setup_ok", false).apply()
+            setRole(ctx, "child"); scheduleNextRandomHeartbeat(ctx)
+            true
+        }
+    }
+    private fun announceRepair(ctx: Context, waitMs: Long) {
+        val delivered = java.util.concurrent.CountDownLatch(1)
+        sendAlertFromChild(ctx, "tamper_attempt", "Re-pair Guard",
+            "子女手機已用家長主密碼確認，改為配對另一個家庭。若這不是你操作的，請盡快查看。", bypassDedupe = true) { _, _ -> delivered.countDown() }
+        if (waitMs > 0L && android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            try { delivered.await(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        }
+        beforeFamilySwitch?.invoke(ctx)
     }
 
     fun hasSecureParentCommands(ctx: Context): Boolean = FamilySecurity.validPublicKey(prefs(ctx).getString("parent_command_public_key", "") ?: "")
@@ -1410,10 +1521,14 @@ object GuardEngine {
             "unlock_code" -> {
                 val code = inner.optString("code")
                 val exp = inner.optLong("exp", 0L)
-                if (code.isNotEmpty() && exp > System.currentTimeMillis()) {
+                if (code.isNotEmpty() && exp > wallClock()) {
+                    // The code's life is measured on the monotonic clock (at most 15 minutes) as well as by its absolute expiry.
+                    val now = monotonicClock()
                     prefs(ctx).edit()
                         .putString("synced_15m_code", code)
                         .putLong("synced_15m_exp", exp)
+                        .putLong("synced_15m_rt", now + minOf(exp - wallClock(), UNLOCK_CODE_MS))
+                        .putLong("synced_15m_start_rt", now).putString("synced_15m_boot", bootMarker(ctx))
                         .apply()
                     addCheckpointLog(ctx, "CP4-SYNC", "Received encrypted 15-min unlock code")
                 }
@@ -2628,22 +2743,49 @@ class MainActivity : Activity() {
         if (incoming.action != Intent.ACTION_VIEW || !data.scheme.equals("igguard", true) || !data.host.equals("pair", true)) return
         val parsed = GuardEngine.parsePairingString(data.toString()) ?: return
         if (showPairingBlock()) return
-        if (GuardEngine.isChildMode(this) && !GuardEngine.isTemporarilyUnlocked(this)) {
-            GuardEngine.sendAlertFromChild(this, "tamper_attempt", "Deep-Link Guard", "Blocked unauthorized attempt to replace locked family pairing.")
-            Toast.makeText(this, "子女保護鎖定中，請先由家長解鎖。", Toast.LENGTH_LONG).show(); return
-        }
         confirmPairing(parsed)
     }
     private fun confirmPairing(parsed: FamilySecurity.Invite, onAccepted: () -> Unit = {}) {
+        if (showPairingBlock()) return
         dismissUiDialogs()
         val t = currentTheme()
-        showSheet("確認家庭配對") { _ ->
-            addView(label("只接受由家長傳送的邀請。確認後，此手機會切換為子女模式，並更換目前的家庭配對。請在兩部手機核對安全圖案。", 14f, t.textSecondary, bottomPad = 18))
+        val childRepair = GuardEngine.isChildMode(this)
+        showSheet("確認家庭配對") { dialog ->
+            addView(label(if (childRepair) "此手機已配對子女保護。更換家庭需要目前的家長主密碼，並會先通知原本的家長手機。請在兩部手機核對安全圖案。"
+                else "只接受由家長傳送的邀請。確認後，此手機會切換為子女模式，並更換目前的家庭配對。請在兩部手機核對安全圖案。", 14f, t.textSecondary, bottomPad = 18))
             if (parsed.parentPublicKey.isNotEmpty()) {
                 addView(label(FamilySecurity.safetyCode(parsed.token, parsed.passwordVerifier, parsed.parentPublicKey), 19f, t.textPrimary, true, bottomPad = 12))
                 addView(label("請由家長在家長手機查看並核對相同安全代碼，再確認配對。", 14f, t.textSecondary, bottomPad = 18))
             }
-            addView(actionButton("確認配對並切換為子女手機", t.btnPrimaryBg, t.btnPrimaryText) { if (acceptPairing(parsed)) onAccepted() })
+            var password: EditText? = null
+            val error = label("", 13f, t.warmCoral)
+            if (childRepair) {
+                password = inputBox(t, "家長主密碼", "", isPassword = true, remember = false).apply { tag = "repair_password" }
+                addView(password); addView(error)
+            }
+            lateinit var confirm: Button
+            confirm = actionButton("確認配對並切換為子女手機", t.btnPrimaryBg, t.btnPrimaryText) {
+                if (!childRepair) { if (acceptPairing(parsed)) onAccepted(); return@actionButton }
+                val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
+                if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒。"; return@actionButton }
+                val entered = password?.text?.toString().orEmpty()
+                confirm.isEnabled = false; error.text = "正在通知原本的家長手機…"
+                // Delivering the notice to the old family can take seconds: keep it off the UI thread.
+                thread {
+                    val ok = GuardEngine.applyPairing(this@MainActivity, parsed, entered, noticeWaitMs = 6_000L)
+                    runOnUiThread {
+                        if (isDestroyed) return@runOnUiThread
+                        if (ok) { dismissUiDialogs(); finishPairing(); onAccepted() }
+                        else {
+                            confirm.isEnabled = true
+                            val locked = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
+                            error.text = if (locked > 0) "輸入已鎖定，請等 $locked 秒。" else "家長主密碼不正確。"
+                            password?.error = "請重新輸入"
+                        }
+                    }
+                }
+            }
+            addView(confirm)
         }
     }
     /** Plain explanation when a phone that holds parent authority is offered a pairing link. */
@@ -2659,13 +2801,16 @@ class MainActivity : Activity() {
     private fun acceptPairing(invite: FamilySecurity.Invite): Boolean {
         if (showPairingBlock()) return false
         if (!GuardEngine.applyPairing(this, invite)) {
-            Toast.makeText(this, "保護已上鎖，請先由家長解鎖再配對。", Toast.LENGTH_LONG).show(); return false
+            Toast.makeText(this, "未能完成配對，請確認邀請有效並已同意使用條款。", Toast.LENGTH_LONG).show(); return false
         }
-        dismissUiDialogs(); section = "permissions"
+        dismissUiDialogs(); finishPairing()
+        return true
+    }
+    private fun finishPairing() {
+        section = "permissions"
         if (activityVisible) syncRoleServices()
         renderUi(animate = true)
         Toast.makeText(this, "已完成家庭配對。", Toast.LENGTH_LONG).show()
-        return true
     }
     override fun onResume() {
         super.onResume()
@@ -3519,7 +3664,7 @@ class MainActivity : Activity() {
             if (remaining > 0) { error.text = "請等 $remaining 秒後再試。"; return@actionButton }
             val entered = input.text.toString().trim()
             when {
-                GuardEngine.verify15MinUnlockCode(this, entered) -> {
+                GuardEngine.redeem15MinUnlockCode(this, entered) -> {
                     GuardEngine.recordPasswordAttempt(this, true); GuardEngine.grantTemporaryUnlock(this, 15 * 60_000L)
                     input.setText("")
                     GuardEngine.sendAlertFromChild(this, "unlock_used", "@${GuardEngine.getChildSelfHandle(this).ifEmpty { "child" }}", "子女手機已使用 6 位臨時解鎖碼解鎖 15 分鐘", bypassDedupe = true)
