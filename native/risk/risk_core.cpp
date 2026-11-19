@@ -86,11 +86,16 @@ risk_model* risk_load(const char* gguf_path, int n_threads, char* err, size_t er
 
 int risk_score_ex(risk_model* m, const char* prompt_utf8, float out_logits[RISK_N_ANSWERS], int* out_ids,
                   int out_ids_cap, int* out_n_tokens, char* err, size_t err_len) {
-    if (m == nullptr || prompt_utf8 == nullptr || out_logits == nullptr) {
+    return risk_score_n(m, prompt_utf8, prompt_utf8 ? (int)std::strlen(prompt_utf8) : 0, out_logits, out_ids,
+                        out_ids_cap, out_n_tokens, err, err_len);
+}
+
+int risk_score_n(risk_model* m, const char* prompt_utf8, int text_len, float out_logits[RISK_N_ANSWERS],
+                 int* out_ids, int out_ids_cap, int* out_n_tokens, char* err, size_t err_len) {
+    if (m == nullptr || prompt_utf8 == nullptr || out_logits == nullptr || text_len < 0) {
         set_err(err, err_len, "bad argument");
         return RISK_ERR_FAILED;
     }
-    const int text_len = (int)std::strlen(prompt_utf8);
 
     // Size query: a negative return is minus the token count that would be produced.
     int32_t need = llama_tokenize(m->vocab, prompt_utf8, text_len, nullptr, 0, false, true);

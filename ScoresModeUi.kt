@@ -125,7 +125,7 @@ internal object ScoresUi {
             "子女手機上的檔案不是指定的模型檔，所以不會被使用。只接受完全相同的檔案：$MODEL_FILE，$MODEL_SIZE_TEXT。",
             "下一步：在子女手機移除該檔案，再匯入正確的模型檔。")
         ScoresPage.MODEL_UNSUPPORTED -> StateCopy("子女手機不支援這個功能",
-            "這個模式需要約 8 GB 記憶體的手機。子女手機的記憶體不足，不能在手機上分析。",
+            "這個模式需要約 8 GB 記憶體和 64 位元 ARM 處理器（arm64）的手機。子女手機的記憶體不足或處理器不支援，不能在手機上分析。",
             "下一步：如不打算使用，可以到「家庭」頁關閉僅分數模式。")
         ScoresPage.PAUSED -> StateCopy("子女已暫停分析",
             "子女在 ${m.state?.pausedAt?.let(::time) ?: "較早前"} 暫停了分析。暫停期間不會有新的分數；下面只顯示暫停前收到的分數。子女可以隨時恢復，不需要你操作。",
@@ -156,7 +156,7 @@ internal object ScoresUi {
     fun canEnable(state: ScoresModeState?) = state?.model == "valid"
     fun enableBlockedWhy(state: ScoresModeState?): String = when {
         state == null -> "還沒有收到子女手機的回報，暫時不能開啟。"
-        state.model == "unsupported_device" -> "子女手機的記憶體不足，不支援這個模式。"
+        state.model == "unsupported_device" -> "子女手機的記憶體不足或處理器不支援，不能使用這個模式。"
         state.model == "mismatch" -> "子女手機上的模型檔不正確。請先在子女手機匯入模型檔 $MODEL_FILE。"
         else -> "請先在子女手機匯入模型檔 $MODEL_FILE，子女手機回報模型有效後才能開啟。"
     }
@@ -219,7 +219,7 @@ internal object ScoresChildCopy {
         StatusState.PAUSED -> "已暫停：不會儲存或分析新的訊息，家長已被告知。\nPaused: nothing new is stored or analysed. Your parent is told."
         StatusState.WITHDRAWN -> "你已撤回同意。這部手機上儲存的訊息已刪除，家長已被告知。\nYou withdrew. The messages stored on this phone were deleted and your parent is told."
         StatusState.MODEL_MISSING -> "需要匯入模型檔才會開始分析。請到「權限」頁匯入。\nImport the model file in Permissions before analysis can start."
-        StatusState.NOT_AVAILABLE -> "這部手機記憶體不足，不能使用這個功能。\nThis phone does not have enough memory for this feature."
+        StatusState.NOT_AVAILABLE -> "這部手機的記憶體不足或處理器不支援，不能使用這個功能。\nThis phone does not have enough memory or the right processor for this feature."
         StatusState.NOT_RUNNING -> "目前沒有運行，因為擷取已停止或尚未完成設定。\nNot running because capture is stopped or setup is incomplete."
         StatusState.ON -> null
     }
@@ -250,7 +250,7 @@ internal object ScoresChildCopy {
     const val REMOVE_TITLE = "移除模型？ / Remove the model?"
     const val REMOVE_BODY = "分析會停止，這部手機上為分析儲存的訊息會刪除。之後可以再匯入。\nAnalysis stops and the messages stored for it are deleted. You can import the file again later."
     const val UNSUPPORTED_TITLE = "這部手機不能使用 AI 風險分析\nNot available on this phone"
-    const val UNSUPPORTED_BODY = "這個功能需要約 8 GB 記憶體，這部手機不夠。其他保護不受影響。\nThis feature needs about 8 GB of memory and this phone has less. Other protection is unaffected."
+    const val UNSUPPORTED_BODY = "這個功能需要約 8 GB 記憶體和 64 位元 ARM 處理器（arm64），這部手機不符合。其他保護不受影響。\nThis feature needs about 8 GB of memory and a 64-bit ARM (arm64) processor, and this phone does not meet that. Other protection is unaffected."
     const val INSTALLED = "模型已安裝（大小與簽名已核對）\nModel installed (size and signature checked)"
     const val MISMATCH = "模型檔不正確，不會被使用。請移除後再匯入。\nThe model file is not correct and will not be used. Remove it and import again."
     const val OK_DISMISS = "知道了 / OK"

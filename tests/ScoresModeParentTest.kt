@@ -118,8 +118,9 @@ class ScoresModeParentTest {
         deliver(report(listOf(row("alice", 10.0, now - 5000)), sentAt = now - 4000))
         deliver(report(listOf(row("Alice", 30.0, now - 3000)), sentAt = now - 2000, state = state("mismatch")))
         assertEquals(30.0, scores().single().score!!, 0.0001); assertEquals("mismatch", childState()!!.model)
-        deliver(report(listOf(row("alice", 99.0, now - 4500)), sentAt = now - 3500, state = state("missing")))   // an old report arriving late
-        assertEquals(30.0, scores().single().score!!, 0.0001); assertEquals("mismatch", childState()!!.model)
+        deliver(report(listOf(row("alice", 99.0, now - 4500)), sentAt = now - 3500, state = state("missing")))   // an older report arriving late
+        assertEquals(30.0, scores().single().score!!, 0.0001)   // scores keep the newest scored_at
+        assertEquals("missing", childState()!!.model)           // state follows arrival order
     }
     @Test fun firstReachingFiftyNotifiesOncePerFourteenDaysWithoutNamesOrScores() {
         val now = System.currentTimeMillis()
@@ -211,6 +212,46 @@ class ScoresModeParentTest {
         val withdrawn = state().put("consent", "withdrawn")
         deliver(report(emptyList(), sentAt = System.currentTimeMillis() + 10, state = withdrawn))
         assertEquals(1, scores().size); assertEquals("withdrawn", childState()!!.consent)
+    }
+    @Test fun aReplayedReportChangesNothing() {
+        val now = System.currentTimeMillis(); var notified = 0
+        val first = report(listOf(row("alice", 80.0, now - 2000)), sentAt = now - 1000)
+        deliver(first, { notified++ }); assertEquals(1, notified)
+        FamilyEvidence(ctx).use { it.writableDatabase.execSQL("UPDATE risk_state SET received_at=?", arrayOf(now - 73 * 3_600_000L)) }
+        assertTrue(childState()!!.stale)
+        deliver(JSONObject(first.toString()), { notified++ })      // the same report again
+        assertTrue("a replay must not clear staleness", childState()!!.stale); assertEquals(1, notified)
+        // ...nor bring back rows the parent deleted.
+        FamilyEvidence(ctx).use { it.deleteArchive(scope) }
+        deliver(JSONObject(first.toString()), { notified++ })
+        assertTrue(scores().isEmpty()); assertNull(childState()); assertEquals(1, notified)
+        deliver(report(listOf(row("alice", 80.0, now - 500)), sentAt = now), { notified++ }); assertEquals(1, scores().size)
+    }
+    @Test fun onlyTheLast64ReportIdsAreRemembered() {
+        val first = report(); deliver(first)
+        repeat(64) { deliver(report()) }
+        FamilyEvidence(ctx).use { db -> db.writableDatabase.execSQL("DELETE FROM risk_scores"); db.writableDatabase.execSQL("DELETE FROM risk_state") }
+        deliver(JSONObject(first.toString()))   // forgotten: stored again
+        assertNotNull(childState())
+        assertEquals(64, count("risk_replay"))
+    }
+    @Test fun aChildClockAheadDoesNotBlockLaterStates() {
+        val now = System.currentTimeMillis()
+        deliver(report(sentAt = now + 20 * 3_600_000L, state = state("valid")))
+        val paused = state("valid").put("paused", true).put("paused_at_ms", now)
+        deliver(report(sentAt = now, state = paused))
+        assertTrue(childState()!!.paused)
+        deliver(report(sentAt = now + 1, state = state("valid").put("consent", "withdrawn")))
+        assertEquals("withdrawn", childState()!!.consent)
+        assertTrue(childState()!!.sentAt <= System.currentTimeMillis())   // the far-future clock is clamped for display
+    }
+    @Test fun enablingTwiceResendsTheSamePolicyIdAndDisablingThenEnablingMakesANewOne() {
+        GuardEngine.relayPublicKey(ctx)
+        deliver(report(state = state("valid")))
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)); val id = GuardEngine.scoresModePolicy(ctx)!!.policyId
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)); assertEquals(id, GuardEngine.scoresModePolicy(ctx)!!.policyId)
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, false)); assertNotEquals(id, GuardEngine.scoresModePolicy(ctx)!!.policyId)
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)); assertNotEquals(id, GuardEngine.scoresModePolicy(ctx)!!.policyId)
     }
     @Test fun schemaIsVersionSeven() {
         FamilyEvidence(ctx).use { assertEquals(7, it.readableDatabase.version) }

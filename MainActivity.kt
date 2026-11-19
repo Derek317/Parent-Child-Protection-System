@@ -363,6 +363,7 @@ object GuardEngine {
             text = statusSummary,
             bypassDedupe = true
         )
+        RiskLocal.dailyReport(ctx)
     }
 
     fun recordChildHeartbeatOnParent(ctx: Context, summary: String, sentAt: Long) {
@@ -679,7 +680,7 @@ object GuardEngine {
         val notification = Notification.Builder(ctx, "child_disclosure")
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
             .setContentTitle(if (!collectionAllowed(ctx)) "IG Guard · 擷取及傳送已停止" else if (active) "IG Guard · 子女監察模式" else "IG Guard · 子女模式等待設定")
-            .setContentText(if(!collectionAllowed(ctx))"不擷取新內容，也不傳送待傳記錄。" else if(fullCaptureEnabled(ctx))captureScopeSummary(ctx) else "IG 警報會加密傳送給已配對的家長。點按查看權限及狀態。")
+            .setContentText(if(!collectionAllowed(ctx))"不擷取新內容，也不傳送待傳記錄。" else RiskLocal.disclosure(ctx,if(fullCaptureEnabled(ctx))captureScopeSummary(ctx) else "IG 警報會加密傳送給已配對的家長。點按查看權限及狀態。"))
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
         try { manager.notify(7001, notification) } catch (_: SecurityException) { /* Permission changed while posting. */ }
     }
@@ -1146,15 +1147,15 @@ object GuardEngine {
     /** Runs [block] while holding the session lock, so a state change cannot interleave with a capture or a relay line. */
     internal fun <T> withSessionLock(block: () -> T): T = synchronized(pollLock) { block() }
 
-    /** Queues one control-wrapped scores report for the parent. False if it could not be queued. */
-    internal fun queueScoresReport(ctx: Context, payload: JSONObject): Boolean {
-        if (!isChildMode(ctx)) return false
+    /** Queues one control-wrapped scores report for the parent. Returns its command id, or null if it could not be queued. */
+    internal fun queueScoresReport(ctx: Context, payload: JSONObject): String? {
+        if (!isChildMode(ctx)) return null
         val token = getOrCreateFamilyToken(ctx);val topic = getChannelTopicForToken(token)
         val id = UUID.randomUUID().toString()
         var failed = false;var returned = false
         postEncryptedToChannel(ctx, topic, token, JSONObject(payload.toString()).put("command_id", id).toString(), { ok, _ -> if (!returned && !ok) failed = true })
         returned = true
-        return !failed || FamilyEvidence(ctx).use { it.hasQueuedEvent(topic, "control:$id") }
+        return if (!failed || FamilyEvidence(ctx).use { it.hasQueuedEvent(topic, "control:$id") }) id else null
     }
 
     fun scoresModePolicy(ctx: Context): ScoresModePolicy? = RiskLocal.parentPolicy(ctx)
@@ -1166,8 +1167,11 @@ object GuardEngine {
     fun sendScoresModePolicy(ctx: Context, enabled: Boolean): Boolean = synchronized(pollLock) {
         check(isParentMode(ctx))
         val token = getOrCreateFamilyToken(ctx);val topic = getChannelTopicForToken(token)
-        if (enabled && FamilyEvidence(ctx).use { it.scoresModeState(topic) }?.model != "valid") return@synchronized false
-        val id = UUID.randomUUID().toString();val now = System.currentTimeMillis()
+        val current = RiskLocal.parentPolicy(ctx)
+        // Enabling again while already enabled resends the same policy id: it must not make the child consent again.
+        val resend = enabled && current?.enabled == true
+        if (enabled && !resend && FamilyEvidence(ctx).use { it.scoresModeState(topic) }?.model != "valid") return@synchronized false
+        val id = if (resend) current!!.policyId else UUID.randomUUID().toString();val now = System.currentTimeMillis()
         if (!RiskLocal.saveParentPolicy(ctx, id, enabled, now)) return@synchronized false
         val payload = JSONObject().put("type", "scores_mode_policy").put("policy_id", id).put("enabled", enabled).put("ts_ms", now)
         postEncryptedToChannel(ctx, topic, token, payload.toString(), null)
@@ -1193,7 +1197,12 @@ object GuardEngine {
                 val wires = frames.mapIndexed { index,frame -> "${payload.getString("event_id")}:$index" to encryptPayload(token,frame.toString()) }
                 val queued=synchronized(pollLock) {
                     if (!isChildMode(ctx) || getOrCreateFamilyToken(ctx) != token || captureRelaySession(ctx)!=queuedSession) false
-                    else { FamilyEvidence(ctx).use { it.enqueueBatch(topic,wires,waitForReceipt=receiptRequested) };true }
+                    else {
+                        // Decided under the same lock as accept(): an alert built just before the child agreed loses its text here.
+                        val outgoing=if(payload.optString("text").isNotEmpty() && RiskLocal.scrubsText(ctx,payload.optString("reason")))
+                            AlertFrames.split(payload.put("text","")).mapIndexed { index,frame -> "${payload.getString("event_id")}:$index" to encryptPayload(token,frame.toString()) } else wires
+                        FamilyEvidence(ctx).use { it.enqueueBatch(topic,outgoing,waitForReceipt=receiptRequested) };true
+                    }
                 }
                 if(!queued){completeAlertCallback(onComplete,false,"家庭配對已變更，原傳送已停止");return}
                 if(onComplete!=null)deliveryCallbacks[topic to payload.getString("event_id")] = DeliveryCallback(queuedSession) { success,message ->

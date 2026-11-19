@@ -449,6 +449,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("CREATE INDEX IF NOT EXISTS risk_results_thread ON risk_results(scope,thread_index,scored_at)")
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_unknown(scope TEXT NOT NULL,thread_index TEXT NOT NULL,seen_at INTEGER NOT NULL,PRIMARY KEY(scope,thread_index))")
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_scores(scope TEXT NOT NULL,label_index TEXT NOT NULL,label TEXT NOT NULL,result TEXT NOT NULL,scored_at INTEGER NOT NULL,first_reached_50 INTEGER,PRIMARY KEY(scope,label_index))")
+        // Content-free replay guard: the last 64 report ids per scope survive deleteArchive, like the seen tombstones.
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_replay(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,command_id TEXT NOT NULL,UNIQUE(scope,command_id))")
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_state(scope TEXT PRIMARY KEY,policy_id TEXT,model TEXT NOT NULL,consent TEXT NOT NULL,paused INTEGER NOT NULL,paused_at INTEGER,last_run INTEGER,scored_count INTEGER NOT NULL,unknown_threads INTEGER NOT NULL,sent_at INTEGER NOT NULL,received_at INTEGER NOT NULL)")
     }
     private fun scoreLabelKey(scope:String,label:String):String = index(scope,"score_label",label.trim().removePrefix("@").lowercase(Locale.ROOT))
@@ -498,9 +500,9 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         buildList{while(c.moveToNext())add(c.getString(0) to c.getLong(1))}
     }
     /** Child: the newest [limit] messages of a thread, oldest first. */
-    internal fun riskThreadMessages(scope:String,thread:String,limit:Int=RiskModelSpec.WINDOW):List<RiskMessage> = readableDatabase.rawQuery(
-        "SELECT id,direction,body FROM risk_store WHERE scope=? AND thread_index=? ORDER BY sort_stamp DESC,sort_order DESC,id DESC LIMIT ?",arrayOf(scope,thread,limit.toString())).use { c ->
-        buildList{while(c.moveToNext())add(RiskMessage(if(c.getString(1)=="outgoing")"child" else "other",open(scope,"risk_store",c.getString(0),"body",c.getString(2))))}
+    internal fun riskThreadMessages(scope:String,thread:String,limit:Int=RiskModelSpec.WINDOW,now:Long=System.currentTimeMillis()):List<RiskMessage> = readableDatabase.rawQuery(
+        "SELECT id,direction,body FROM risk_store WHERE scope=? AND thread_index=? AND stamp>=? ORDER BY sort_stamp DESC,sort_order DESC,id DESC LIMIT ?",arrayOf(scope,thread,(now-RiskLimits.DAYS*DAY).toString(),limit.toString())).use { c ->
+        buildList{while(c.moveToNext())add(RiskMessage(if(c.getString(1)=="outgoing")"child" else "other",RiskMessages.sanitize(open(scope,"risk_store",c.getString(0),"body",c.getString(2)))))}
     }.asReversed()
     /** Child: records one scoring result. False (nothing written) if the thread's messages are gone, e.g. after a wipe. */
     fun saveRiskResult(scope:String,thread:String,seq:Long,score:Double?,reason:String?,now:Long):Boolean {
@@ -537,6 +539,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             }
         }.sortedBy{it.scoredAt}
     }
+    /** Child: forgets what was sent, so the next report carries every row again. */
+    internal fun resetRiskSent(scope:String) { writableDatabase.execSQL("UPDATE risk_threads SET sent_sig='' WHERE scope=?",arrayOf(scope)) }
     internal fun markRiskSent(scope:String,rows:List<RiskReportRow>) {
         val db=writableDatabase;db.beginTransaction()
         try{for(r in rows)db.execSQL("UPDATE risk_threads SET sent_sig=? WHERE scope=? AND thread_index=?",arrayOf(r.signature(),scope,r.thread));db.setTransactionSuccessful()}finally{db.endTransaction()}
@@ -551,6 +555,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     internal fun storeScoresReport(scope:String,report:ParsedScoresReport,receivedAt:Long):Int {
         val db=writableDatabase;db.beginTransaction()
         try {
+            // A report id already stored is a replay (relay redelivery or a stale queued copy): change nothing.
+            val fresh=db.insertWithOnConflict("risk_replay",null,ContentValues().apply{put("scope",scope);put("command_id",report.commandId)},SQLiteDatabase.CONFLICT_IGNORE)!=-1L
+            if(!fresh){db.setTransactionSuccessful();return 0}
+            db.execSQL("DELETE FROM risk_replay WHERE scope=? AND seq NOT IN (SELECT seq FROM risk_replay WHERE scope=? ORDER BY seq DESC LIMIT 64)",arrayOf(scope,scope))
             var reached=0
             for(row in report.conversations) {
                 val key=scoreLabelKey(scope,row.label)
@@ -565,13 +573,13 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             // A bounded table: an authenticated but misbehaving child cannot grow the parent database without limit.
             db.execSQL("DELETE FROM risk_scores WHERE scope=? AND label_index NOT IN (SELECT label_index FROM risk_scores WHERE scope=? ORDER BY scored_at DESC LIMIT 2000)",arrayOf(scope,scope))
             val s=report.state
-            val previous=db.rawQuery("SELECT sent_at FROM risk_state WHERE scope=?",arrayOf(scope)).use{if(it.moveToFirst())it.getLong(0) else -1L}
-            if(report.sentAt>=previous)db.insertWithOnConflict("risk_state",null,ContentValues().apply {
+            // State follows arrival order; the child's clock is only kept (clamped) for display.
+            db.insertWithOnConflict("risk_state",null,ContentValues().apply {
                 put("scope",scope);if(s.policyId!=null)put("policy_id",s.policyId) else putNull("policy_id")
                 put("model",s.model);put("consent",s.consent);put("paused",if(s.paused)1 else 0)
                 if(s.pausedAt!=null)put("paused_at",s.pausedAt) else putNull("paused_at")
                 if(s.lastRun!=null)put("last_run",s.lastRun) else putNull("last_run")
-                put("scored_count",s.scoredCount);put("unknown_threads",s.unknownThreads);put("sent_at",report.sentAt);put("received_at",receivedAt)
+                put("scored_count",s.scoredCount);put("unknown_threads",s.unknownThreads);put("sent_at",minOf(report.sentAt,receivedAt));put("received_at",receivedAt)
             },SQLiteDatabase.CONFLICT_REPLACE)
             db.setTransactionSuccessful();return reached
         }finally{db.endTransaction()}
@@ -737,6 +745,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 protectScore(new,label,result).apply{put("scope",new)}
             }
             db.execSQL("UPDATE OR IGNORE risk_state SET scope=? WHERE scope=?",arrayOf(new,old))
+            db.execSQL("UPDATE OR IGNORE risk_replay SET scope=? WHERE scope=?",arrayOf(new,old))
+            db.delete("risk_replay","scope=?",arrayOf(old))
             for(table in riskParentTables)db.delete(table,"scope=?",arrayOf(old))
             for(table in listOf("seen","capture_seen")){
                 db.execSQL("UPDATE OR IGNORE $table SET scope=? WHERE scope=?",arrayOf(new,old))

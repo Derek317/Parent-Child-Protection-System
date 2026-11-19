@@ -28,6 +28,6 @@ class Checks(unittest.TestCase):
   self.assertEqual(len(palettes),2)
   for raw in palettes:
    p=dict(re.findall(r'(\w+) = "(#[0-9A-Fa-f]{6})"',raw))
-   for a,b in [('textPrimary','bgCard'),('textSecondary','bgCard'),('textMuted','bgInput'),('btnPrimaryText','btnPrimaryBg'),('btnSecondaryText','btnSecondaryBg'),('warmHoney','bgCard'),('warmCoral','bgCard'),('warningButtonText','warningButtonBg')]:
+   for a,b in [('textPrimary','bgCard'),('textSecondary','bgCard'),('textMuted','bgInput'),('btnPrimaryText','btnPrimaryBg'),('btnSecondaryText','btnSecondaryBg'),('accentSeafoam','bgCard'),('accentSeafoam','bgHero'),('warmHoney','bgCard'),('warmHoney','bgHero'),('warmCoral','bgHero'),('warmCoral','bgCard'),('warningButtonText','warningButtonBg')]:
     self.assertGreaterEqual(contrast(p[a],p[b]),4.5,(a,b,p[a],p[b]))
 if __name__=='__main__': unittest.main()

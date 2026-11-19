@@ -8,6 +8,7 @@ import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -79,13 +80,20 @@ internal object RiskModelStore {
         ctx.getSystemService(ActivityManager::class.java)?.getMemoryInfo(info)
         info.totalMem
     }
+    /** Test hook for the CPU gate: the native library is built for arm64-v8a only. */
+    @Volatile internal var abiProbe: () -> Boolean = { Build.SUPPORTED_ABIS.contains("arm64-v8a") }
+    private const val NATIVE_UNAVAILABLE = "risk_native_unavailable_for"
     /** Phones sold as 8 GB report slightly less than 8 GiB. */
     const val MIN_MEMORY_BYTES = 7L * 1024 * 1024 * 1024
     private const val SPACE_MARGIN = 32L * 1024 * 1024
     private const val VERIFY_FAILED = "risk_model_verify_failed"
 
     private fun prefs(ctx: Context) = LocalVault.preferences(ctx)
-    fun supported(ctx: Context): Boolean = memoryProbe(ctx.applicationContext) >= MIN_MEMORY_BYTES
+    /** Enough memory, an arm64 CPU, and a native library that has not failed to load in this app version. */
+    fun supported(ctx: Context): Boolean = abiProbe() && memoryProbe(ctx.applicationContext) >= MIN_MEMORY_BYTES &&
+        prefs(ctx).getString(NATIVE_UNAVAILABLE, "") != BuildConfig.VERSION_NAME
+    /** The library is missing or cannot load on this phone: report unsupported_device until the app is updated. */
+    fun markNativeUnavailable(ctx: Context) { prefs(ctx).edit().putString(NATIVE_UNAVAILABLE, BuildConfig.VERSION_NAME).commit() }
     fun directory(ctx: Context) = File(ctx.applicationContext.filesDir, "risk")
     fun file(ctx: Context) = File(directory(ctx), RiskModelSpec.FILE_NAME)
 
@@ -183,6 +191,8 @@ internal object RiskLocal {
     private const val LAST_SCORED = "scores_last_scored"
     private const val LAST_REVIEW = "scores_last_review"
     private const val BASELINE = "scores_baseline_ms"
+    private const val WIPE_PENDING = "scores_wipe_pending"
+    private const val LAST_FAILURE = "scores_last_failure_ms"
     private const val PARENT_POLICY_ID = "scores_parent_policy_id"
     private const val PARENT_POLICY_ENABLED = "scores_parent_policy_enabled"
     private const val PARENT_POLICY_AT = "scores_parent_policy_at_ms"
@@ -197,13 +207,20 @@ internal object RiskLocal {
     fun pausedAt(ctx: Context): Long = prefs(ctx).getLong(PAUSED_AT, 0L)
     fun paused(ctx: Context): Boolean = pausedAt(ctx) > 0
 
-    /** none | accepted | withdrawn, for the current policy. An unreadable receipt blocks (reads as withdrawn), never as none. */
+    private fun receipt(ctx: Context): JSONObject? {
+        val sealed = receiptPrefs(ctx).getString("receipt", null) ?: return null
+        return try { JSONObject(LocalVault.open(ctx.applicationContext, RECEIPT_PURPOSE, sealed)) } catch (_: Exception) { null }
+    }
+
+    /**
+     * none | accepted | withdrawn. A receipt, once written, outlives new policy ids: the child stays content-free
+     * (accepted or withdrawn) until a policy with enabled=false arrives and clears it. An unreadable receipt blocks
+     * (reads as withdrawn), never as none.
+     */
     fun consentState(ctx: Context): String {
-        val sealed = receiptPrefs(ctx).getString("receipt", null) ?: return "none"
-        return try {
-            val json = JSONObject(LocalVault.open(ctx.applicationContext, RECEIPT_PURPOSE, sealed))
-            if (json.getString("policy_id") != policyId(ctx)) "none" else if (json.optLong("withdrawn_at") > 0) "withdrawn" else "accepted"
-        } catch (_: Exception) { "withdrawn" }
+        if (!receiptPrefs(ctx).contains("receipt")) return "none"
+        val json = receipt(ctx) ?: return "withdrawn"
+        return if (json.optLong("withdrawn_at") > 0) "withdrawn" else "accepted"
     }
 
     fun contentFree(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && policyEnabled(ctx) && consentState(ctx) != "none"
@@ -226,7 +243,7 @@ internal object RiskLocal {
             val kind = r.optString("conversation_kind", "unknown")
             val direction = r.optString("direction")
             if (kind == "direct" && direction in setOf("incoming", "outgoing")) db.storeRiskMessage(scope, r.getString("event_id"), r.getString("conversation_key"),
-                r.optString("conversation_label"), direction, r.getString("text"), r.optLong("ts_ms"),
+                r.optString("conversation_label"), direction, r.getString("text").replace("\u0000", ""), r.optLong("ts_ms"),
                 if (r.has("screen_anchor_ms")) r.getLong("screen_anchor_ms") else r.optLong("ts_ms"),
                 if (r.has("screen_order")) r.getLong("screen_order") else r.optLong("capture_order"), now)
             else if (kind == "unknown") db.noteRiskUnknown(scope, r.getString("conversation_key"), now)
@@ -241,11 +258,17 @@ internal object RiskLocal {
     }
 
     // ---------------- wipes ----------------
-    /** Empties the message store, results, unsent scores and unknown-thread counters. */
+    /**
+     * Empties the message store, results, unsent scores and unknown-thread counters, and deletes any scores report
+     * still waiting in the outbox. A failed wipe leaves a persisted flag that the daily maintenance retries.
+     */
     fun wipeData(ctx: Context) {
-        // A failed wipe is retried by the daily maintenance, which wipes whenever the mode is not active.
-        try { FamilyEvidence(ctx).use { it.wipeRisk() } } catch (e: Exception) { Log.w("IGGuard", "Scoring store wipe failed: ${e.javaClass.simpleName}") }
-        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).commit()
+        prefs(ctx).edit().putBoolean(WIPE_PENDING, true).commit()
+        try {
+            RiskReporter.purgeQueued(ctx, GuardEngine.getChannelTopic(ctx))
+            FamilyEvidence(ctx).use { it.wipeRisk() }
+            prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(WIPE_PENDING).commit()
+        } catch (e: Exception) { Log.w("IGGuard", "Scoring store wipe failed: ${e.javaClass.simpleName}") }
     }
 
     /** Leaving the child role, a new family, or a remote reset: data plus all mode state and the consent receipt. */
@@ -259,7 +282,7 @@ internal object RiskLocal {
 
     /** Daily safety net: the store survives only while the mode is on and the child has agreed. */
     fun maintain(ctx: Context) {
-        if (!GuardEngine.isChildMode(ctx) || !policyEnabled(ctx) || consentState(ctx) != "accepted") wipeData(ctx)
+        if (prefs(ctx).getBoolean(WIPE_PENDING, false) || !GuardEngine.isChildMode(ctx) || !policyEnabled(ctx) || consentState(ctx) != "accepted") wipeData(ctx)
     }
 
     // ---------------- child actions ----------------
@@ -268,19 +291,42 @@ internal object RiskLocal {
         RiskModelStore.importModel(ctx, input, onProgress).also { if (it == RiskImportResult.OK) changed(ctx) }
     fun removeModel(ctx: Context) { RiskModelStore.remove(ctx); changed(ctx) }
 
-    fun pendingPolicy(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && policyEnabled(ctx) && consentState(ctx) == "none"
+    /**
+     * The consent page is due: the policy is on and the child has not agreed to it, either never, or withdrew and the
+     * parent has since switched the mode on again (a new policy id). Meanwhile alerts stay content-free after a withdrawal.
+     */
+    fun pendingPolicy(ctx: Context): Boolean {
+        if (!AppConsent.hasAccepted(ctx) || !GuardEngine.isChildMode(ctx) || !policyEnabled(ctx)) return false
+        return when (consentState(ctx)) {
+            "none" -> true
+            "withdrawn" -> receipt(ctx)?.let { it.optString("policy_id") != policyId(ctx) } ?: false
+            else -> false
+        }
+    }
 
-    /** A signed parent policy arrived (called from processIncomingRelayLine). Any change wipes the store and needs fresh consent. */
+    /**
+     * A signed parent policy arrived (called from processIncomingRelayLine). Only a policy with enabled=false ends
+     * content-free mode: it deletes the store, the pause and the consent receipt. A new id while enabled keeps an
+     * accepted consent (no gap); after a withdrawal it makes [pendingPolicy] true again.
+     */
     fun receivePolicy(ctx: Context, id: String, enabled: Boolean) {
         if (policyId(ctx) == id && prefs(ctx).getBoolean(POLICY_ENABLED, false) == enabled) return
-        prefs(ctx).edit().putString(POLICY_ID, id).putBoolean(POLICY_ENABLED, enabled).remove(PAUSED_AT).commit()
-        wipeData(ctx)
+        val editor = prefs(ctx).edit().putString(POLICY_ID, id).putBoolean(POLICY_ENABLED, enabled)
+        if (!enabled) {
+            editor.remove(PAUSED_AT).commit()
+            receiptPrefs(ctx).edit().clear().commit()
+            wipeData(ctx)
+        } else editor.commit()
         changed(ctx)
     }
 
-    /** The child agrees. Queued records that carry message text are discarded first so none reaches the parent. */
+    /**
+     * The child agrees. Queued records that carry message text are discarded so none reaches the parent.
+     * Runs under the session lock on the caller's thread: a few small SQLite statements, one sealed preference and a
+     * locally queued report (no network I/O), so it is short enough for a button handler; the return value is synchronous.
+     */
     fun accept(ctx: Context): Boolean = GuardEngine.withSessionLock {
-        if (!AppConsent.hasAccepted(ctx) || !GuardEngine.isChildMode(ctx) || !policyEnabled(ctx) || consentState(ctx) != "none") return@withSessionLock false
+        if (!pendingPolicy(ctx)) return@withSessionLock false
         val now = System.currentTimeMillis()
         val receipt = JSONObject().put("version", WORDING_VERSION).put("policy_id", policyId(ctx)).put("accepted_at", now).put("withdrawn_at", 0L)
         LocalVault.preferences(ctx)
@@ -341,12 +387,40 @@ internal object RiskLocal {
         prefs(ctx).edit().putLong(LAST_RUN, now).putInt(LAST_SCORED, scored).commit()
     }
     fun scoredCount(ctx: Context): Int = prefs(ctx).getInt(LAST_SCORED, 0)
+    /** A run that could not start or finish: the fallback job waits at least six hours before trying again. */
+    fun recordFailure(ctx: Context, now: Long = System.currentTimeMillis()) { prefs(ctx).edit().putLong(LAST_FAILURE, now).commit() }
+    fun lastFailure(ctx: Context): Long = prefs(ctx).getLong(LAST_FAILURE, 0L)
 
     /** A state change the parent must hear about, and the job schedule may need to follow. Never throws. */
     fun changed(ctx: Context) {
         try { RiskScoringSchedule.sync(ctx) } catch (_: RuntimeException) { Log.w("IGGuard", "Scoring job could not be scheduled") }
         try { RiskReporter.send(ctx) } catch (e: Exception) { Log.w("IGGuard", "Scores report failed: ${e.javaClass.simpleName}") }
+        try { GuardEngine.refreshMonitoringDisclosure(ctx) } catch (_: RuntimeException) {}
         try { ctx.sendBroadcast(Intent(GuardEngine.ACTION_UI_REFRESH).setPackage(ctx.packageName)) } catch (_: RuntimeException) {}
+    }
+
+    /** Called from the child's heartbeat: a full report at least once a day while the mode is on, which also keeps the parent's view fresh. */
+    fun dailyReport(ctx: Context, now: Long = System.currentTimeMillis()) {
+        if (!contentFree(ctx) || now - prefs(ctx).getLong("scores_last_report_ms", 0L) < RiskReporter.FULL_RESEND_MS) return
+        try { RiskReporter.send(ctx, now) } catch (e: Exception) { Log.w("IGGuard", "Scores report failed: ${e.javaClass.simpleName}") }
+    }
+
+    /**
+     * The always-visible line for the child's ongoing notification. [base] is the existing capture text, kept only
+     * while message text can still reach the parent (the mode is off or the child has not agreed yet).
+     */
+    fun disclosure(ctx: Context, base: String): String {
+        if (!GuardEngine.isChildMode(ctx) || !policyEnabled(ctx)) return base
+        val consent = consentState(ctx)
+        return when {
+            pendingPolicy(ctx) && consent == "none" -> "AI 風險分析 (AI risk analysis)：等待你同意，尚未開始。$base"
+            pendingPolicy(ctx) -> "AI 風險分析 (AI risk analysis)：等待你再次同意 · 警報不含訊息內容。"
+            consent == "withdrawn" -> "你已撤回 AI 風險分析 (withdrawn) · 警報不含訊息內容。"
+            consent == "none" -> base
+            paused(ctx) -> "AI 風險分析已暫停 (paused) · 不儲存也不分析訊息；警報不含訊息內容。"
+            active(ctx) -> "AI 風險分析已開啟 (AI risk analysis ON) · 訊息只在此手機分析，家長只收到風險分數，看不到訊息內容。"
+            else -> "AI 風險分析已開啟 (ON)，但此手機暫時未能執行 · 警報不含訊息內容。"
+        }
     }
 
     // ---------------- parent policy bookkeeping ----------------
@@ -358,8 +432,25 @@ internal object RiskLocal {
         prefs(ctx).edit().putString(PARENT_POLICY_ID, id).putBoolean(PARENT_POLICY_ENABLED, enabled).putLong(PARENT_POLICY_AT, at).commit()
 }
 
+/** Message text on its way into a prompt. */
+internal object RiskMessages {
+    /**
+     * Cleans untrusted message text before it is stored or prompted: NUL bytes are removed, and anything that could
+     * be read as a ChatML or think token (`<|`, `<think>`, `</think>`) gets a zero-width space after its `<`.
+     * This is a deliberate deviation from the research harness, which only ever saw ordinary invented chats; it is
+     * applied here, in the mapping from stored message to [RiskMessage], so [RiskPrompt] stays byte-identical to the harness.
+     */
+    fun sanitize(text: String): String = text.replace("\u0000", "").replace(Regex("<(?=\\||/?think>)"), "<\u200B")
+}
+
 /** Builds and queues `scores_mode_report`. Carries a score, an account label and times, never message text. */
 internal object RiskReporter {
+    const val FULL_RESEND_MS = 24L * 3_600_000L
+    private const val IDS = "scores_report_ids"
+    private const val LAST_FULL = "scores_last_full_report_ms"
+    private const val LAST_REPORT = "scores_last_report_ms"
+    private fun prefs(ctx: Context) = LocalVault.preferences(ctx)
+
     fun stateJson(ctx: Context, unknownThreads: Int): JSONObject {
         val paused = RiskLocal.pausedAt(ctx).takeIf { it > 0 }
         val last = RiskLocal.lastRun(ctx).takeIf { it > 0 }
@@ -369,23 +460,63 @@ internal object RiskReporter {
             .put("scored_count", RiskLocal.scoredCount(ctx)).put("unknown_threads", unknownThreads)
     }
 
-    /** Sends the state plus every conversation row that changed since it was last sent (200 per record). True if all were queued. */
+    internal data class Merged(val row: RiskReportRow, val members: List<RiskReportRow>, val changed: Boolean)
+    private fun key(label: String) = label.take(RiskLimits.MAX_LABEL).trim().removePrefix("@").lowercase()
+
+    /** One row per normalised label: highest score; with none scored, the review reason of the latest; the latest time. */
+    internal fun merge(rows: List<RiskReportRow>): List<Merged> = rows.filter { key(it.label).isNotEmpty() }.groupBy { key(it.label) }.values.map { group ->
+        val best = group.mapNotNull { it.score }.maxOrNull()
+        val latest = group.maxByOrNull { it.scoredAt }!!
+        Merged(RiskReportRow("", latest.label.take(RiskLimits.MAX_LABEL), best, if (best != null) null else latest.reason, latest.scoredAt), group, group.any { it.changed })
+    }.sortedBy { it.row.scoredAt }
+
+    private fun tracked(ctx: Context): List<Pair<String, String>> = try {
+        val array = JSONArray(prefs(ctx).getString(IDS, "[]") ?: "[]")
+        (0 until array.length()).map { array.getString(it).substringBefore('|') to array.getString(it).substringAfter('|') }
+    } catch (_: Exception) { emptyList() }
+
+    /** Deletes scores reports that are still waiting in the outbox. True if any was found. */
+    fun purgeQueued(ctx: Context, scope: String): Boolean {
+        val entries = tracked(ctx)
+        if (entries.isEmpty()) return false
+        var found = false
+        FamilyEvidence(ctx).use { db ->
+            for ((entryScope, id) in entries) if (db.hasQueuedEvent(entryScope, "control:$id")) { db.acknowledgeEvent(entryScope, "control:$id"); found = true }
+        }
+        prefs(ctx).edit().remove(IDS).commit()
+        return found
+    }
+
+    private fun track(ctx: Context, scope: String, id: String) {
+        val kept = tracked(ctx).takeLast(63).map { "${it.first}|${it.second}" } + "$scope|$id"
+        prefs(ctx).edit().putString(IDS, JSONArray(kept).toString()).commit()
+    }
+
+    /**
+     * Sends the state plus every conversation row that changed since it was last sent (200 per record). A newer
+     * report replaces any older one still queued (the parent follows arrival order), and everything is resent when
+     * an older report was dropped from the queue or a day has passed. True if all records were queued.
+     */
     fun send(ctx: Context, now: Long = System.currentTimeMillis()): Boolean {
         val app = ctx.applicationContext
         if (!GuardEngine.transferAllowed(app) || !GuardEngine.isChildMode(app)) return false
         val scope = GuardEngine.getChannelTopic(app)
+        val discarded = purgeQueued(app, scope)
         FamilyEvidence(app).use { db ->
-            val rows = db.riskReportRows(scope, now).filter { it.changed && it.label.isNotBlank() }
+            if (discarded || now - prefs(app).getLong(LAST_FULL, 0L) >= FULL_RESEND_MS) { db.resetRiskSent(scope); prefs(app).edit().putLong(LAST_FULL, now).commit() }
+            val merged = merge(db.riskReportRows(scope, now)).filter { it.changed }
             val unknown = db.riskUnknownCount(scope, now)
-            for (chunk in rows.chunked(RiskLimits.MAX_REPORT_ROWS).ifEmpty { listOf(emptyList()) }) {
+            for (chunk in merged.chunked(RiskLimits.MAX_REPORT_ROWS).ifEmpty { listOf(emptyList()) }) {
                 val conversations = JSONArray()
-                for (row in chunk) conversations.put(JSONObject().put("account_label", row.label.take(RiskLimits.MAX_LABEL))
-                    .put("score", row.score ?: JSONObject.NULL).put("review_reason", row.reason ?: JSONObject.NULL).put("scored_at_ms", row.scoredAt))
+                for (m in chunk) conversations.put(JSONObject().put("account_label", m.row.label)
+                    .put("score", m.row.score ?: JSONObject.NULL).put("review_reason", m.row.reason ?: JSONObject.NULL).put("scored_at_ms", m.row.scoredAt))
                 val payload = JSONObject().put("type", "scores_mode_report").put("sent_at_ms", now).put("state", stateJson(app, unknown)).put("conversations", conversations)
-                if (!GuardEngine.queueScoresReport(app, payload)) return false
-                db.markRiskSent(scope, chunk)
+                val id = GuardEngine.queueScoresReport(app, payload) ?: return false
+                track(app, scope, id)
+                db.markRiskSent(scope, chunk.flatMap { it.members })
             }
         }
+        prefs(app).edit().putLong(LAST_REPORT, now).commit()
         return true
     }
 }
@@ -396,7 +527,7 @@ internal data class ChildScoresState(
     val policyId: String?, val model: String, val consent: String, val paused: Boolean, val pausedAt: Long?,
     val lastRun: Long?, val scoredCount: Int, val unknownThreads: Int
 )
-internal data class ParsedScoresReport(val sentAt: Long, val state: ChildScoresState, val conversations: List<ScoresReportRow>)
+internal data class ParsedScoresReport(val commandId: String, val sentAt: Long, val state: ChildScoresState, val conversations: List<ScoresReportRow>)
 
 internal object ScoresReportCodec {
     private val models = setOf("valid", "missing", "mismatch", "unsupported_device")
@@ -443,21 +574,30 @@ internal object ScoresReportCodec {
             require(at > 0 && at <= sentAt)
             ScoresReportRow(label.trim(), score, reason, at)
         }
-        ParsedScoresReport(sentAt, ChildScoresState(policy, model, consent, paused, pausedAt, lastRun, scored, unknown), rows)
+        ParsedScoresReport(json.getString("command_id"), sentAt, ChildScoresState(policy, model, consent, paused, pausedAt, lastRun, scored, unknown), rows)
     } catch (_: Exception) { null }
 }
 
 /** One scoring run over the threads with new messages. The scorer call is not interruptible; pause, stop and session checks run between threads. */
 internal object RiskBatch {
     enum class Outcome { COMPLETED, STOPPED, SESSION_CHANGED, INACTIVE, MODEL_MISMATCH, INSTRUCTION_MISMATCH, FAILED }
-    data class Result(val outcome: Outcome, val scored: Int = 0, val needsReview: Int = 0)
+    data class Result(val outcome: Outcome, val scored: Int = 0, val needsReview: Int = 0, val failedThreads: Int = 0)
 
-    private fun loadInstruction(ctx: Context): String? {
-        val bytes = ctx.resources.openRawResource(R.raw.risk_instruction_v1).use { it.readBytes() }
+    /** Returns the instruction text only if its SHA-256 is the pinned one. */
+    internal fun checkedInstruction(bytes: ByteArray): String? {
         val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         return if (sha == RiskModelSpec.INSTRUCTION_SHA256) bytes.toString(Charsets.UTF_8) else null
     }
+    /** Test hook: where the instruction comes from. */
+    @Volatile internal var instructionLoader: (Context) -> String? = { ctx -> checkedInstruction(ctx.resources.openRawResource(R.raw.risk_instruction_v1).use { it.readBytes() }) }
 
+    private fun failed(app: Context, outcome: Outcome): Result { RiskLocal.recordFailure(app); return Result(outcome) }
+
+    /**
+     * A thread whose scorer call throws anything but [RiskContextTooLong] is stored as "insufficient_context" at its
+     * newest sequence, so it is not retried until it has new messages, and the run goes on. A scorer that cannot be
+     * opened (or a library that cannot load) fails the run: nothing is recorded and the failure time delays the next try.
+     */
     fun run(ctx: Context, openScorer: (File) -> RiskScorer, shouldStop: () -> Boolean): Result {
         val app = ctx.applicationContext
         val session = GuardEngine.captureRelaySession(app)
@@ -468,14 +608,16 @@ internal object RiskBatch {
             else -> null
         }
         halt()?.let { return Result(it) }
-        val instruction = loadInstruction(app) ?: return Result(Outcome.INSTRUCTION_MISMATCH)
+        val instruction = instructionLoader(app) ?: return failed(app, Outcome.INSTRUCTION_MISMATCH)
         val scope = GuardEngine.getChannelTopicForToken(session.second)
         val due = FamilyEvidence(app).use { it.riskDueThreads(scope) }
         var scored = 0
         var review = 0
+        var failures = 0
         var outcome = Outcome.COMPLETED
         if (due.isNotEmpty()) {
             if (!RiskModelStore.verify(app)) {
+                RiskLocal.recordFailure(app)
                 RiskReporter.send(app)
                 return Result(Outcome.MODEL_MISMATCH)
             }
@@ -493,7 +635,11 @@ internal object RiskBatch {
                         val result = RiskScoring.fromLogits(scorer.score(RiskPrompt.render(instruction, messages)))
                         score = result.reportScore
                         if (score == null) reason = "insufficient_context"
-                    } catch (_: RiskContextTooLong) { reason = "context_too_long" }
+                    } catch (_: RiskContextTooLong) { reason = "context_too_long"
+                    } catch (e: Exception) {
+                        Log.w("IGGuard", "One thread could not be scored: ${e.javaClass.simpleName}")
+                        reason = "insufficient_context"; failures++
+                    }
                     // A pause, withdrawal or session change during the (uninterruptible) scorer call discards the result.
                     val after = halt()
                     if (after != null) { outcome = after; break }
@@ -502,23 +648,43 @@ internal object RiskBatch {
                         if (score == null) review++
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // A missing or unloadable native library must never take the process down.
                 Log.w("IGGuard", "Scoring run failed: ${e.javaClass.simpleName}")
+                if (e is LinkageError) RiskModelStore.markNativeUnavailable(app)
+                RiskLocal.recordFailure(app)
                 outcome = Outcome.FAILED
             } finally {
-                try { scorer?.close() } catch (_: Exception) {}
+                try { scorer?.close() } catch (_: Throwable) {}
             }
         }
-        if (outcome == Outcome.SESSION_CHANGED || outcome == Outcome.INACTIVE) return Result(outcome, scored, review)
-        if (outcome == Outcome.COMPLETED) RiskLocal.recordRun(app, scored)
-        try { RiskReporter.send(app) } catch (e: Exception) { Log.w("IGGuard", "Scores report failed: ${e.javaClass.simpleName}") }
-        return Result(outcome, scored, review)
+        if (outcome == Outcome.SESSION_CHANGED || outcome == Outcome.INACTIVE) return Result(outcome, scored, review, failures)
+        if (outcome == Outcome.COMPLETED) {
+            val current = FamilyEvidence(app).use { db -> db.riskReportRows(scope, System.currentTimeMillis()).size }
+            RiskLocal.recordRun(app, current)
+        }
+        try { if (outcome == Outcome.FAILED) RiskLocal.changed(app) else RiskReporter.send(app) } catch (e: Exception) { Log.w("IGGuard", "Scores report failed: ${e.javaClass.simpleName}") }
+        return Result(outcome, scored, review, failures)
     }
+}
+
+/** At most one batch at a time across the periodic and fallback jobs; stop requests only reach the job that is running. */
+internal object RiskRunGuard {
+    private val busy = AtomicBoolean(false)
+    private val stop = AtomicBoolean(false)
+    @Volatile private var runningJob = -1
+    fun tryEnter(jobId: Int): Boolean { if (!busy.compareAndSet(false, true)) return false; runningJob = jobId; stop.set(false); return true }
+    fun leave() { runningJob = -1; stop.set(false); busy.set(false) }
+    /** True only if [jobId] is the job that is running. */
+    fun requestStop(jobId: Int): Boolean { if (runningJob != jobId) return false; stop.set(true); return true }
+    fun stopRequested() = stop.get()
+    fun running() = busy.get()
 }
 
 /**
  * Two persisted jobs: a periodic one that needs idle + charging, and a one-shot fallback that needs charging only and
- * becomes eligible 48 hours after the last completed run (or after the child agreed, if none has run).
+ * becomes eligible 48 hours after the last completed run (or after the child agreed, if none has run). After a failed
+ * run the fallback waits at least six hours.
  */
 internal object RiskScoringSchedule {
     const val PRIMARY_ID = 0x49475253
@@ -527,7 +693,10 @@ internal object RiskScoringSchedule {
 
     private fun scheduler(ctx: Context) = ctx.applicationContext.getSystemService(JobScheduler::class.java)
 
-    fun fallbackLatency(ctx: Context, now: Long = System.currentTimeMillis()): Long = maxOf(0L, RiskLocal.runBaseline(ctx) + RiskLimits.FALLBACK_MS - now)
+    fun fallbackLatency(ctx: Context, now: Long = System.currentTimeMillis()): Long {
+        val failure = RiskLocal.lastFailure(ctx).takeIf { it > 0 }?.let { it + PERIOD_MS - now } ?: 0L
+        return maxOf(0L, RiskLocal.runBaseline(ctx) + RiskLimits.FALLBACK_MS - now, failure)
+    }
 
     /** Schedules both jobs while [RiskLocal.active], cancels both otherwise. Safe to call often; pending jobs are kept. */
     fun sync(ctx: Context) {
@@ -540,7 +709,7 @@ internal object RiskScoringSchedule {
         if (scheduler.getPendingJob(FALLBACK_ID) == null) scheduleFallback(app, scheduler, component)
     }
 
-    /** After a run: restarts the 48-hour clock. */
+    /** After a run: restarts the 48-hour clock (or the six-hour back-off after a failure). */
     fun rearm(ctx: Context) {
         val app = ctx.applicationContext
         val scheduler = scheduler(app) ?: return
@@ -559,28 +728,34 @@ class RiskScoringJob : JobService() {
         /** The one place that names the native scorer. */
         internal var scorerFactory: (File) -> RiskScorer = { RiskNative.open(it, minOf(4, Runtime.getRuntime().availableProcessors())) }
     }
-    private val stop = AtomicBoolean(false)
-    private var worker: Thread? = null
     private val completion = Handler(Looper.getMainLooper())
+    @Volatile private var ownedJob = -1
+    @Volatile private var stoppedBySystem = false
 
     override fun onStartJob(params: JobParameters): Boolean {
-        stop.set(false)
-        worker = Thread({
-            try { RiskBatch.run(applicationContext, scorerFactory) { stop.get() } } catch (_: Exception) {}
-            try { RiskScoringSchedule.rearm(applicationContext) } catch (_: RuntimeException) {}
-            val current = Thread.currentThread()
-            completion.post { if (worker === current) { worker = null; jobFinished(params, false) } }
-        }, "Risk scoring").apply { start() }
+        // The periodic and fallback jobs never run two batches at once; the second one simply ends.
+        if (!RiskRunGuard.tryEnter(params.jobId)) return false
+        ownedJob = params.jobId; stoppedBySystem = false
+        Thread({
+            try { RiskBatch.run(applicationContext, scorerFactory) { RiskRunGuard.stopRequested() } }
+            catch (e: Throwable) {
+                if (e is LinkageError) RiskModelStore.markNativeUnavailable(applicationContext)
+                try { RiskLocal.recordFailure(applicationContext) } catch (_: Throwable) {}
+            }
+            try { RiskScoringSchedule.rearm(applicationContext) } catch (_: Throwable) {}
+            RiskRunGuard.leave()
+            completion.post { if (!stoppedBySystem) jobFinished(params, false) }
+        }, "Risk scoring").start()
         return true
     }
 
     override fun onStopJob(params: JobParameters): Boolean {
-        stop.set(true)
+        if (params.jobId == ownedJob) { stoppedBySystem = true; RiskRunGuard.requestStop(params.jobId) }
         return params.jobId == RiskScoringSchedule.FALLBACK_ID
     }
 
     override fun onDestroy() {
-        stop.set(true)
+        if (ownedJob != -1) RiskRunGuard.requestStop(ownedJob)
         super.onDestroy()
     }
 }

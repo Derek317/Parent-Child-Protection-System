@@ -55,7 +55,7 @@ JNIEXPORT jfloatArray JNICALL Java_app_family_igguard_RiskNative_nativeScore(JNI
     env->GetByteArrayRegion(prompt, 0, n, reinterpret_cast<jbyte*>(text.data()));
     float logits[RISK_N_ANSWERS];
     h->last_err[0] = 0;
-    h->last_code = risk_score(h->model, text.data(), logits, h->last_err, sizeof(h->last_err));
+    h->last_code = risk_score_n(h->model, text.data(), (int)n, logits, nullptr, 0, nullptr, h->last_err, sizeof(h->last_err));
     if (h->last_code != RISK_OK) return nullptr;
     jfloatArray out = env->NewFloatArray(RISK_N_ANSWERS);
     if (out == nullptr) return nullptr;

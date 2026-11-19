@@ -38,6 +38,11 @@ int risk_score(risk_model* m, const char* prompt_utf8, float out_logits[RISK_N_A
 int risk_score_ex(risk_model* m, const char* prompt_utf8, float out_logits[RISK_N_ANSWERS],
                   int* out_ids, int out_ids_cap, int* out_n_tokens, char* err, size_t err_len);
 
+// Same, with an explicit byte length: the prompt may contain NUL bytes and is not measured with strlen.
+// risk_score and risk_score_ex stop at the first NUL; the app (JNI) and the host check use this one.
+int risk_score_n(risk_model* m, const char* prompt_utf8, int prompt_len, float out_logits[RISK_N_ANSWERS],
+                 int* out_ids, int out_ids_cap, int* out_n_tokens, char* err, size_t err_len);
+
 void risk_free(risk_model* m);
 
 #ifdef __cplusplus

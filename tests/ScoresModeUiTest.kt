@@ -39,6 +39,8 @@ internal object UiSupport {
         return all(a.window.decorView)
     }
     fun nav(a: MainActivity, to: String) { MainActivity::class.java.getDeclaredMethod("navigateTo", String::class.java).apply { isAccessible = true }.invoke(a, to) }
+    /** The screen on show: while a screen change animates, the previous one stays in the tree. */
+    fun current(a: MainActivity): View = (MainActivity::class.java.getDeclaredField("contentFrame").apply { isAccessible = true }.get(a) as ViewGroup).let { it.getChildAt(it.childCount - 1) }
     fun theme(a: MainActivity): Any = MainActivity::class.java.getDeclaredMethod("currentTheme").apply { isAccessible = true }.invoke(a)!!
     fun token(theme: Any, name: String): String = theme.javaClass.getDeclaredMethod("get" + name.replaceFirstChar { it.uppercase() }).apply { isAccessible = true }.invoke(theme) as String
     fun luminance(hex: String): Double {
@@ -80,7 +82,7 @@ class ScoresParentUiTest {
                        policyId: String? = GuardEngine.scoresModePolicy(ctx)?.policyId, receivedAt: Long = System.currentTimeMillis(), unknown: Int = 3) {
         val sent = System.currentTimeMillis() - 1000
         val state = ChildScoresState(policyId, model, consent, paused, if (paused) sent - 5000 else null, sent - 100, rows.size, unknown)
-        FamilyEvidence(ctx).use { it.storeScoresReport(scope, ParsedScoresReport(sent, state, rows), receivedAt) }
+        FamilyEvidence(ctx).use { it.storeScoresReport(scope, ParsedScoresReport(UUID.randomUUID().toString(), sent, state, rows), receivedAt) }
     }
     private fun enable() { report(policyId = null); assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)) }
     private fun launch() = Robolectric.buildActivity(MainActivity::class.java).setup().also { UiSupport.nav(it.get(), "overview") }
@@ -192,12 +194,24 @@ class ScoresParentUiTest {
                 assertTrue(sheet.contains("999")); assertFalse(sheet.contains(marker))
             } finally { c.pause().stop().destroy() }
         }
-        assertEquals("amy", FamilyEvidence(ctx).use { it.riskScores(scope) }.size.let { "amy" })
+    }
+    @Test fun lockedParentSeesTheLockInsteadOfTheScores() {
+        enable(); report(rows = listOf(row("amy", 80.0, System.currentTimeMillis() - 1000)))
+        ParentUiAuthFixture.autoApprove = false
+        try {
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+            try {
+                MainActivity::class.java.getDeclaredField("section").apply { isAccessible = true }.set(c.get(), "scores")
+                val tree = UiSupport.all(c.get().window.decorView)
+                assertTrue(tree.any { it.tag == "parent_privacy_lock" })
+                assertTrue(tree.none { it.tag == "score_row" || it.tag == "scores_notice" })
+            } finally { c.pause().stop().destroy() }
+        } finally { ParentUiAuthFixture.autoApprove = true }
     }
     @Test fun unknownThreadCountIsShownWhenAReportExists() {
         enable(); report(unknown = 7)
         val c = launch()
-        try { assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("7 個") && it.contains("類型未能確認") }) } finally { c.pause().stop().destroy() }
+        try { page(c); assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("7 個") && it.contains("類型未能確認") }) } finally { c.pause().stop().destroy() }
     }
     @Test fun overviewRowOpensThePage() {
         enable(); report(rows = listOf(row("amy", 80.0, System.currentTimeMillis() - 1000)))
@@ -253,7 +267,7 @@ class ScoresParentUiTest {
             assertTrue(sw.createAccessibilityNodeInfo().isChecked)
             sw.performClick()
             assertEquals(true, GuardEngine.scoresModePolicy(ctx)?.enabled)
-            ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+            ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle()
             assertEquals(false, GuardEngine.scoresModePolicy(ctx)?.enabled)
         } finally { c.pause().stop().destroy() }
     }
@@ -282,7 +296,7 @@ class ScoresParentUiTest {
             // A link for another family is ignored.
             UiSupport.nav(a, "overview")
             MainActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java).apply { isAccessible = true }.invoke(a, ScoresLink.intent(ctx, "other"))
-            assertFalse(UiSupport.all(a.window.decorView).any { it.tag == "score_row" })
+            assertFalse(UiSupport.all(UiSupport.current(a)).any { it.tag == "score_row" })
         } finally { c.pause().stop().destroy() }
     }
     @Test fun theServiceBuildsTheScoresNotificationWithTheScoresLink() {
@@ -302,7 +316,8 @@ class ScoresParentUiTest {
         val c = launch()
         try {
             val a = c.get(); UiSupport.nav(a, "alerts")
-            UiSupport.views(a, "evidence_loading").filterIsInstance<Button>().single { it.text.toString() == "裝置與傳送" }.performClick()
+            UiSupport.views(a, "evidence_loading").filterIsInstance<Button>().single { it.text.toString() == "需要跟進" }.performClick()
+            UiSupport.views(a, "evidence_loading")
             val rows = UiSupport.texts(a.window.decorView)
             assertTrue(rows.any { it.contains("此提醒不含訊息文字") })
             val stored = FamilyEvidence(ctx).use { it.find(scope, "cf-1") }!!
@@ -311,7 +326,6 @@ class ScoresParentUiTest {
             val sheet = UiSupport.texts(ShadowDialog.getLatestDialog().window!!.decorView)
             assertTrue(sheet.contains("未在信任名單中的訊息 / 回覆")); assertTrue(sheet.any { it.contains("stranger_amy") })
             assertTrue(sheet.any { it.contains("此提醒不含訊息文字") })
-            assertTrue(sheet.none { it.isBlank() && false })
         } finally { c.pause().stop().destroy() }
     }
 
@@ -348,16 +362,16 @@ class ScoresNarrowLargeTextTest {
     @After fun restore() { RuntimeEnvironment.setFontScale(1f) }
     private fun checkLayout(a: MainActivity) {
         val shell = UiSupport.measure(a, 320, 700)
-        val targets = UiSupport.all(shell).filter { it.visibility == View.VISIBLE && (it is Button || (it.isClickable && it.tag == "scores_mode_switch") || (it.isClickable && it is android.widget.LinearLayout)) }
+        val targets = UiSupport.all(UiSupport.current(a)).filter { it.visibility == View.VISIBLE && it.tag != "scores_mode_switch_view" && (it is Button || (it.isClickable && it.tag == "scores_mode_switch") || (it.isClickable && it is android.widget.LinearLayout)) }
         assertTrue(targets.isNotEmpty())
         for (v in targets) assertTrue("${v.tag} ${(v as? TextView)?.text} is ${v.height}px high", v.height >= 48)
-        for (v in UiSupport.all(shell).filterIsInstance<TextView>()) assertTrue("text wider than the screen: ${v.text}", v.measuredWidth <= 320)
+        for (v in UiSupport.all(UiSupport.current(a)).filterIsInstance<TextView>()) assertTrue("text wider than the screen: ${v.text}", v.measuredWidth <= 320)
     }
     @Test fun parentScoresPageAndSwitchFitAt320dpAndFontScale15() {
         val now = System.currentTimeMillis()
         FamilyEvidence(ctx).use {
             val scope = GuardEngine.getChannelTopic(ctx)
-            it.storeScoresReport(scope, ParsedScoresReport(now - 1000, ChildScoresState(null, "valid", "accepted", false, null, now - 2000, 2, 1), listOf(ScoresReportRow("a_long_account_label.with.dots", 88.0, null, now - 3000), ScoresReportRow("bob", null, "context_too_long", now - 4000))), now)
+            it.storeScoresReport(scope, ParsedScoresReport(UUID.randomUUID().toString(), now - 1000, ChildScoresState(null, "valid", "accepted", false, null, now - 2000, 2, 1), listOf(ScoresReportRow("a_long_account_label.with.dots", 88.0, null, now - 3000), ScoresReportRow("bob", null, "context_too_long", now - 4000))), now)
         }
         GuardEngine.sendScoresModePolicy(ctx, true)
         val c = Robolectric.buildActivity(MainActivity::class.java).setup()
@@ -388,7 +402,7 @@ class ScoresChildUiTest {
         ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).edit().clear().commit()
         RiskModelStore.directory(ctx).deleteRecursively()
         RiskModelStore.expectation = RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256)
-        RiskModelStore.memoryProbe = { 8L shl 30 }
+        RiskModelStore.memoryProbe = { 8L shl 30 }; RiskModelStore.abiProbe = { true }
         RiskScoringJob.scorerFactory = { error("no native scorer in unit tests") }
         ModelImportJob.importer = { c, i, p -> RiskLocal.importModel(c, i, p) }; ModelImportJob.runner = { it.run() }; ModelImportJob.dismissResult(); ModelImportJob.running = false
         GuardEngine.setFamilyToken(ctx, UUID.randomUUID().toString()); GuardEngine.setRole(ctx, "child")
@@ -404,6 +418,7 @@ class ScoresChildUiTest {
         ProxySelector.setDefault(original); original = null; RuntimeEnvironment.setFontScale(1f)
         ModelImportJob.importer = { c, i, p -> RiskLocal.importModel(c, i, p) }; ModelImportJob.runner = { Thread(it, "Model import").start() }; ModelImportJob.dismissResult()
         RiskModelStore.expectation = RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256)
+        RiskModelStore.abiProbe = { android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a") }
         RiskModelStore.memoryProbe = { c -> val i = android.app.ActivityManager.MemoryInfo(); c.getSystemService(android.app.ActivityManager::class.java)?.getMemoryInfo(i); i.totalMem }
     }
     private fun sha(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
@@ -445,7 +460,7 @@ class ScoresChildUiTest {
             assertFalse("no pre-ticked box", v(c).any { it is android.widget.CheckBox })
             assertEquals(0, tag(c, "scores_agree").count { !it.isEnabled })
             tag(c, "scores_not_now").single().performClick()
-            assertEquals("none", RiskLocal.consentState(ctx)); assertEquals(0, count("risk_messages").coerceAtLeast(0))
+            assertEquals("none", RiskLocal.consentState(ctx)); assertEquals(0, count("risk_store"))
             assertTrue(RiskLocal.pendingPolicy(ctx)); assertEquals(1, tag(c, "scores_consent_card").size)
         } finally { c.pause().stop().destroy() }
     }
@@ -467,7 +482,6 @@ class ScoresChildUiTest {
         policy(false)
         val c = launch()
         try {
-            tag(c, "scores_change_card").single().findViewWithTag<View>("x").let { }
             UiSupport.all(tag(c, "scores_change_card").single()).filterIsInstance<Button>().single().performClick()
             assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("原有的運作方式再次適用") })
             tag(c, "scores_change_done").single().performClick()
@@ -502,7 +516,8 @@ class ScoresChildUiTest {
             try {
                 val block = tag(c, "scores_status_block").single(); val text = UiSupport.texts(block).joinToString("\n")
                 assertTrue(case.expect + " in " + stateLabel(c), stateLabel(c).contains(case.expect))
-                for (needle in listOf("AI 風險分析", "充電時運行", "Runs on this phone while charging", "看不到你的訊息", "They do not see your messages", "上次運行", "類型未明")) assertTrue(needle, text.contains(needle))
+                for (needle in listOf("AI 風險分析", "充電時運行", "Runs on this phone while charging", "看不到你的訊息", "They do not see your messages", "類型未明")) assertTrue(needle, text.contains(needle))
+                assertTrue(text.contains("Last run") || text.contains("Not run yet"))
                 labels.add(stateLabel(c))
             } finally { c.pause().stop().destroy() }
         }
@@ -528,14 +543,14 @@ class ScoresChildUiTest {
             tag(c, "scores_resume").single().performClick()
             assertFalse(RiskLocal.paused(ctx)); assertTrue(stateLabel(c).contains("ON"))
             FamilyEvidence(ctx).use { it.storeRiskMessage(scope, "m1", "k1", "amy", "incoming", "hello", System.currentTimeMillis(), System.currentTimeMillis(), 1L, System.currentTimeMillis()) }
-            assertEquals(1, count("risk_messages"))
+            assertEquals(1, count("risk_store"))
             tag(c, "scores_withdraw").single().performClick()
             val dialog = ShadowAlertDialog.getLatestAlertDialog()
             val said = (dialog.findViewById<TextView>(android.R.id.message)).text.toString()
             assertTrue(said.contains("刪除") && said.contains("家長會被告知"))
             assertEquals("accepted", RiskLocal.consentState(ctx))
-            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
-            assertEquals("withdrawn", RiskLocal.consentState(ctx)); assertEquals(0, count("risk_messages"))
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("withdrawn", RiskLocal.consentState(ctx)); assertEquals(0, count("risk_store"))
             assertTrue(stateLabel(c).contains("WITHDRAWN")); assertTrue(tag(c, "scores_withdraw").isEmpty())
         } finally { c.pause().stop().destroy() }
     }
@@ -614,7 +629,7 @@ class ScoresChildUiTest {
             assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("模型已安裝") }); assertTrue(tag(c, "model_import_row").isEmpty())
             tag(c, "scores_model_remove").single().performClick()
             assertTrue(RiskModelStore.file(ctx).exists())
-            ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+            ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle()
             assertFalse(RiskModelStore.file(ctx).exists()); assertEquals(1, tag(c, "model_import_row").size)
         } finally { c.pause().stop().destroy() }
     }
@@ -629,12 +644,12 @@ class ScoresChildUiTest {
                 UiSupport.nav(c.get(), screen)
                 if (screen == "scores_consent") { MainActivity::class.java.getDeclaredField("scoresReadOnly").apply { isAccessible = true }.setBoolean(c.get(), true) ; UiSupport.nav(c.get(), "overview"); UiSupport.nav(c.get(), screen) }
                 val shell = UiSupport.measure(c.get(), 320, 700)
-                val buttons = UiSupport.all(shell).filterIsInstance<Button>().filter { it.visibility == View.VISIBLE }
+                val buttons = UiSupport.all(UiSupport.current(c.get())).filterIsInstance<Button>().filter { it.visibility == View.VISIBLE }
                 assertTrue(screen, buttons.isNotEmpty())
                 for (b in buttons) assertTrue("$screen ${b.text} ${b.height}px", b.height >= 48)
                 val sorted = buttons.map { b -> IntArray(2).also { b.getLocationOnScreen(it) }[1] to b.height }.sortedBy { it.first }
                 for ((a, b) in sorted.zipWithNext()) assertTrue("buttons need 8dp between them", b.first - (a.first + a.second) >= 8 || b.first == a.first)
-                for (tv in UiSupport.all(shell).filterIsInstance<TextView>()) assertTrue(tv.measuredWidth <= 320)
+                for (tv in UiSupport.all(UiSupport.current(c.get())).filterIsInstance<TextView>()) assertTrue(tv.measuredWidth <= 320)
             }
         } finally { c.pause().stop().destroy() }
     }

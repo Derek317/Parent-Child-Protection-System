@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
     std::vector<int> ids(RISK_CONTEXT_TOKENS);
     int n = 0;
     float logits[RISK_N_ANSWERS];
-    int rc = risk_score_ex(m, prompt.c_str(), logits, ids.data(), (int)ids.size(), &n, err, sizeof(err));
+    int rc = risk_score_n(m, prompt.data(), (int)prompt.size(), logits, ids.data(), (int)ids.size(), &n, err, sizeof(err));
     if (rc != RISK_OK) {
         std::fprintf(stderr, "score failed (%d): %s\n", rc, err);
         risk_free(m);
