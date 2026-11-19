@@ -223,7 +223,7 @@ class ScoresModeChildTest {
     @Test fun directAndSingleAuthorUnknownThreadsAreStoredGroupsAreNot() {
         activate()
         capture(obs("hello ${secret}a"), obs("mine ${secret}b", "outgoing"), obs("dropped", "unknown", kind = "direct"))
-        capture(obs("group ${secret}c", conversation = "club", kind = "group"))
+        capture(note("club", "group ${secret}c", "incoming", 3000, kind = "group", author = "anna"))
         capture(obs("screen ${secret}d", conversation = "screen friend", kind = "unknown"), obs("screen ${secret}e", "outgoing", conversation = "screen friend", kind = "unknown"))
         assertEquals(4, count("risk_store")); assertEquals("the group is not stored but is counted as set aside", 1, count("risk_unknown"))
         FamilyEvidence(ctx).use { db ->

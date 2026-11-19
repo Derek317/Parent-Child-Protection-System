@@ -752,7 +752,7 @@ class ScoresChildUiTest {
         val cases = listOf(
             Case("WAITING", listOf("nothing is stored or analysed", "your parent still receives messages as before", "你的家長仍會像以往一樣收到訊息"), listOf(sees, runs, "看不到你的訊息", "充電時運行")) { installModel(); policy() },
             Case("ON", listOf(sees, runs, "看不到你的訊息", "充電時運行"), emptyList()) { activate(); RiskLocal.acknowledgeChangeNotice(ctx) },
-            Case("PAUSED", listOf("nothing is stored or analysed", "Alerts without text still go to your parent", "暫停期間不會儲存或分析任何內容"), listOf(sees, runs, "still receives messages as before")) { activate(); assertTrue(RiskLocal.pause(ctx)) },
+            Case("PAUSED", listOf("no messages are stored or analysed", "Alerts without text still go to your parent", "暫停期間不會儲存或分析任何訊息"), listOf(sees, runs, "still receives messages as before")) { activate(); assertTrue(RiskLocal.pause(ctx)) },
             Case("WITHDRAWN", listOf("deleted", "do not receive message text", "不會收到訊息文字"), listOf(sees, runs, "still receives messages as before")) { activate(); assertTrue(RiskLocal.withdraw(ctx)) },
             Case("MODEL MISSING", listOf("nothing is stored or analysed", "does not receive your message text"), listOf(sees, runs, "still receives messages as before")) { installModel(); policy(); assertTrue(RiskLocal.accept(ctx)); RiskLocal.removeModel(ctx) },
             Case("NOT AVAILABLE", listOf("nothing is stored or analysed", "still receives messages as before"), listOf(sees, runs)) { RiskModelStore.memoryProbe = { 2L shl 30 }; policy() },
