@@ -1,6 +1,6 @@
-# Local storage security — 4.9-beta.4 source draft
+# Local storage security — 4.9-beta.4
 
-Updated 18 November 2026 (Hong Kong), for `security/hardening-2026-11-17`. See the [draft integration limits](releases/4.9-beta.4.md); this is not release or deployment verification.
+Updated 19 November 2026 (Hong Kong). See the [release notes and known limits](releases/4.9-beta.4.md).
 
 Preference strings and captured archive content are encrypted at rest using AES-256-GCM and keys generated in Android Keystore. These keys are separate from the shared family transport secret and from the developer's APK signing identity. No database decryption key is shipped in the APK or stored in ordinary preferences. Hardware backing depends on the device; this release does not claim that every device has hardware-backed storage.
 
@@ -27,7 +27,7 @@ Existing preference strings migrate in one committed preferences transaction. Sc
 
 There is no plaintext fallback for an unreadable encrypted value. Missing/invalid keys or corrupt encrypted data must not be interpreted as an empty archive or new family. The UI shows a recovery screen and retains existing files. Unlock the phone and retry; if storage remains unavailable, preserve the app data for diagnosis. Clearing app data, uninstalling or losing Keystore keys can make existing encrypted data unrecoverable. App cloud backup and device transfer remain disabled.
 
-Routine remote family-key rotation remains an old-channel operation, preserving history and eligible queued delivery without renewing deadlines. It is not compromised-key recovery and does not provide forward secrecy. The separate **家長主密碼與金鑰 → 秘密可能外洩：重新安全配對** flow creates fresh family secrets and a staged Keystore signing identity, with a durable transition journal. It sends an authenticated old-room retirement request before creation (the relay code on this branch has no retirement endpoint, so the request is expected to be reported as unconfirmed), or separately confirmed offline creation without purge assurance. Old archives remain isolated while old pending content and trust settings are discarded. Replacement secrets are not sent through the old channel. The child must stop old capture locally and re-pair on safe devices with full security-code verification; neither rotation, remote reset nor fresh pairing recalls copied old data.
+Routine remote family-key rotation remains an old-channel operation, preserving history and eligible queued delivery without renewing deadlines. It is not compromised-key recovery and does not provide forward secrecy. The separate **家長主密碼與金鑰 → 秘密可能外洩：重新安全配對** flow creates fresh family secrets and a staged Keystore signing identity, with a durable transition journal. The current relay cannot delete a room, so the screen says so and keeps the existing pairing; the parent can instead choose separately confirmed creation without purge assurance. Old archives remain isolated while old pending content and trust settings are discarded. Replacement secrets are not sent through the old channel. The child must stop old capture locally and re-pair on safe devices with full security-code verification; neither rotation, remote reset nor fresh pairing recalls copied old data.
 
 Password inputs remain excluded from saved activity drafts. Intentional copy/share/export actions still produce plaintext for the selected recipient, outside the archive's encryption controls.
 

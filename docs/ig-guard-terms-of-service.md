@@ -1,8 +1,8 @@
 # IG Guard 使用條款 / Terms of Service
 
-更新 / Updated: 18 November 2026（香港 / Hong Kong）
-版本 / Release: 4.9-beta.4（來源草稿 / source draft）
-條款修訂 / Terms revision: 2026-11-18-v2
+更新 / Updated: 19 November 2026（香港 / Hong Kong）
+版本 / Release: 4.9-beta.4
+條款修訂 / Terms revision: 2026-11-19-v3
 營運 / Operator: Safe Guard — ppefyp2026@gmail.com
 
 ## 繁體中文
@@ -19,11 +19,11 @@
 
 傳輸採 AES-256-GCM；WSS/TLS 於 Cloudflare 終止，內容仍以家庭金鑰加密。Safe Guard／Cloudflare 處理密文及房間、傳送、連線中繼資料，不獲家庭解密金鑰。手機偏好字串及封存內容／標籤採 Keystore AES-GCM 欄位加密及 HMAC 索引；時間、類別、不透明識別碼及狀態仍可見，非整個資料庫檔案加密。父母可閱讀／複製；請保護手機、密碼及配對秘密。
 
-父母介面須通過 Android 生物辨識／裝置憑證驗證，離開前景即重新鎖定；背景接收、解密、封存及收據不因此停止。安全視窗旗標及一般私密通知減少畫面外洩；App 的明確複製操作標示為敏感，並嘗試於60秒後清除仍屬該次複製的剪貼簿項目，不能收回其他副本。生產用途的父母簽署身分使用不可匯出的 Keystore 私鑰；核對後匯入舊金鑰以保留子女已信任的公鑰，再移除舊私鑰偏好值。硬件支援視裝置而定，無法讀取金鑰時不會靜默更換身分。日常遠端金鑰輪換不等於金鑰外洩後復原；「秘密可能外洩：重新安全配對」另建新秘密及簽署身分，須先確認兩部手機安全、停止子女舊擷取，再當面重新配對及核對完整安全代碼，替代秘密不經可疑舊通道傳送。會送出經驗證的舊中繼房間清除請求（本分支的中繼程式碼未實作，預期顯示為未確認）；明確選擇離線建立則不保證中繼已刪除。舊本機封存隔離保留，舊待傳內容及信任設定捨棄，已被複製的資料無法收回。
+父母介面須通過 Android 生物辨識／裝置憑證驗證，離開前景即重新鎖定；背景接收、解密、封存及收據不因此停止。安全視窗旗標及一般私密通知減少畫面外洩；App 的明確複製操作標示為敏感，並嘗試於60秒後清除仍屬該次複製的剪貼簿項目，不能收回其他副本。生產用途的父母簽署身分使用不可匯出的 Keystore 私鑰；核對後匯入舊金鑰以保留子女已信任的公鑰，再移除舊私鑰偏好值。硬件支援視裝置而定，無法讀取金鑰時不會靜默更換身分。日常遠端金鑰輪換不等於金鑰外洩後復原；「秘密可能外洩：重新安全配對」另建新秘密及簽署身分，須先確認兩部手機安全、停止子女舊擷取，再當面重新配對及核對完整安全代碼，替代秘密不經可疑舊通道傳送。目前的中繼不支援刪除房間，App 會如實顯示為未確認，並保留原有配對；選擇只建立新配對時，不保證中繼已刪除舊資料。舊本機封存隔離保留，舊待傳內容及信任設定捨棄，已被複製的資料無法收回。
 
 新封存預設按記錄時間設定30天到期，父母可選較短期限。個別記錄詳情提供明確限期保留功能，設定一次90天期限，非無限期延長；普通「儲存」標記不延長期限。既有封存不會因升級立即到期刪除；須先預覽並確認採用期限。手機待傳內容及未完成組合設定72小時期限，重試／日常輪換不延長。到期內容於程式運作及處理封存時清理；App 停止運作時，不能保證到期即從儲存裝置移除所有內容。
 
-中繼封包首次入列七天到期，或消耗後較早移除；重複提交不延長原期限。房間註冊資料無自動到期／現成刪除途徑；本分支不改變中繼的保留行為。本機亦可留下無訊息內容的防重播識別碼及統計。刪除／到期識別碼用於防止相同記錄經重播還原，不等於所有副本已抹除。供應商日誌、地區、備份及支援電郵保留期限未核實，上述期限不涵蓋它們。
+中繼封包首次入列七天到期，或消耗後較早移除；重複提交不延長原期限。房間註冊資料目前不會自動到期，亦沒有刪除途徑。本機亦可留下無訊息內容的防重播識別碼及統計。刪除／到期識別碼用於防止相同記錄經重播還原，不等於所有副本已抹除。供應商日誌、地區、備份及支援電郵保留期限未核實，上述期限不涵蓋它們。
 
 ### 4. 首次選擇及停止
 
@@ -61,11 +61,11 @@ Acceptance agrees to the processing below; it neither grants Android permissions
 
 Transport uses AES-256-GCM. WSS/TLS terminates at Cloudflare; payloads remain family-encrypted. Safe Guard/Cloudflare process ciphertext and room/delivery/connection metadata without the family decryption key. Phone preference strings and archive content/labels use Keystore AES-GCM field encryption and HMAC indexes. Times/categories/opaque IDs/status remain visible; the whole database file is not encrypted. Parents can read/copy content; secure phones, passwords and pairing secrets.
 
-The parent UI requires Android biometric/device-credential authentication and relocks on leaving the foreground; background receipt, decryption, archiving and acknowledgments continue. Secure-window flags and generic private notifications reduce screen exposure. Explicit app copy actions mark clipboard items sensitive and attempt to clear the still-current item after 60 seconds; other copies cannot be recalled. Production parent signing identities use non-exportable Keystore private keys. Verified legacy import preserves the public key already trusted by the child before removing the old private-key preference. Hardware backing depends on the device; unavailable keys are not silently replaced. Routine remote rotation is not recovery from key compromise. **秘密可能外洩：重新安全配對** creates fresh secrets and signing identity; first establish that both phones are safe, stop the child's old capture locally, then re-pair in person and compare the full security code. Replacement secrets do not travel through the suspect old channel. The flow sends an authenticated old-room purge request, which the relay code on this branch does not implement, so it is expected to be reported as unconfirmed; explicitly choosing offline creation gives no assurance of relay deletion. Old local archives stay isolated, old pending content and trust settings are discarded, and copied old data cannot be recalled.
+The parent UI requires Android biometric/device-credential authentication and relocks on leaving the foreground; background receipt, decryption, archiving and acknowledgments continue. Secure-window flags and generic private notifications reduce screen exposure. Explicit app copy actions mark clipboard items sensitive and attempt to clear the still-current item after 60 seconds; other copies cannot be recalled. Production parent signing identities use non-exportable Keystore private keys. Verified legacy import preserves the public key already trusted by the child before removing the old private-key preference. Hardware backing depends on the device; unavailable keys are not silently replaced. Routine remote rotation is not recovery from key compromise. **秘密可能外洩：重新安全配對** creates fresh secrets and signing identity; first establish that both phones are safe, stop the child's old capture locally, then re-pair in person and compare the full security code. Replacement secrets do not travel through the suspect old channel. The current relay does not support deleting a room, so the app reports this as unconfirmed and keeps the existing pairing; choosing to create a new pairing only gives no assurance that the relay has deleted old data. Old local archives stay isolated, old pending content and trust settings are discarded, and copied old data cannot be recalled.
 
 New archives receive a 30-day expiry based on record time by default; parents can choose a shorter period. Record details offer explicit preservation for a one-time 90-day period, not indefinite renewal; the ordinary saved/bookmark flag does not extend expiry. Existing archives are not immediately expired/deleted on upgrade: preview and confirmation are required to adopt retention. Phone pending content and incomplete assemblies receive 72-hour deadlines, unchanged by retries or routine rotation. Expired content is cleaned during app activity and archive processing; immediate on-disk removal of all content at the deadline is not assured while the app is stopped.
 
-The relay expires buffered packets seven days after first acceptance, or removes them sooner when consumed; duplicates do not extend the original deadline. Room registration metadata has no automatic expiry or deletion route in the relay code on this branch. Local replay identifiers and statistics can remain. Deleted/expired identifiers help prevent restoration of the same record through replay; they do not establish erasure of every copy. Provider logs, regions, backups and support-email retention remain unverified and are outside these deadlines.
+The relay expires buffered packets seven days after first acceptance, or removes them sooner when consumed; duplicates do not extend the original deadline. Room registration metadata currently has no automatic expiry and no deletion route. Local replay identifiers and statistics can remain. Deleted/expired identifiers help prevent restoration of the same record through replay; they do not establish erasure of every copy. Provider logs, regions, backups and support-email retention remain unverified and are outside these deadlines.
 
 ### 4. Initial choice and stopping
 

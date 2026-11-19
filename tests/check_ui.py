@@ -29,6 +29,31 @@ class Checks(unittest.TestCase):
   for line in S.splitlines():
    if 'addCheckpointLog(' in line and 'fun addCheckpointLog' not in line:
     self.assertNotRegex(line,r'\$\{?(\w*[Ss]ender|resolved\w*|clean|detected|handle)\b|@\$',line.strip())
+ def test_relay_retention_claims_match_the_relay(self):
+  root=Path(__file__).resolve().parents[1]
+  ttl=re.search(r'const TTL = (\d+) \* 24',(root/'relay/src/worker.js').read_text()).group(1)
+  self.assertEqual(ttl,'7','relay packet lifetime changed: update the in-app texts')
+  for source in list(root.glob('*.kt'))+list((root/'ui-res').rglob('*.xml')):
+   for number,line in enumerate(source.read_text().splitlines(),1):
+    for clause in re.split('[。；;]',line):
+     if ('中繼' in clause and '72 小時' in clause) or '退役標記' in clause or ('登記' in clause and '90 天' in clause):
+      self.fail(f'{source.name}:{number} states relay retention that the relay does not implement: {clause[:60]}')
+ def test_user_facing_documents_have_no_branch_or_draft_language(self):
+  root=Path(__file__).resolve().parents[1]
+  names=['README.md','docs/ig-guard-terms-of-service.md','docs/ig-guard-privacy-policy.md','docs/ig-guard-data-deletion.md','docs/local-storage-security.md','docs/releases/4.9-beta.4.md']
+  banned=['本分支','on this branch','source draft','來源草稿','security/hardening-2026-11-17','not an announcement of a published APK','Local commits do not']
+  for name in names:
+   text=(root/name).read_text()
+   for phrase in banned:self.assertNotIn(phrase,text,f'{name}: {phrase}')
+  consent=(root/'AppConsent.kt').read_text()
+  revision=re.search(r'VERSION = "([^"]+)"',consent).group(1)
+  self.assertIn('Terms revision: '+revision,(root/'docs/ig-guard-terms-of-service.md').read_text())
+  for name in names[2:4]+names[5:]:
+   self.assertNotIn('2026-11-18-v2',(root/name).read_text(),name)
+ def test_changelog_has_one_entry_for_this_version(self):
+  text=(Path(__file__).resolve().parents[1]/'CHANGELOG.md').read_text()
+  self.assertEqual(1,text.count('## 4.9-beta.4'))
+  self.assertNotIn('## Unreleased',text)
  def test_monitoring_is_declared(self):
   workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/build-apk.yml').read_text()
   self.assertTrue('android:name="isMonitoringTool" android:value="child_monitoring"' in workflow, "Missing parental-monitoring declaration")

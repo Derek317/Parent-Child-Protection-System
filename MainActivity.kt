@@ -3671,7 +3671,7 @@ class MainActivity : Activity() {
                 })
             addView(label("家長可收到 Instagram 實際擷取的傳入訊息；按「你的擷取範圍」選項，亦可包含已送出的傳出訊息及信任對象的一般脈絡。這比只轉傳部分傳入警報的範圍更廣。",15f,t.textPrimary,bottomPad=16))
             addView(label("此版本不再讀取 DM、留言及限時動態輸入框的未送出文字；只使用輸入框位置及提示辨識畫面。舊版已保留的草稿仍可查看及刪除；已排隊的舊記錄仍可能送達。",14f,t.textSecondary,bottomPad=14))
-            addView(label("內容會先在此手機加密，經本 App 的 Cloudflare 中繼傳送至配對家長手機。新待傳記錄及中繼離線密文最多保留 72 小時；家長新封存預設 30 天，可縮短為 7 天，個別記錄可明確保留一次 90 天。舊封存須預覽及確認採用期限。開發者及 Cloudflare 可處理密文及連線資料，中繼不會取得家庭解密金鑰。",14f,t.textSecondary,bottomPad=14))
+            addView(label("內容會先在此手機加密，經本 App 的 Cloudflare 中繼傳送至配對家長手機。手機上新待傳記錄最多保留 72 小時；中繼站上未被取走的密文最多保留 7 天；家長新封存預設 30 天，可縮短為 7 天，個別記錄可明確保留一次 90 天。舊封存須預覽及確認採用期限。開發者及 Cloudflare 可處理密文及連線資料，中繼不會取得家庭解密金鑰。",14f,t.textSecondary,bottomPad=14))
             addView(label("只能保留通知及畫面實際提供的內容；未顯示、未擷取或已過期的內容無法復原。確認範圍不代表 App 已獲法律認證或 Meta 授權。可在「你的擷取範圍」停止擷取及待傳送，並選擇捨棄佇列；也可在 Android 撤銷權限。已送達家長的副本需另行刪除。",13f,t.textMuted,bottomPad=18))
             if(policy.isNotEmpty() && !GuardEngine.fullCaptureEnabled(this@MainActivity)) {
                 addView(actionButton("我已了解，啟用雙向擷取",t.btnPrimaryBg,t.btnPrimaryText) {
