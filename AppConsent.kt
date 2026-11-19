@@ -48,6 +48,13 @@ object AppConsent {
         } catch (e: Exception) { throw SecurityException("Consent record is unreadable; existing data was retained", e) }
     }
     // Background entry points fail closed if the device-bound receipt cannot be read.
+    /** True once per bundled revision/hash when the stored receipt records a different one. Never forces re-consent. */
+    fun termsUpdateNoticePending(ctx: Context): Boolean = try {
+        val saved = receipt(ctx)
+        val current = VERSION + ":" + documentHash(ctx)
+        saved != null && (saved.version != VERSION || saved.sha256 != documentHash(ctx)) && prefs(ctx).getString("terms_notice_seen", null) != current
+    } catch (_: Exception) { false }
+    fun markTermsUpdateNoticeSeen(ctx: Context) { prefs(ctx).edit().putString("terms_notice_seen", VERSION + ":" + documentHash(ctx)).apply() }
     fun hasAccepted(ctx: Context): Boolean = try { receipt(ctx) != null } catch (_: SecurityException) { false }
 
     @Synchronized internal fun accept(ctx: Context, checked: Set<String>) {

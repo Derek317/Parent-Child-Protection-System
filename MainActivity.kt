@@ -2944,7 +2944,7 @@ class MainActivity : Activity() {
             if (GuardEngine.isNotificationListenerEnabledStatic(this) && !GuardEngine.cpNotifConnected)
                 try { NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java)) } catch (_: Exception) {}
         }
-        openPendingEvidence(); maybeShowSafetyAdvice();maybeShowCaptureNotice()
+        openPendingEvidence(); maybeShowSafetyAdvice();maybeShowCaptureNotice();maybeShowTermsUpdatedNotice()
         uiHandler.removeCallbacks(statusTicker); uiHandler.post(statusTicker)
     }
     override fun onPause() {
@@ -3734,6 +3734,19 @@ class MainActivity : Activity() {
             })
             addView(actionButton("稍後設定",t.btnSecondaryBg,t.btnSecondaryText){dialog.dismiss()})
         }
+    }
+    /** One dismissible notice when the bundled Terms differ from the revision this phone accepted; no re-consent, no lock-out. */
+    private fun maybeShowTermsUpdatedNotice() {
+        if (!activityVisible || !parentUnlocked() || !AppConsent.termsUpdateNoticePending(this)) return
+        AppConsent.markTermsUpdateNoticeSeen(this)
+        val dialog = AlertDialog.Builder(this).setTitle("條款已更新")
+            .setMessage("IG Guard 的使用條款已更新（修訂 ${AppConsent.VERSION}）。你原來的同意記錄保持不變，不需要重新同意；請在方便時查看新條款。")
+            .setNegativeButton("知道了", null)
+            .setPositiveButton("查看條款") { _, _ ->
+                val t = currentTheme()
+                showSheet("使用條款與同意記錄") { _ -> addView(label(AppConsent.reviewText(this@MainActivity), 14f, t.textPrimary).apply { setTextIsSelectable(true) }) }
+            }.create()
+        trackDialog(dialog); dialog.show()
     }
     private fun maybeShowCaptureNotice() {
         if(!activityVisible || !GuardEngine.isChildMode(this) || section=="role" || activeSheet?.isShowing==true)return
