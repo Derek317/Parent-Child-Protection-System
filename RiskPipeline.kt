@@ -262,11 +262,22 @@ internal object RiskLocal {
         if (store) try {
             val kind = r.optString("conversation_kind", "unknown")
             val direction = r.optString("direction")
-            if (kind == "direct" && direction in setOf("incoming", "outgoing")) db.storeRiskMessage(scope, r.getString("event_id"), r.getString("conversation_key"),
+            val key = r.getString("conversation_key")
+            // direct: stored. unknown (most screen reads): stored while it shows at most one distinct incoming author; a second one
+            // makes it a group, which deletes what was kept and excludes the thread. group: never stored.
+            var eligible = kind == "direct"
+            if (kind == "unknown") {
+                if (db.riskExcluded(scope, key, now)) { db.noteRiskUnknown(scope, key, now) }
+                else {
+                    eligible = true
+                    val author = r.optString("author").trim().removePrefix("@").lowercase()
+                    if (direction == "incoming" && author.isNotEmpty() && db.noteRiskAuthor(scope, key, author, now) > 1) { db.excludeRiskThread(scope, key, now); eligible = false }
+                }
+            }
+            if (eligible && direction in setOf("incoming", "outgoing")) db.storeRiskMessage(scope, r.getString("event_id"), key,
                 r.optString("conversation_label"), direction, r.getString("text").replace("\u0000", ""), r.optLong("ts_ms"),
                 if (r.has("screen_anchor_ms")) r.getLong("screen_anchor_ms") else r.optLong("ts_ms"),
-                if (r.has("screen_order")) r.getLong("screen_order") else r.optLong("capture_order"), now)
-            else if (kind == "unknown") db.noteRiskUnknown(scope, r.getString("conversation_key"), now)
+                if (r.has("screen_order")) r.getLong("screen_order") else r.optLong("capture_order"), now, r.optString("capture_source"))
         } catch (_: Exception) { Log.w("IGGuard", "Scoring store could not keep a message") }
         return true
     }

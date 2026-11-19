@@ -24,7 +24,7 @@ data class RetentionPreview(val retentionDays:Int,val legacyCount:Int,val legacy
     val expiredCount:Int,val pendingExpiredCount:Int,val preservedCount:Int)
 
 /** Content is encrypted; scopes, opaque IDs, timestamps, reasons and workflow flags remain clear. */
-class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 8), java.io.Closeable {
+class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 9), java.io.Closeable {
     companion object {
         private val openLock=Any()
         private const val DAY=86_400_000L
@@ -115,7 +115,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.execSQL("INSERT INTO archive_maintenance VALUES(1)")
         }
         if(oldVersion<6)retentionSchema(db)
-        if(oldVersion<8)riskSchema(db)
+        if(oldVersion<9)riskSchema(db)
     }
     private fun retentionSchema(db:SQLiteDatabase) {
         // NULL marks existing archives for preview and explicit adoption, never first-open erasure.
@@ -431,7 +431,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     fun deleteOtherArchives(scope: String) {
         val db=writableDatabase;db.beginTransaction()
         try {
-            val scopes=db.rawQuery("SELECT scope FROM evidence WHERE scope<>? UNION SELECT scope FROM fragments WHERE scope<>? UNION SELECT scope FROM capture_windows WHERE scope<>? UNION SELECT scope FROM outbox WHERE scope<>? AND role='child' AND relay_kind IN ('data','urgent') UNION SELECT scope FROM risk_store WHERE scope<>? UNION SELECT scope FROM risk_threads WHERE scope<>? UNION SELECT scope FROM risk_results WHERE scope<>? UNION SELECT scope FROM risk_unknown WHERE scope<>? UNION SELECT scope FROM risk_scores WHERE scope<>? UNION SELECT scope FROM risk_state WHERE scope<>?",arrayOf(scope,scope,scope,scope,scope,scope,scope,scope,scope,scope)).use{c->buildList{while(c.moveToNext())add(c.getString(0))}}
+            val scopes=db.rawQuery("SELECT scope FROM evidence WHERE scope<>? UNION SELECT scope FROM fragments WHERE scope<>? UNION SELECT scope FROM capture_windows WHERE scope<>? UNION SELECT scope FROM outbox WHERE scope<>? AND role='child' AND relay_kind IN ('data','urgent') UNION SELECT scope FROM risk_store WHERE scope<>? UNION SELECT scope FROM risk_threads WHERE scope<>? UNION SELECT scope FROM risk_results WHERE scope<>? UNION SELECT scope FROM risk_unknown WHERE scope<>? UNION SELECT scope FROM risk_authors WHERE scope<>? UNION SELECT scope FROM risk_scores WHERE scope<>? UNION SELECT scope FROM risk_state WHERE scope<>?",arrayOf(scope,scope,scope,scope,scope,scope,scope,scope,scope,scope,scope)).use{c->buildList{while(c.moveToNext())add(c.getString(0))}}
             for(old in scopes)deleteArchive(old)
             db.setTransactionSuccessful()
         }
@@ -439,7 +439,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     }
 
     // ---- Scores-only mode (schema 7). Child: risk_store, risk_threads, risk_results, risk_unknown. Parent: risk_scores, risk_state. ----
-    private val riskChildTables=listOf("risk_store","risk_threads","risk_results","risk_unknown")
+    private val riskChildTables=listOf("risk_store","risk_threads","risk_results","risk_unknown","risk_authors")
     private val riskParentTables=listOf("risk_scores","risk_state")
     private val riskTables=riskChildTables+riskParentTables
     private fun riskSchema(db:SQLiteDatabase) {
@@ -449,6 +449,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_threads(scope TEXT NOT NULL,thread_index TEXT NOT NULL,label TEXT NOT NULL,scored_seq INTEGER NOT NULL DEFAULT 0,sent_sig TEXT NOT NULL DEFAULT '',PRIMARY KEY(scope,thread_index))")
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_results(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,thread_index TEXT NOT NULL,score REAL,reason TEXT,scored_at INTEGER NOT NULL)")
         db.execSQL("CREATE INDEX IF NOT EXISTS risk_results_thread ON risk_results(scope,thread_index,scored_at)")
+        // Content-free: which distinct incoming authors an unknown-kind thread has shown (blind indexes only).
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_authors(scope TEXT NOT NULL,thread_index TEXT NOT NULL,author_index TEXT NOT NULL,seen_at INTEGER NOT NULL,PRIMARY KEY(scope,thread_index,author_index))")
+        addColumn(db,"risk_store","body_hash","TEXT NOT NULL DEFAULT ''")
+        addColumn(db,"risk_store","source","TEXT NOT NULL DEFAULT ''")
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_unknown(scope TEXT NOT NULL,thread_index TEXT NOT NULL,seen_at INTEGER NOT NULL,PRIMARY KEY(scope,thread_index))")
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_scores(scope TEXT NOT NULL,label_index TEXT NOT NULL,label TEXT NOT NULL,result TEXT NOT NULL,scored_at INTEGER NOT NULL,first_reached_50 INTEGER,PRIMARY KEY(scope,label_index))")
         // Content-free replay guard: the last 64 report ids per scope survive deleteArchive, like the seen tombstones.
@@ -478,6 +482,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("DELETE FROM risk_store WHERE scope=? AND stamp<?",arrayOf(scope,cutoff))
         db.execSQL("DELETE FROM risk_results WHERE scope=? AND scored_at<?",arrayOf(scope,cutoff))
         db.execSQL("DELETE FROM risk_unknown WHERE scope=? AND seen_at<?",arrayOf(scope,cutoff))
+        db.execSQL("DELETE FROM risk_authors WHERE scope=? AND seen_at<?",arrayOf(scope,cutoff))
         db.execSQL("DELETE FROM risk_threads WHERE scope=? AND thread_index NOT IN (SELECT thread_index FROM risk_store WHERE scope=?) AND thread_index NOT IN (SELECT thread_index FROM risk_results WHERE scope=?)",arrayOf(scope,scope,scope))
         // Parent copies expire on the archive's clock, counted from the time they were scored.
         val retention=(now-retentionDays(scope)*DAY).toString()
@@ -491,13 +496,17 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     fun markCaptured(scope:String,id:String):Boolean =
         writableDatabase.insertWithOnConflict("capture_seen",null,ContentValues().apply{put("scope",scope);put("id",id)},SQLiteDatabase.CONFLICT_IGNORE)!=-1L
     /** Child: stores one direct-thread message (caller's transaction) and enforces 60 messages per thread and 14 days. */
-    fun storeRiskMessage(scope:String,id:String,threadKey:String,label:String,direction:String,text:String,stamp:Long,sortStamp:Long,sortOrder:Long,now:Long):Boolean {
+    fun storeRiskMessage(scope:String,id:String,threadKey:String,label:String,direction:String,text:String,stamp:Long,sortStamp:Long,sortOrder:Long,now:Long,source:String=""):Boolean {
         require(direction in setOf("incoming","outgoing"))
         val db=writableDatabase;val thread=index(scope,"conversation",threadKey)
+        val bodyHash=index(scope,"risk_body",text)
+        // The same message read twice through different routes (a notification and the screen) is kept once.
+        if(source.isNotEmpty() && db.rawQuery("SELECT 1 FROM risk_store WHERE scope=? AND thread_index=? AND direction=? AND body_hash=? AND source<>? AND source<>'' AND ABS(stamp-?)<=120000 LIMIT 1",
+                arrayOf(scope,thread,direction,bodyHash,source,stamp.toString())).use{it.moveToFirst()})return false
         val row=ContentValues().apply {
             put("scope",scope);put("id",id);put("thread_index",thread);put("direction",direction)
             put("label",seal(scope,"risk_store",id,"label",label));put("body",seal(scope,"risk_store",id,"body",text))
-            put("stamp",stamp);put("sort_stamp",sortStamp);put("sort_order",sortOrder)
+            put("stamp",stamp);put("sort_stamp",sortStamp);put("sort_order",sortOrder);put("body_hash",bodyHash);put("source",source)
         }
         val inserted=db.insertWithOnConflict("risk_store",null,row,SQLiteDatabase.CONFLICT_IGNORE)!=-1L
         if(inserted) {
@@ -507,7 +516,22 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         }
         return inserted
     }
-    /** Child: counts a thread of unknown kind without keeping any text. */
+    /** Child: true while [threadKey] is marked as looking like a group chat (excluded, within the 14-day window). */
+    fun riskExcluded(scope:String,threadKey:String,now:Long):Boolean = readableDatabase.rawQuery("SELECT 1 FROM risk_unknown WHERE scope=? AND thread_index=? AND seen_at>=?",
+        arrayOf(scope,index(scope,"conversation",threadKey),(now-RiskLimits.DAYS*DAY).toString())).use{it.moveToFirst()}
+    /** Child: records an incoming author of an unknown-kind thread (blind index only) and returns how many distinct ones it has shown. */
+    fun noteRiskAuthor(scope:String,threadKey:String,author:String,now:Long):Int {
+        val db=writableDatabase;val thread=index(scope,"conversation",threadKey)
+        db.insertWithOnConflict("risk_authors",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);put("author_index",index(scope,"risk_author",author));put("seen_at",now)},SQLiteDatabase.CONFLICT_REPLACE)
+        return db.rawQuery("SELECT COUNT(*) FROM risk_authors WHERE scope=? AND thread_index=? AND seen_at>=?",arrayOf(scope,thread,(now-RiskLimits.DAYS*DAY).toString())).use{it.moveToFirst();it.getInt(0)}
+    }
+    /** Child: an unknown-kind thread that shows a second incoming author is a group: delete what was kept and mark it excluded. */
+    fun excludeRiskThread(scope:String,threadKey:String,now:Long) {
+        val db=writableDatabase;val thread=index(scope,"conversation",threadKey)
+        for(table in listOf("risk_store","risk_results","risk_threads","risk_authors"))db.delete(table,"scope=? AND thread_index=?",arrayOf(scope,thread))
+        noteRiskUnknown(scope,threadKey,now)
+    }
+    /** Child: marks a thread excluded (looks like a group chat or its type cannot be confirmed); keeps no text. */
     fun noteRiskUnknown(scope:String,threadKey:String,now:Long) {
         writableDatabase.insertWithOnConflict("risk_unknown",null,ContentValues().apply{put("scope",scope);put("thread_index",index(scope,"conversation",threadKey));put("seen_at",now)},SQLiteDatabase.CONFLICT_REPLACE)
     }
