@@ -164,6 +164,14 @@ class ParentIdentityTest {
         assertTrue(TestKeyStore.privateKeys.isEmpty())
     }
 
+    @Test fun verifiedLegacyIdentityMatchesOnlyThePinnedPublicKey() {
+        val legacy = FamilySecurity.newSigningIdentity()
+        assertEquals(legacy, FamilySecurity.verifiedLegacyIdentity(legacy.privateKey, legacy.publicKey))
+        rejects { FamilySecurity.verifiedLegacyIdentity(legacy.privateKey, FamilySecurity.newSigningIdentity().publicKey) }
+    }
+
+    /** Storage-layer contract: the import itself still fails closed; GuardEngine.parentIdentity falls back to the verified
+     * legacy key (see ParentKeyFallbackTest) so reception is never blocked by this failure. */
     @Test fun importFailureRetainsLegacyTrustForRetry() {
         val legacy = FamilySecurity.newSigningIdentity()
         TestKeyStore.failEcImport = true

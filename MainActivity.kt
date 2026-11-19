@@ -437,13 +437,49 @@ object GuardEngine {
             ?: FamilySecurity.passwordVerifier(getPin(ctx)).also { prefs(ctx).edit().putString("parent_share_verifier", it).apply() }
     }
 
+    private class IdentityCache(val identity: FamilySecurity.SigningIdentity, val publicPref: String?, val legacyPref: String?, val legacyFallback: Boolean)
+    @Volatile private var identityCache: IdentityCache? = null
+    /** Count of preference commits made while resolving the identity (tests assert repeated calls do not write). */
+    @Volatile internal var identityWrites = 0
+    /** Test hook: behave like a freshly started process, which retries a failed Keystore import. */
+    internal fun forgetParentIdentityCache() { identityCache = null }
+    /** True while the parent still signs with its verified pre-update key because the Keystore import failed. */
+    fun parentKeyMigrationPending(ctx: Context): Boolean {
+        if (!isParentMode(ctx)) return false
+        try { parentIdentity(ctx) } catch (_: Exception) { return false }
+        return identityCache?.legacyFallback == true
+    }
+    /**
+     * The identity is resolved once per process (and again whenever the stored key preferences change), so relay frames and
+     * UI renders do not hit the Keystore or preferences each time. A failed Keystore import never blocks reception: the verified
+     * legacy key keeps working and the import is retried at the next start. The legacy key is removed only after the Keystore key
+     * has been proven to match the public key the child trusts.
+     */
     private fun parentIdentity(ctx: Context): FamilySecurity.SigningIdentity {
         check(isParentMode(ctx))
         recoverFreshFamily(ctx)
-        val identity=FamilySecurity.loadOrCreateParentIdentity(ctx,prefs(ctx).getString("parent_signing_private",null),prefs(ctx).getString("parent_signing_public",null))
-        // Remove legacy exportable material only after the imported key and pinned trust verify.
-        check(prefs(ctx).edit().putString("parent_signing_public",identity.publicKey).remove("parent_signing_private").commit())
-        return identity
+        val p = prefs(ctx)
+        val pub = p.getString("parent_signing_public", null); val legacy = p.getString("parent_signing_private", null)
+        identityCache?.let { if (it.publicPref == pub && it.legacyPref == legacy) return it.identity }
+        return synchronized(pollLock) {
+            try {
+                val identity = FamilySecurity.loadOrCreateParentIdentity(ctx, legacy, pub)
+                if (pub != identity.publicKey || legacy != null) {
+                    // Remove legacy exportable material only after the imported key and pinned trust verify.
+                    check(p.edit().putString("parent_signing_public", identity.publicKey).remove("parent_signing_private").commit())
+                    identityWrites++
+                }
+                identityCache = IdentityCache(identity, identity.publicKey, null, false)
+                identity
+            } catch (failure: Exception) {
+                val oldKey = legacy?.takeIf { it.isNotEmpty() }; val trusted = pub?.takeIf { it.isNotEmpty() }
+                if (oldKey == null || trusted == null) throw failure
+                val identity = try { FamilySecurity.verifiedLegacyIdentity(oldKey, trusted) } catch (_: Exception) { throw failure }
+                addCheckpointLog(ctx, "CP0-KEY", "Keystore import failed; continuing with the verified existing key and retrying at next start")
+                identityCache = IdentityCache(identity, pub, legacy, true)
+                identity
+            }
+        }
     }
 
     fun relayPublicKey(ctx:Context):String = synchronized(pollLock) {
@@ -2985,6 +3021,8 @@ class MainActivity : Activity() {
         scrollView.addView(rootContainer)
         contentFrame.addView(scrollView, FrameLayout.LayoutParams(-1, -1))
         unlockTimerText = null
+        if (role == "parent" && GuardEngine.parentKeyMigrationPending(this))
+            rootContainer.addView(label("金鑰升級尚未完成：目前仍使用原有簽署金鑰，接收及指令不受影響；下次開啟 App 會再試一次。", 13f, t.warmHoney, bottomPad = 14))
         when {
             section == "role" -> renderRoleChoice(t)
             section == "parent_setup" && role == "unconfigured" -> renderParentSetup(t)
