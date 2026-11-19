@@ -151,7 +151,7 @@ class ValidateTests(unittest.TestCase):
         def low_cjk(r):
             for x in r[i]["messages"]:
                 x["text"] = "hello there friend how are you today 好"
-        self.assertProblem(low_cjk, "needs at least 60%")
+        self.assertProblem(low_cjk, "needs at least 50%")
 
         def no_markers(r):
             for x in r[i]["messages"]:
