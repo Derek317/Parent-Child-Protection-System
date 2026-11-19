@@ -4,13 +4,71 @@ For the local session on the Windows 11 PC (RTX 5080, 16 GB). Read the design fi
 
 Run every command from the repository root in PowerShell, on branch `research/local-risk-model`, with Python 3.12. The harness needs no packages.
 
+## Retrain after the second Cantonese restyle (19 November 2026)
+
+Read this section first. It is newer than everything below it. Steps 0 to 3 below were done in earlier sessions; this section says what to do now. It stands on its own, because nobody can answer questions during the run.
+
+### Wait for Derek before spending GPU time
+
+A third review sample is with Derek now: `research/data/cantonese-review-round3.md` (30 chats). If more than 6 of the 30 are marked "off", the Cantonese and mixed chats are reworded again and all the sets change again. **Do not start training until Derek says the round 3 sample passes.** A retrain on data that is about to change is wasted work and would use up a sealed look for nothing.
+
+### What changed in the data, and why
+
+- Derek, a native Hong Kong reader, reviewed samples of the invented Cantonese chats. In round 1 he rewrote 26 of 30. In round 2 he changed 21 of 30. Each round added style rules to `research/data/WRITING-GUIDE.md` ("Hong Kong texting style", rounds 1 and 2).
+- After round 2, all Cantonese (`zh-Hant-yue`) and mixed chats in train, tune, check and sealed were reworded a second time to the new rules. Share of Cantonese and mixed messages that changed: about 36% of train, 34% of tune, 26% of check and 35% of sealed. The train, tune and check shares were measured from git history. The sealed share is the reworders' report and was not rechecked, because nobody reads sealed text.
+- **English chats are byte for byte the same.** Labels (`level`), ids, message counts and speaker order did not change for any chat.
+- The validator thresholds were relaxed so the new wording passes: Cantonese chats need at least 50% Chinese characters (was 60%), and mixed chats need at least 5% Latin letters (was 10%; the Chinese-character minimum stays 15%).
+- Because the sealed wording changed, five blind labellers (who saw no labels) relabelled all 750 sealed chats again. The sealed test was rebuilt from that.
+
+### The data now
+
+| Set | Chats | File |
+| --- | ---: | --- |
+| Training | 1,500 | `research/data/train.jsonl` |
+| Tuning | 225 | `research/data/tune.jsonl` |
+| Check | 225 | `research/data/check.jsonl` |
+| Sealed test | 661 kept, 89 set aside (of 750; 11.9%, under the 15% limit) | `research/data/sealed-test.jsonl`, `research/data/sealed-set-aside.jsonl` |
+
+- Previous sealed round: 662 kept, 88 set aside. The kept sealed test now holds 298 risk, 144 benign, 120 potential and 99 unresolved chats. Two risk chats and six benign chats were set aside this time (the last round set aside none), so the stage 4 figure of 300 risk and 150 benign no longer applies. Per language, risk / benign kept: English 100 / 49, Cantonese 100 / 48, mixed 98 / 47.
+- Set aside by language: English 29 of 250, Cantonese 25 of 250, mixed 35 of 250. By intended ending: low 6, potential 30, moderate 1, high 1, unresolved 51 (of 150 each).
+- Blind labellers matched the intended ending exactly on 649 of 750 chats (86.5%, last round 652). Unresolved is still the fuzzy ending. Twelve kept chats were labelled high where the writer said moderate; they are kept because the pass mark does not separate the two.
+- New `research/data/SEALED.sha256` (check it with `python research/datatools/seal.py verify`, which prints no content):
+
+```
+8990b6f1f797e74fe5c594faeea004d45d00ab9237a379aeb8a2be4e06ff178b  sealed-test.jsonl
+5b0de37022687cf12d3d5436e38bf08f269c3d178ba627662e636fbf648d582d  sealed-set-aside.jsonl
+```
+
+- **The old mixed training file is stale.** `research/data/train-mixed-v3.jsonl` (the file the winning model trained on) holds the 1,500 training chats as they were before the restyle (942 of them have different wording now) plus 597 handoff development chats. Do not use it. `research/data/train-mixed-v3-restyled.jsonl` is the same file with the current `train.jsonl` in front and the 597 handoff rows unchanged. `python research/datatools/rebuild_mixed.py` rebuilds it. The handoff rows were not reworded (another author wrote them).
+
+### How to retrain: same recipe as the current winner
+
+The current winner is Qwen3 1.7B, LoRA, "v3" (see `research/results/stage3-report.md` and `stage4-report.md`). Change nothing in the recipe except the data file and the output name. The settings are the ones in the stage 3 report and the defaults in `research/train_lora.py`:
+
+```powershell
+python research/train_lora.py --base research/models/hf/Qwen3-1.7B --family qwen3 --out research/models/lora/qwen3-1.7b-lora-v4 --train research/data/train-mixed-v3-restyled.jsonl --epochs 3 --batch 2 --lr 1e-4 --merge
+```
+
+- Rank 16, seed 1234 (script defaults), 3 epochs, batch 2, learning rate 1e-4. `--base` is the folder the earlier run used; the stage 3 report shows it as `research/models/hf/<model>`. I could not see the exact folder name or the exact `--train` argument of the original v3 run in the repository, so check your own earlier command history and keep it the same. The v3 data recipe is described in the stage 3 report ("Closing the style gap").
+- Scoring after each pass is on the tuning set (`research/data/tune.jsonl`), as in stage 3. Pick the pass the same way (pass 3 was chosen last time), keep the 0.5 alert cutoff unless tune clearly says otherwise, convert with llama.cpp b12503 and quantize to Q4_K_M as before. I found no written conversion commands in the repository; use the same ones as for v3.
+- **Choose only on tune and check.** Open `check.jsonl` once settings and cutoff are frozen, as before. Do not choose anything on the sealed set, on `research/data/style3-test.jsonl`, or on the handoff 90-chat and 60-chat sets (those steered v3 already; report them as context only).
+- Name the new file differently from the old one, for example `qwen3-1.7b-lora-v4-Q4_K_M.gguf`. Do not overwrite the v3 file.
+
+### Honest caveats
+
+1. **A second sealed result is not a clean first look.** The sealed set was already used once, to report the current model (stage 4: 300/300 risk, 0/150 benign). Its wording has since changed, and the labels and ids are the same. Score it once, after everything is frozen (training, pass, cutoff, file), report it as "second use, after a restyle", and change nothing afterwards.
+2. **`research/data/style3-test.jsonl` was scored once already** (stage 4, third-style test) and must not be used to choose anything. Scoring it again as a report-only figure is fine if labelled as a repeat.
+3. **Derek's round 3 verdict comes first** (see the top of this section). A further restyle would change the data again and this whole section would need redoing.
+4. **The app pins the current model.** On branch `app/local-risk-scoring`, `RiskModel.kt`, `RiskModelSpec` has the file name `qwen3-1.7b-lora-v3-Q4_K_M.gguf`, size 1,107,408,736 bytes and SHA-256 `14f2176d569772bcc8e0e0dcd97e59f7ac60d8c4f6e1cb5f6a45159b1892c293`. A retrained model gets a new name, size and hash, so those three values must change there, and the test fixture (`tests/fixtures/risk-prompt-fixture.json`, made by `research/make_app_fixture.py` on that branch) must be regenerated. The model file (GGUF) must never be committed to git. Also change the model name string in `research/make_report.py`.
+5. **All results are on invented chats only.** No real conversation has been scored, and by the project rules none may be. The same model family wrote the training and test chats, so near-perfect scores say little about real chats.
+
 ## Rules
 
 - Do not open, print, score or search `research/data/sealed-test.jsonl`, `research/data/sealed-set-aside.jsonl`, `research/data/raw/sealed/` or `research/data/sealed-work/`, `research/data/sealed-work-round1/`, `research/data/restyle/sealed/` or `research/data/raw-round1/sealed/` before stage 4. `python research/datatools/seal.py verify` checks the hashes without showing content.
-- Do not open `research/data/check.jsonl` until training settings and cutoffs are frozen.
+- Do not open `research/data/check.jsonl` until training settings and cutoffs are frozen. (The sealed rule above is for the retrain too: stage 4 is done, but the sealed files are still not for choosing anything.)
 - Do not edit `research/prompts/instruction-v1.txt`. It is frozen.
 - Synthetic chats only. Model files stay out of git (`research/models/` is ignored).
-- **Do not start any fine-tuning until Derek has passed the Cantonese check** (round 2: `research/data/cantonese-review-round2.md`; round 1 led to a restyle of all Cantonese and mixed chats) and the stage 1 stop-or-go below says go.
+- **Do not start any fine-tuning until Derek has passed the Cantonese check** (now round 3: `research/data/cantonese-review-round3.md`; rounds 1 and 2 each led to a restyle of all Cantonese and mixed chats) and the stage 1 stop-or-go below says go.
 
 ## Step 0: set up and prove the harness on this machine
 

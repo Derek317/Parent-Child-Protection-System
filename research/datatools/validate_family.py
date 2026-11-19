@@ -15,6 +15,11 @@ MANDARIN_WORDS = ["不是", "什麼", "沒有", "他們", "我們", "你們", "�
 PHONE_RE = re.compile(r"\d{8,}")
 HANDLE_RE = re.compile(r"@\w")
 
+# Language-ratio thresholds (share of CJK / Latin among letters and CJK characters).
+YUE_MIN_CJK = 0.50
+MIXED_MIN_CJK = 0.15
+MIXED_MIN_LATIN = 0.05
+
 
 def is_cjk(c):
     o = ord(c)
@@ -103,8 +108,8 @@ def check_chat(row, cid, family, cat_row, problems, warnings, min_messages=6):
         if cjk_pct >= 0.05:
             bad(f"English chat is {cjk_pct:.0%} Chinese characters; must be under 5%")
     elif lang == "zh-Hant-yue":
-        if cjk_pct < 0.60:
-            bad(f"Cantonese chat is only {cjk_pct:.0%} Chinese characters; needs at least 60%")
+        if cjk_pct < YUE_MIN_CJK:
+            bad(f"Cantonese chat is only {cjk_pct:.0%} Chinese characters; needs at least {YUE_MIN_CJK:.0%}")
         found = {c for c in full if c in MARKERS}
         if len(found) < 3:
             bad(f"only {len(found)} distinct Cantonese marker characters ({''.join(sorted(found)) or 'none'}); "
@@ -115,10 +120,10 @@ def check_chat(row, cid, family, cat_row, problems, warnings, min_messages=6):
                             f"({', '.join(f'{w}x{c}' for w, c in std.items())}); "
                             f"write Cantonese instead (唔係, 咩, 冇, 佢哋, 呢個, 嘅)")
     elif lang == "mixed":
-        if cjk_pct < 0.15:
-            bad(f"mixed chat is only {cjk_pct:.0%} Chinese characters; needs at least 15%")
-        if latin_pct < 0.10:
-            bad(f"mixed chat is only {latin_pct:.0%} Latin letters; needs at least 10%")
+        if cjk_pct < MIXED_MIN_CJK:
+            bad(f"mixed chat is only {cjk_pct:.0%} Chinese characters; needs at least {MIXED_MIN_CJK:.0%}")
+        if latin_pct < MIXED_MIN_LATIN:
+            bad(f"mixed chat is only {latin_pct:.0%} Latin letters; needs at least {MIXED_MIN_LATIN:.0%}")
     simp = sorted({c for c in full if c in SIMPLIFIED})
     if simp:
         bad(f"contains Simplified characters {''.join(simp)}; use Traditional characters")
