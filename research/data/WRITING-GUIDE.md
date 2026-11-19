@@ -87,7 +87,7 @@ Derek changed 21 of the 30 chats in the second review (43 of 380 messages, no ch
 - **Completion particles:** "check 咗先" and "del 曬佢" (曬 = all of it) were preferred to "check 先" and "del".
 - **Time and day words go before the adverb and verb:** "sat 真係去唔到", not "我真係 sat 去唔到" (Derek's note on s022-moderate-mixed).
 - **Drop a subject that points at the wrong person or is not needed.** "唔應該㗎，佢喺其他人面前講你好多嘢", not "你唔應該㗎，…": the 你 makes the first clause blame the child while the next clause is about someone else (Derek's note on s142-moderate-yue).
-- **Negation order in "not want to miss":** the reviewer's correction for s147-moderate-yue, quoted as he gave it and marked as corrected by the reviewer: "我唔想唔見到其他人" is a grammatical mistake and "should be 我唔見唔到其他人" (as corrected by the reviewer).
+- **Negation order in "not want to miss":** the reviewer's correction for s147-moderate-yue, quoted as he gave it and marked as corrected by the reviewer: "我唔想唔見到其他人" is a grammatical mistake and "should be 我唔想見唔到其他人" (as corrected by the reviewer).
 
 ## File format
 
