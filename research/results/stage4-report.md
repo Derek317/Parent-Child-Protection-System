@@ -50,3 +50,23 @@ The cloud session wrote `research/data/style3-test.jsonl` from a new guide (`res
 - This is the first test in a style the model was neither trained on nor steered by, and it holds up: clearly below the perfect sealed score, clearly above the pass mark.
 - Cantonese benign is the weakest cell (4 of 18 flagged, 22%, limit 30%). With 18 chats that is a wide range.
 - The writers were still the same model family as the training data's writers. Real chats remain untested.
+
+## d1 weight-edit arm (added later on 19 November 2026)
+
+Details: [`d1-probe/README.md`](d1-probe/README.md) and [`d1-edit/README.md`](d1-edit/README.md).
+
+- **Layer probe.** A straight-line rule on d1's activations separates risk from benign tuning chats at AUROC 0.98–1.00 from layer 3 to layer 14, 0.97 at the input to the head's first scoring layer and 0.93 at the input to its last. d1's own score gives 0.74. So d1 holds the signal for this data.
+- **Head edit.** That rule was fitted in closed form on the 900 risk and benign training chats and written into three existing tensors (3,074 entries, the handoff's two-neuron method), frozen, then scored once per set through the live decision call at the 0.5 cutoff.
+
+| Set | d1 untouched | d1 edited | Qwen3 1.7B v3, 4-bit |
+| --- | --- | --- | --- |
+| Check | 38/90 · 3/45, fail | 85/90 · 3/45, **pass** | 89/90 · 0/45, pass |
+| Third-style test | 30/120 · 14/55, AUROC 0.56 | 77/120 · 18/55, AUROC 0.76, fail | 112/120 · 6/55, AUROC 0.96, pass |
+| Handoff 90-chat | 32/36 · 29/36 | 35/36 · 36/36, AUROC 0.52, fail | 30/36 · 2/36, pass |
+| Handoff 60-chat | 16/24 · 7/12 | 21/24 · 7/12, fail | 22/24 · 3/12, fail by one |
+
+Cells are risk flagged · benign flagged.
+
+- **The edit works in the style it was fitted on and nowhere else**, the same pattern as the handoff's edits and as Qwen3 v1.
+- **The comparison is not like for like on the handoff sets.** The d1 edit was fitted on the new-style chats only; Qwen3 v3 also trained on 387 handoff-style development chats. The third-style test is the fair row: neither model saw that style.
+- **Decision: the fine-tuned Qwen3 1.7B is the model to carry forward.** A head edit can only re-read what d1's last layers already expose; fine-tuning changes what the model computes.
