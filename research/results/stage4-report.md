@@ -33,3 +33,20 @@ Sealed test, 4-bit, by language: English 100/100 risk and 0/50 benign; Cantonese
 - The d1 weight-edit arm (layer probe, head-edit refit). Not run.
 - The score-only report in the app's format, and the change to `RiskScoreReport.kt` so it accepts a model other than d1.
 - Speed and memory on a real phone.
+
+## Third-style test (added later on 19 November 2026)
+
+The cloud session wrote `research/data/style3-test.jsonl` from a new guide (`research/data/STYLE3-GUIDE.md`): 20 new settings, long messy threads, with writers who saw none of the earlier data. 270 of 300 chats were kept after a blind relabel. The frozen 4-bit model was scored on it once; nothing was changed afterwards.
+
+| Group | Risk flagged | Benign flagged | AUROC |
+| --- | --- | --- | --- |
+| **All** | **112/120 (93%)** | **6/55 (11%)** | **0.96** |
+| English | 37/40 | 1/19 | 0.97 |
+| Cantonese | 38/40 | 4/18 | 0.96 |
+| Mixed | 37/40 | 1/18 | 0.96 |
+
+**Pass**, overall and in each language. Also flagged: 2 of 49 potential chats and 3 of 46 unresolved chats. Exact level or `U` on 161 of 224 chats; `U` on 37 of 46 unresolved chats.
+
+- This is the first test in a style the model was neither trained on nor steered by, and it holds up: clearly below the perfect sealed score, clearly above the pass mark.
+- Cantonese benign is the weakest cell (4 of 18 flagged, 22%, limit 30%). With 18 chats that is a wide range.
+- The writers were still the same model family as the training data's writers. Real chats remain untested.
