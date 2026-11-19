@@ -813,9 +813,21 @@ object GuardEngine {
         } catch (_: Exception) { null }
     }
 
+    /** Parent secrets that a pairing link must never remove as a side effect. */
+    fun parentSecretsPresent(ctx: Context): Boolean = listOf("parent_master_password", "parent_share_verifier", "parent_signing_public", "parent_signing_private")
+        .any { !prefs(ctx).getString(it, null).isNullOrBlank() }
+    enum class PairingBlock { PARENT_ROLE, PARENT_DATA_PRESENT }
+    /** Why a pairing link cannot be used on this phone right now; null for a phone that may pair. */
+    fun pairingBlock(ctx: Context): PairingBlock? = when {
+        getRole(ctx) == "parent" -> PairingBlock.PARENT_ROLE
+        getRole(ctx) == "unconfigured" && parentSecretsPresent(ctx) -> PairingBlock.PARENT_DATA_PRESENT
+        else -> null
+    }
+
     fun applyPairing(ctx: Context, invite: FamilySecurity.Invite): Boolean = synchronized(pollLock) {
         if (!AppConsent.hasAccepted(ctx) || !FamilySecurity.validToken(invite.token) || !FamilySecurity.isVerifier(invite.passwordVerifier) ||
             (invite.parentPublicKey.isNotEmpty() && !FamilySecurity.validPublicKey(invite.parentPublicKey)) ||
+            pairingBlock(ctx) != null ||
             (isChildMode(ctx) && !isTemporarilyUnlocked(ctx))) return@synchronized false
         setFamilyToken(ctx, invite.token)
         // Pairing is a fresh authorization, even if the same family invite is reused.
@@ -2615,6 +2627,7 @@ class MainActivity : Activity() {
         setIntent(Intent(incoming).apply { this.data = null })
         if (incoming.action != Intent.ACTION_VIEW || !data.scheme.equals("igguard", true) || !data.host.equals("pair", true)) return
         val parsed = GuardEngine.parsePairingString(data.toString()) ?: return
+        if (showPairingBlock()) return
         if (GuardEngine.isChildMode(this) && !GuardEngine.isTemporarilyUnlocked(this)) {
             GuardEngine.sendAlertFromChild(this, "tamper_attempt", "Deep-Link Guard", "Blocked unauthorized attempt to replace locked family pairing.")
             Toast.makeText(this, "子女保護鎖定中，請先由家長解鎖。", Toast.LENGTH_LONG).show(); return
@@ -2633,7 +2646,18 @@ class MainActivity : Activity() {
             addView(actionButton("確認配對並切換為子女手機", t.btnPrimaryBg, t.btnPrimaryText) { if (acceptPairing(parsed)) onAccepted() })
         }
     }
+    /** Plain explanation when a phone that holds parent authority is offered a pairing link. */
+    private fun showPairingBlock(): Boolean {
+        val message = when (GuardEngine.pairingBlock(this)) {
+            GuardEngine.PairingBlock.PARENT_ROLE -> "此手機是家長手機，不能用配對邀請改成子女手機。請先離開家庭或重設，再使用邀請。"
+            GuardEngine.PairingBlock.PARENT_DATA_PRESENT -> "此手機仍保存家長資料，不會被配對邀請刪除。請先離開家庭或重設，再使用邀請。"
+            null -> return false
+        }
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        return true
+    }
     private fun acceptPairing(invite: FamilySecurity.Invite): Boolean {
+        if (showPairingBlock()) return false
         if (!GuardEngine.applyPairing(this, invite)) {
             Toast.makeText(this, "保護已上鎖，請先由家長解鎖再配對。", Toast.LENGTH_LONG).show(); return false
         }

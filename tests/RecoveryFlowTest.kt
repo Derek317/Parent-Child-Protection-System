@@ -36,9 +36,9 @@ class RecoveryFlowTest {
     private fun all(v: View):List<View> = listOf(v)+if(v is ViewGroup)(0 until v.childCount).flatMap{all(v.getChildAt(it))}else emptyList()
     private fun inviteIntent()=Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?token=01234567-89ab-cdef-0123-456789abcdef&pw="+FamilySecurity.encode("ParentPassword928!")))
     @Test fun externalInviteRequiresExplicitAcceptanceAndIsConsumed() {
-        GuardEngine.setRole(ctx,"parent")
+        GuardEngine.setRole(ctx,"unconfigured")
         val c=Robolectric.buildActivity(MainActivity::class.java,inviteIntent()).setup()
-        val a=c.get();assertEquals("parent",GuardEngine.getRole(ctx))
+        val a=c.get();assertEquals("unconfigured",GuardEngine.getRole(ctx))
         assertNull(a.intent.data)
         val d=ShadowDialog.getLatestDialog()
         all(d.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="確認配對並切換為子女手機"}.performClick()
@@ -51,6 +51,8 @@ class RecoveryFlowTest {
         val invitedToken=GuardEngine.getOrCreateFamilyToken(ctx)
         val parentCode=GuardEngine.getSafetyCode(ctx)
         GuardEngine.setRole(ctx,"unconfigured")
+        // Same device plays both phones: a real second phone holds no parent secrets.
+        LocalVault.preferences(ctx).edit().remove("parent_master_password").remove("parent_share_verifier").remove("parent_signing_public").commit()
         GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString())
         val previous=GuardEngine.getOrCreateFamilyToken(ctx)
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()

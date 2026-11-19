@@ -67,13 +67,9 @@ class NativeDesignTest {
         assertFalse(text(c.get()).any{it.contains("晴晴")||it.contains("ching.sample")||it.contains("R7K2M9")})
         c.destroy()
     }
+    /** A pairing link can no longer convert a parent phone (F3); any other role change must still dismiss privileged sheets. */
     private fun deliverPairing(a:MainActivity) {
-        val token=java.util.UUID.randomUUID().toString()
-        val pin=Base64.encodeToString(GuardEngine.generateRandomStrongPassword().toByteArray(),Base64.NO_WRAP or Base64.URL_SAFE)
-        val intent=Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?token=$token&pw=$pin"))
-        MainActivity::class.java.getDeclaredMethod("onNewIntent",Intent::class.java).apply{isAccessible=true}.invoke(a,intent)
-        val confirmation=ShadowDialog.getLatestDialog()
-        all(confirmation.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="確認配對並切換為子女手機"}.performClick()
+        GuardEngine.setRole(ctx,"child")
         MainActivity::class.java.getDeclaredMethod("renderUi",Boolean::class.javaPrimitiveType).apply{isAccessible=true}.invoke(a,false)
     }
     private fun openParentKeySheet(a:MainActivity):android.app.Dialog {

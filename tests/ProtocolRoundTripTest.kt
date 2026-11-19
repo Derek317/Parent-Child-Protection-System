@@ -23,8 +23,14 @@ class ProtocolRoundTripTest {
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
         val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
         val privateKey=FamilySecurity.loadOrCreateParentIdentity(ctx,null,invite.parentPublicKey).privateKey
+        simulateLeavingParentRole()
         assertTrue(GuardEngine.applyPairing(ctx,invite))
         return privateKey to invite.token
+    }
+    /** One test device plays both phones: drop the parent role and secrets (keeping the Keystore key) before the child pairs. */
+    private fun simulateLeavingParentRole() {
+        GuardEngine.setRole(ctx,"unconfigured")
+        prefs.edit().remove("parent_master_password").remove("parent_share_verifier").remove("parent_signing_public").commit()
     }
     private fun command(type:String)=JSONObject().put("type",type).put("scope",GuardEngine.getChannelTopic(ctx))
         .put("command_id",UUID.randomUUID().toString()).put("ts_ms",System.currentTimeMillis())
@@ -49,6 +55,7 @@ class ProtocolRoundTripTest {
         assertEquals(parentCode,GuardEngine.getSafetyCode(ctx))
         val forged=invite.copy(parentPublicKey=FamilySecurity.newSigningIdentity().publicKey)
         assertNotEquals(parentCode,FamilySecurity.safetyCode(forged.token,forged.passwordVerifier,forged.parentPublicKey))
+        simulateLeavingParentRole()
         assertTrue(GuardEngine.applyPairing(ctx,invite))
         assertEquals(parentCode,GuardEngine.getSafetyCode(ctx))
     }
