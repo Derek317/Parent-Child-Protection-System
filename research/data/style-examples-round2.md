@@ -88,3 +88,9 @@ Each pair is one message as first written, then as Derek rewrote it. Learn the s
   after:  佢話 post 咩都要 check 咗先
 - before: 哈哈 thx 第三段要唔要刪
   after:  lol, thx 第三段要唔要刪
+- before: 吓，我想返正常堂喎，我唔想唔見到其他人
+  after:  吓，我想返正常堂喎，我唔見唔到其他人
+- before: sry 我真係 sat 去唔到
+  after:  sry sat 真係去唔到
+- before: 你唔應該㗎，佢喺其他人面前講你好多嘢
+  after:  唔應該㗎，佢喺其他人面前講你好多嘢
