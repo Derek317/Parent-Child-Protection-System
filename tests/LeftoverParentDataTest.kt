@@ -65,4 +65,19 @@ class LeftoverParentDataTest {
         TestKeyStore.failReads=false
         assertFalse("a failed identity deletion is reported, not thrown to the UI",ok)
     }
+
+    @Test fun withoutAScreenLockTheLeftoverRemovalExplainsInsteadOfShowingADeadLockScreen() {
+        shadowOf(ctx.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).setIsDeviceSecure(false)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("移除此手機上的家長資料")==true}.performClick();idle()
+            (ShadowDialog.getLatestDialog() as android.app.AlertDialog).getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();idle()
+            assertFalse("no parent lock screen on an unconfigured phone",all(a.window.decorView).any{it.tag=="parent_privacy_lock"})
+            val texts=ShadowDialog.getShownDialogs().filter{it.isShowing}.flatMap{d->all(d.window!!.decorView).filterIsInstance<android.widget.TextView>().map{it.text.toString()}}
+            assertTrue(texts.any{it.contains("螢幕鎖")})
+            assertTrue(ShadowDialog.getShownDialogs().any{d->d.isShowing && all(d.window!!.decorView).filterIsInstance<android.widget.Button>().any{it.text.toString()=="開啟安全設定"}})
+            assertTrue("data is untouched",GuardEngine.parentSecretsPresent(ctx))
+            assertTrue("still on the role screen",all(a.window.decorView).any{it.tag=="entry_parent"})
+        } finally {c.pause().stop().destroy()}
+    }
 }

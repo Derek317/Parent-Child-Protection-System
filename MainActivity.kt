@@ -2578,7 +2578,17 @@ class MainActivity : Activity() {
     private fun requestParentAuthentication(action: (() -> Unit)? = null, fresh: Boolean = false, anyRole: Boolean = false) {
         if((!GuardEngine.isParentMode(this) && !anyRole) || parentAuthPending)return
         val keyguard=getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
-        if(keyguard?.isDeviceSecure != true){Toast.makeText(this,"請先設定 Android 螢幕鎖。",Toast.LENGTH_LONG).show();renderParentLock();return}
+        if(keyguard?.isDeviceSecure != true){
+            if(GuardEngine.isParentMode(this)){Toast.makeText(this,"請先設定 Android 螢幕鎖。",Toast.LENGTH_LONG).show();renderParentLock()}
+            else {
+                // Not a parent screen: explain and stay where we are instead of showing a dead lock screen.
+                val notice=AlertDialog.Builder(this).setTitle("需要手機螢幕鎖").setMessage("要確認這個操作，請先在 Android 設定螢幕鎖，然後再試一次。")
+                    .setNegativeButton("知道了",null)
+                    .setPositiveButton("開啟安全設定"){_,_->try{startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))}catch(_:Exception){}}.create()
+                trackDialog(notice);notice.show()
+            }
+            return
+        }
         parentAuthSession=GuardEngine.captureRelaySession(this);parentAuthAction=action;parentAuthPending=true;parentAuthFresh=fresh
         try {
             if(Build.VERSION.SDK_INT>=30) {
@@ -2796,7 +2806,7 @@ class MainActivity : Activity() {
         selectedEntryRole = restoredState?.getString("entry_role") ?: ""
         chartMode = restoredState?.getString("chart_mode") ?: "trend"
         alertFilter = restoredState?.getString("alert_filter") ?: "all"
-        displayed15MinCode = restoredState?.getString("unlock_code") ?: ""
+        displayed15MinCode = "" // a code is never restored from saved state; generating one needs a fresh authentication
         if (restoredState?.getString("draft_family") == GuardEngine.getChannelTopic(this) && renderedRole == GuardEngine.getRole(this)) {
             evidenceSearch = restoredState.getString("evidence_search") ?: ""
             evidenceSender = restoredState.getString("evidence_sender")
@@ -2860,7 +2870,7 @@ class MainActivity : Activity() {
         outState.putInt("private_storage_state_version",1)
         outState.putString("section", section); outState.putString("rendered_role", renderedRole)
         outState.putString("entry_role", selectedEntryRole); outState.putString("chart_mode", chartMode)
-        outState.putString("alert_filter", alertFilter); outState.putString("unlock_code", displayed15MinCode)
+        outState.putString("alert_filter", alertFilter)
         outState.putString("evidence_search", evidenceSearch); outState.putString("evidence_sender", evidenceSender)
         outState.putString("evidence_conversation_key",evidenceConversationKey);outState.putString("evidence_section",evidenceSection)
         outState.putString("evidence_review",evidenceReview);outState.putString("evidence_direction",evidenceDirection)
@@ -3671,7 +3681,7 @@ class MainActivity : Activity() {
                 addView(actionButton("加入信任好友並解除封鎖",t.btnSecondaryBg,t.btnSecondaryText) { addTrustedSender(handle);GuardEngine.syncTrustedFromParent(this@MainActivity);dialog.dismiss() })
             }
             addView(textAction("刪除此記錄") {
-                alert().setTitle("永久刪除此記錄？").setMessage("此操作會移除本機文字及收藏，無法復原。")
+                alert(critical = true).setTitle("永久刪除此記錄？").setMessage("此操作會移除本機文字及收藏，無法復原。")
                     .setNegativeButton("取消",null).setPositiveButton("刪除") { _,_ ->
                         FamilyEvidence(this@MainActivity).use{it.deleteMessage(scope,id)};dialog.dismiss();renderUi()
                     }.show()
@@ -3736,7 +3746,7 @@ class MainActivity : Activity() {
         showSheet("你的擷取範圍") { dialog ->
             addView(label("停止會同時阻止新擷取與尚未送出的內容。已送達家長的副本需在家長手機另行刪除。重新開始不會自動恢復雙向擷取，也不會重傳舊範圍的待傳記錄。",14f,t.textSecondary,bottomPad=12))
             if(!GuardEngine.collectionAllowed(this@MainActivity)) {
-                addView(actionButton("清除舊待傳記錄並重新開始傳入警報",t.btnPrimaryBg,t.btnPrimaryText){
+                addView(actionButton("清除舊待傳記錄並重新開始傳入警報",t.btnPrimaryBg,t.btnPrimaryText,critical=true){
                     GuardEngine.resumeCollection(this@MainActivity);dialog.dismiss();syncRoleServices();renderUi()
                 })
             } else {
