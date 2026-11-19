@@ -199,10 +199,14 @@ def main():
         for s in range(0, len(order), a.batch):
             rows = [train[i] for i in order[s:s + a.batch]]
             batch = collate([r["_ids"] for r in rows], tok.pad_token_id)
-            y = torch.tensor([ans_ids[target_idx[target_of(r["level"])]] for r in rows], device=device)
+            # A row may carry `allowed` (several acceptable answers, for binary-labelled chats); else its one level.
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=device == "cuda"):
                 logits = forward_last(model, batch, device)
-            loss = torch.nn.functional.cross_entropy(logits.float(), y)
+            ok = torch.zeros_like(logits, dtype=torch.bool)
+            for i, r in enumerate(rows):
+                ok[i, [ans_ids[target_idx[x]] for x in (r.get("allowed") or [target_of(r["level"])])]] = True
+            logp = torch.log_softmax(logits.float(), dim=-1)
+            loss = -torch.logsumexp(logp.masked_fill(~ok, float("-inf")), dim=-1).mean()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()

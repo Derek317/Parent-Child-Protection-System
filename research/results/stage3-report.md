@@ -40,3 +40,20 @@ Untrained, the same model scored 1/36 and 0/36 with AUROC 0.76 on the 90-chat se
 
 - d1 weight-edit arm (layer probe, head-edit refit).
 - Stage 4: the sealed test is unopened.
+
+## Closing the style gap (added later on 19 November 2026)
+
+Derek chose to fix the style gap before opening the sealed test. Two retrains of Qwen3 1.7B, same settings, 4-bit file scored through the harness:
+
+| Version | Training data | Tuning | Handoff 90-chat | Handoff 60-chat |
+| --- | --- | --- | --- | --- |
+| v1 | 1,500 new chats | 87/90 · 1/45, pass | 19/36 · 7/36, AUROC 0.64, fail | 10/24 · 0/12, AUROC 0.78, fail |
+| v2 | v1 + 105 levelled handoff development chats, three times each | 90/90 · 1/45, pass | 26/36 · 10/36, AUROC 0.80, fail | 22/24 · 3/12, AUROC 0.91, fail |
+| v3 | v2 + 282 binary-labelled handoff development chats | 89/90 · 1/45, pass | **30/36 · 2/36, AUROC 0.97, pass** | 22/24 · 3/12, AUROC 0.93, fail by one benign chat |
+
+Cells are risk flagged · benign flagged.
+
+- **Sources.** v2 adds `ordinal/context-data/fit.jsonl` and `selection.jsonl` from the handoff (families `f*` and `v*`). v3 adds `grounded/data/fit.jsonl`, `grounded/data/selection.jsonl`, `weight-fit.jsonl` and `weight-selection.jsonl`. No added chat has the same text as any chat in the two handoff test sets, and none comes from their `b*` families. Files: `research/data/train-mixed-v2.jsonl`, `train-mixed-v3.jsonl`.
+- **Binary labels.** Those 282 chats say only risk or benign. `train_lora.py` now accepts a row with `allowed`: a risk chat counts any of `1`, `2`, `3` as correct, a benign chat only `0`.
+- **What this means for the handoff sets.** The model was trained on chats by the same author and steered by watching these two sets, so they are now tuning sets, not independent tests. The sealed test is the only untouched set, and it is in the new style only.
+- **The check set was not rescored** for v2 or v3.
