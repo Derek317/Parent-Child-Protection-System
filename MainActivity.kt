@@ -188,9 +188,19 @@ object GuardEngine {
      * "stopped by the child" notice is queued first and given that long to reach the relay, because afterwards nothing is sent.
      */
     fun withdrawCollection(ctx: Context, discardPending: Boolean = true, noticeWaitMs: Long = 0L) {
-        if (noticeWaitMs > 0L && isChildMode(ctx) && transferAllowed(ctx))
-            noticeToParent(ctx, "Capture Control", "子女已在此手機停止擷取與傳送。之後不會再有新的提醒送到家長手機。", noticeWaitMs)
+        // The stop must always take effect: nothing about the notice may prevent or crash it.
+        try {
+            if (noticeWaitMs > 0L && isChildMode(ctx) && transferAllowed(ctx) && withdrawNoticeDue(ctx))
+                noticeToParent(ctx, "Capture Control", "子女已在此手機停止擷取與傳送。之後不會再有新的提醒送到家長手機。", noticeWaitMs)
+        } catch (_: Exception) { }
         withdrawNow(ctx, discardPending)
+    }
+    /** At most one "collection stopped" notice per hour (monotonic), so resume then stop again cannot spam the parent. */
+    private fun withdrawNoticeDue(ctx: Context): Boolean {
+        val p = prefs(ctx); val now = monotonicClock(); val boot = bootMarker(ctx); val last = p.getLong("withdraw_notice_rt", 0L)
+        if (last != 0L && p.getString("withdraw_notice_boot", "") == boot && now >= last && now - last < 60 * 60_000L) return false
+        p.edit().putLong("withdraw_notice_rt", now).putString("withdraw_notice_boot", boot).apply()
+        return true
     }
     private fun withdrawNow(ctx: Context, discardPending: Boolean) = synchronized(pollLock) {
         check(isChildMode(ctx))

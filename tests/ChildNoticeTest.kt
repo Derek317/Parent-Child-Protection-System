@@ -81,4 +81,27 @@ class ChildNoticeTest {
             assertFalse(GuardEngine.transferAllowed(ctx))
         } finally {c.pause().stop().destroy()}
     }
+
+    @Test fun repeatedWithdrawalsInsideAnHourSendOnlyOneNotice() {
+        var mono=7_000_000L
+        GuardEngine.monotonicClock={mono};GuardEngine.bootMarker={"3"}
+        try {
+            var sent=0;GuardEngine.beforeFamilySwitch={sent++}   // runs once per notice; resuming discards queued ones
+            fun notices()=sent
+            GuardEngine.withdrawCollection(ctx,false,noticeWaitMs=1_000L);assertEquals(1,notices())
+            mono+=60_000;GuardEngine.resumeCollection(ctx)
+            GuardEngine.withdrawCollection(ctx,false,noticeWaitMs=1_000L)
+            assertFalse(GuardEngine.collectionAllowed(ctx))
+            assertEquals("resume then withdraw must not spam the parent",1,notices())
+            mono+=61*60_000L;GuardEngine.resumeCollection(ctx)
+            GuardEngine.withdrawCollection(ctx,false,noticeWaitMs=1_000L)
+            assertEquals("a later window may notify once more",2,notices())
+        } finally {GuardEngine.monotonicClock={android.os.SystemClock.elapsedRealtime()};GuardEngine.bootMarker={"-1"}}
+    }
+    @Test fun aFailureWhileSendingTheNoticeNeverPreventsTheStop() {
+        GuardEngine.beforeFamilySwitch={throw IllegalStateException("simulated send failure")}
+        GuardEngine.withdrawCollection(ctx,true,noticeWaitMs=1_000L)
+        assertFalse("withdrawal always takes effect",GuardEngine.collectionAllowed(ctx))
+        assertFalse(GuardEngine.transferAllowed(ctx))
+    }
 }
