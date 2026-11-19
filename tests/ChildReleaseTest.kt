@@ -128,4 +128,60 @@ class ChildReleaseTest {
             assertTrue(GuardEngine.applyPairing(ctx,foreign()))
         } finally {c.pause().stop().destroy()}
     }
+
+    // ---- second review: what the parent is told once the reset has gone out ----
+    private fun openLeaveSheetWith(outcome:GuardEngine.ReleaseOutcome,a:MainActivity){
+        GuardEngine.releaseOverride={_,_->outcome}
+        confirmLeave(a);button("繼續")!!.performClick()
+        waitFor("release result"){button("我已記下，繼續")!=null}
+    }
+    @org.junit.After fun clearOverride(){GuardEngine.releaseOverride=null;TestKeyStore.failEcGeneration=false}
+    @Test fun onceTheResetIsAcceptedCancelIsReplacedByAClearChoice() {
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            openLeaveSheetWith(GuardEngine.ReleaseOutcome.SENT,a)
+            assertNull("no plain Cancel once the child may already be released",button("取消"))
+            val stay=button("留在家長身份，之後重新配對子女手機")
+            assertNotNull(stay)
+            assertTrue(texts().any{it.contains("未設定")&&it.contains("重新配對")})
+            stay!!.performClick();idle()
+            assertEquals("parent",GuardEngine.getRole(ctx));assertEquals(secret,prefs.getString("parent_master_password",null))
+        } finally {c.pause().stop().destroy()}
+    }
+    @Test fun anUncertainResetIsNotReportedAsDeliveredAndRepeatsThePasswordFallback() {
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            openLeaveSheetWith(GuardEngine.ReleaseOutcome.SENT_UNSURE,a)
+            assertTrue(texts().any{it.contains("可能沒有收到")})
+            assertFalse(texts().any{it.contains("已送到中繼站")})
+            assertTrue(texts().count{it.contains(secret)}>=1&&texts().any{it.contains("輸入")&&it.contains("主密碼")})
+        } finally {c.pause().stop().destroy()}
+    }
+    @Test fun aResetPostedToTheNewTokenDuringAPendingRotationIsClassifiedUncertain() {
+        val old=GuardEngine.getOrCreateFamilyToken(ctx)
+        val next=UUID.randomUUID().toString()
+        assertEquals(GuardEngine.ReleaseOutcome.SENT,GuardEngine.classifyRelease(ctx,true))
+        prefs.edit().putString("pending_rotation_json",JSONObject().put("old_token",old).put("new_token",next).toString()).putString("family_uuid_token",next).commit()
+        assertEquals(GuardEngine.ReleaseOutcome.SENT_UNSURE,GuardEngine.classifyRelease(ctx,true))
+        assertEquals(GuardEngine.ReleaseOutcome.NOT_SENT,GuardEngine.classifyRelease(ctx,false))
+    }
+    @Test fun aFailureAfterTheResetExplainsWhatHappenedAndWhatToDo() {
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            GuardEngine.releaseOverride={_,_->GuardEngine.ReleaseOutcome.SENT}
+            call(a,"navigateTo","settings")
+            all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("家長主密碼與金鑰")==true}.performClick()
+            button("秘密可能外洩：重新安全配對")!!.performClick()
+            button("只建立新配對（不刪除中繼資料）")!!.performClick();idle()
+            (latest() as android.app.AlertDialog).getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();idle()
+            answer(a)
+            TestKeyStore.failEcGeneration=true
+            button("繼續")!!.performClick()
+            waitFor("result"){button("我已記下，繼續")!=null}
+            button("我已記下，繼續")!!.performClick();idle()
+            val shown=ShadowDialog.getShownDialogs().filter{it.isShowing}.flatMap{d->all(d.window!!.decorView).filterIsInstance<TextView>().map{it.text.toString()}}
+            assertTrue("the parent is told the child may already be released and what to do",shown.any{it.contains("可能已收到解除指令")&&it.contains("重試")})
+            assertEquals("the family was not replaced",GuardEngine.getOrCreateFamilyToken(ctx),GuardEngine.getOrCreateFamilyToken(ctx))
+        } finally {c.pause().stop().destroy()}
+    }
 }
