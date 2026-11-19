@@ -6,6 +6,9 @@ build_dir="${IG_GUARD_BUILD_DIR:-/workspace/.android-dev/project}"
 export ANDROID_HOME="${ANDROID_HOME:-/workspace/.android-dev/sdk}"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-/workspace/.android-dev/gradle-home}"
 export IG_GUARD_SOURCE="$repo_dir"
+# Unit tests never load the native library: leave the NDK/CMake/llama.cpp wiring out unless asked
+# (IG_GUARD_SKIP_NATIVE=0, e.g. for assembleDebug; set IG_GUARD_LLAMA_DIR to reuse a llama.cpp checkout).
+export IG_GUARD_SKIP_NATIVE="${IG_GUARD_SKIP_NATIVE:-1}"
 export IG_GUARD_BUILD="$build_dir"
 export IG_GUARD_TEST_HOME="${IG_GUARD_TEST_HOME:-/workspace/.android-dev/test-home}"
 export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$IG_GUARD_TEST_HOME/.android}"
@@ -26,6 +29,7 @@ shutil.copyfile(repo/'scripts/relay-config.py',out/'scripts/relay-config.py')
 (out/'relay').mkdir(exist_ok=True)
 shutil.copyfile(repo/'relay/endpoint.json',out/'relay/endpoint.json')
 shutil.copytree(repo/'ui-res',out/'ui-res',dirs_exist_ok=True)
+shutil.copytree(repo/'native/risk',out/'native/risk',dirs_exist_ok=True)
 PY
 cd "$build_dir"
 bash generate.sh
