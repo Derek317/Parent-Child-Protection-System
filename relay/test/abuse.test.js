@@ -53,7 +53,7 @@ test('daily budget limits only ordinary data; no other class or direction is eve
     assert.equal((await publish(child, 'budget:last')).mode, 'buffered');
     const refused = await publish(child, 'budget:over');
     assert.equal(refused.code, 'queue_full');
-    assert.ok(refused.retry_after_ms >= 1000 && refused.retry_after_ms <= DAY);
+    assert.equal(refused.retry_after_ms, 30_000);
     // Duplicate of a stored frame is not a new write.
     assert.equal((await publish(child, 'budget:last')).type, 'accepted');
     // The child floods always-buffered control frames: they are not counted and never get a budget refusal.

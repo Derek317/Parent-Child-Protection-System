@@ -186,7 +186,8 @@ export class FamilyRoom extends DurableObject {
     }
     if (full) { send(socket, { type: 'error', id: packet.id, code: 'queue_full', retry_after_ms: 30_000 }); return; }
     // Only ordinary data reaches here. The app already answers a data queue_full by keeping the record on the phone and sending on.
-    if (budget) { send(socket, { type: 'error', id: packet.id, code: 'queue_full', retry_after_ms: Math.max(1000, DAY - Date.now() % DAY) }); return; }
+    // 30 s like the full mailbox: a reply arriving after the app's 15 s publish timeout reaches its fail() path, which honours the delay.
+    if (budget) { send(socket, { type: 'error', id: packet.id, code: 'queue_full', retry_after_ms: 30_000 }); return; }
     if (!forwarded) {
       await this.ensureAlarm();
       const peer = this.peer(role); if (peer) this.pump(peer);

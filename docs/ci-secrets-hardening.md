@@ -44,14 +44,14 @@ Older runs on experimental branches may have uploaded `ig-guard-signed-apk`, kep
 
 ```sh
 gh api --paginate "repos/OWNER/REPO/actions/artifacts?name=ig-guard-signed-apk&per_page=100" \
-  --jq '.artifacts[] | [.id, .workflow_run.head_branch, .created_at, .expired] | @tsv'
+  --jq '.artifacts[] | [.id, (.workflow_run.head_branch // ""), .created_at, .expired] | @tsv'
 ```
 
 Delete every one whose branch is not `main` and not a version-like tag name. First collect the ids into a file and read the list; nothing is deleted yet:
 
 ```sh
 gh api --paginate "repos/OWNER/REPO/actions/artifacts?name=ig-guard-signed-apk&per_page=100" \
-  --jq '.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch != "main") | select(.workflow_run.head_branch | test("^[0-9]+\\.[0-9]+") | not) | [.id, .workflow_run.head_branch, .created_at] | @tsv' > to-delete.tsv
+  --jq '.artifacts[] | select(.expired | not) | select((.workflow_run.head_branch // "") != "main") | select((.workflow_run.head_branch // "") | test("^[0-9]+\\.[0-9]+") | not) | [.id, (.workflow_run.head_branch // ""), .created_at] | @tsv' > to-delete.tsv
 cat to-delete.tsv
 ```
 
