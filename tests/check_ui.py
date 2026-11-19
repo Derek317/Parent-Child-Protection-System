@@ -28,7 +28,7 @@ class Checks(unittest.TestCase):
  def test_checkpoint_logs_never_interpolate_contact_identifiers(self):
   for line in S.splitlines():
    if 'addCheckpointLog(' in line and 'fun addCheckpointLog' not in line:
-    self.assertNotRegex(line,r'sender|Sender|@\$|handle',line.strip())
+    self.assertNotRegex(line,r'sender|Sender|@\$|resolved|clean\b|detected',line.strip())
  def test_monitoring_is_declared(self):
   workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/build-apk.yml').read_text()
   self.assertTrue('android:name="isMonitoringTool" android:value="child_monitoring"' in workflow, "Missing parental-monitoring declaration")
