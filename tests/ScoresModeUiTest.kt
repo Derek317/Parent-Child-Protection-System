@@ -671,7 +671,7 @@ class ScoresChildUiTest {
             tag(c, "scores_consent_open").single().performClick()
             val text = UiSupport.texts(c.get().window.decorView).joinToString("\n")
             for (needle in listOf("一對一對話", "最新 60 則", "14 天", "充電", "帳戶名稱", "風險分數", "不含訊息文字", "家長不會收到你的訊息", "只用虛構的對話測試過", "兩個方向都可能出錯", "隨時暫停", "撤回", "刪除", "未獲 Meta 批准",
-                "one-to-one", "latest 60 messages", "invented chats", "wrong in both directions", "Not approved by Meta")) assertTrue(needle, text.contains(needle))
+                "One-to-one chats are analysed", "cannot be told apart from group chats", "latest 60 messages", "invented chats", "wrong in both directions", "Not approved by Meta")) assertTrue(needle, text.contains(needle))
             assertFalse("no pre-ticked box", v(c).any { it is android.widget.CheckBox })
             assertEquals(0, tag(c, "scores_agree").count { !it.isEnabled })
             tag(c, "scores_not_now").single().performClick()
@@ -994,6 +994,7 @@ class ScoresChildUiTest {
             permissions(first)
             val uri = Uri.parse("content://test.picker/model")
             shadowOf(ctx.contentResolver).registerInputStream(uri, ByteArrayInputStream(tiny))
+            MainActivity::class.java.getDeclaredField("modelPickAuthorized").apply { isAccessible = true }.setBoolean(first.get(), true)
             MainActivity::class.java.getDeclaredMethod("onActivityResult", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Intent::class.java).apply { isAccessible = true }
                 .invoke(first.get(), 9032, android.app.Activity.RESULT_OK, Intent().setData(uri))
             assertTrue(ModelImportJob.running); assertEquals(1, tag(first, "scores_import_progress").size)
