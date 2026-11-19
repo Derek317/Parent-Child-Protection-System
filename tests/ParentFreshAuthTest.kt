@@ -224,15 +224,4 @@ class ParentFreshAuthTest {
             assertEquals(0,FamilyEvidence(ctx).use{it.retentionPreview(scope).legacyCount})
         } finally {c.pause().stop().destroy()}
     }
-
-    @Test fun anAbandonedPromptDoesNotBlockTheNextFreshAuthentication() {
-        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
-        try {
-            button(openKeySheet(a),"查看家長主密碼").performClick()
-            val pending=MainActivity::class.java.getDeclaredField("parentAuthPending").apply{isAccessible=true}
-            assertTrue(pending.getBoolean(a))
-            c.pause()
-            assertFalse("leaving the foreground clears an unanswered prompt",pending.getBoolean(a))
-        } finally {c.stop().destroy()}
-    }
 }

@@ -2526,6 +2526,8 @@ class MainActivity : Activity() {
     private var parentAuthSession: Triple<String,String,Int>? = null
     private var parentAuthPending = false
     private var parentAuthFresh = false
+    /** Identifies the current BiometricPrompt request so a callback from a cancelled one is ignored. */
+    private var parentAuthTicket = 0
     private var parentAuthAction: (() -> Unit)? = null
     private var parentAuthSignal: android.os.CancellationSignal? = null
     private var deferredParentIntent: Intent? = null
@@ -2560,12 +2562,12 @@ class MainActivity : Activity() {
         parentAuthSession=GuardEngine.captureRelaySession(this);parentAuthAction=action;parentAuthPending=true;parentAuthFresh=fresh
         try {
             if(Build.VERSION.SDK_INT>=30) {
-                val signal=android.os.CancellationSignal();parentAuthSignal=signal
+                val signal=android.os.CancellationSignal();parentAuthSignal=signal;val ticket=++parentAuthTicket
                 android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle(if(fresh)"再次驗證以繼續" else "開啟 IG Guard 家長資料")
                     .setAllowedAuthenticators(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
                     .build().authenticate(signal,mainExecutor,object:android.hardware.biometrics.BiometricPrompt.AuthenticationCallback(){
-                        override fun onAuthenticationSucceeded(result:android.hardware.biometrics.BiometricPrompt.AuthenticationResult){completeParentAuthentication(true)}
-                        override fun onAuthenticationError(code:Int,message:CharSequence){completeParentAuthentication(false)}
+                        override fun onAuthenticationSucceeded(result:android.hardware.biometrics.BiometricPrompt.AuthenticationResult){if(ticket==parentAuthTicket)completeParentAuthentication(true)}
+                        override fun onAuthenticationError(code:Int,message:CharSequence){if(ticket==parentAuthTicket)completeParentAuthentication(false)}
                     })
             } else {
                 val request=keyguard.createConfirmDeviceCredentialIntent(if(fresh)"再次驗證以繼續" else "IG Guard 家長資料",if(fresh)"驗證後才會執行此操作。" else "驗證後查看家庭記錄及配對設定。")
@@ -2574,6 +2576,7 @@ class MainActivity : Activity() {
             }
         } catch(_:Exception){completeParentAuthentication(false)}
     }
+    private fun clearParentAuthRequest() { parentAuthPending=false;parentAuthSession=null;parentAuthAction=null;parentAuthSignal=null;parentAuthFresh=false }
     private fun completeParentAuthentication(success:Boolean) {
         val expected=parentAuthSession;val action=parentAuthAction;val fresh=parentAuthFresh
         if(fresh && !GuardEngine.isParentMode(this)){
@@ -2953,6 +2956,8 @@ class MainActivity : Activity() {
         super.onResume()
         if (!storageReady || consentVisible) return
         if (!AppConsent.hasAccepted(this)) { showInitialConsent(); return }
+        // onActivityResult runs before onResume, so a request still pending here received no result: drop it.
+        if (parentAuthPending && parentAuthSignal == null) clearParentAuthRequest()
         activityVisible = true
         val filter = IntentFilter(GuardEngine.ACTION_UI_REFRESH)
         // The flag protects Android 13+; the signature permission protects earlier releases.
@@ -2972,8 +2977,10 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
         parentAccess.lock()
-        // A prompt abandoned in the background must not block the next fresh authentication request.
-        parentAuthSignal?.cancel(); parentAuthPending = false; parentAuthSession = null; parentAuthAction = null; parentAuthFresh = false; parentAuthSignal = null
+        // Android 11+: the BiometricPrompt belongs to this screen, so backgrounding cancels it. Android 8-10: the credential
+        // check is a separate activity that covers this one, so onPause always precedes its result; keep that request
+        // until onActivityResult (or, if no result ever comes, onResume) decides it.
+        parentAuthSignal?.let { parentAuthTicket++; it.cancel(); clearParentAuthRequest() }
         if(storageReady && !consentVisible && GuardEngine.isParentMode(this)) {
             dismissUiDialogs();inputDrafts.clear();displayed15MinCode="";renderParentLock()
         }
