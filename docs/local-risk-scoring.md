@@ -11,7 +11,7 @@ The model was tested mostly on invented chats and on a small number of real ones
 | Decision | Who | Choice |
 | --- | --- | --- |
 | Where scoring runs | Derek | On the child's phone. |
-| How the model file arrives | Derek | A person imports the file by hand with a file picker. No download code, no hosting. |
+| How the model file arrives | Derek | Either inside a package Derek builds on his own PC (`tools/package_with_model.py`, steps in [local-model-package.md](local-model-package.md)), which the app copies into its own storage on a child phone, or imported by hand with a file picker. No download code, no hosting; the model is never in git or in a GitHub build. |
 | Model | Research | `qwen3-1.7b-lora-v7-Q4_K_M.gguf` (v7, retrained with a small number of real chats added; confirmed by Derek on 19 November 2026; the v3 and v4 files are no longer accepted), 1,107,408,736 bytes, SHA-256 `32c05d65e380072e01ab194021419ec5bb8026a07fdcea5290e773a0995dff60`. Any other file is refused. |
 | Engine | Research | llama.cpp tag `b12503` (commit `4577932fab595eaa8b27ad71734d5de1f3c07d8c`), built for `arm64-v8a` with the NDK. |
 | Keyword detection | Derek | Unchanged. The model is an addition. |
@@ -22,7 +22,7 @@ Today the child's phone keeps no readable chats: it queues encrypted records for
 
 - **Buffer.** When risk scoring is on, each captured message (full two-way capture mode only) is also written to an encrypted table on the child's phone: conversation key, time, order, direction and text. Encryption is the same `LocalVault` field sealing the parent archive uses.
 - **Limits.** At most the newest 90 messages per conversation (three windows) and at most 14 days. Older rows are deleted. The buffer is wiped when scoring is turned off, the model file is removed, collection is withdrawn, the role changes, the family key rotates or the phone is reset remotely.
-- **On when.** Risk scoring is on only if all are true: consent accepted, role is child, collection allowed, full capture enabled, the verified model file is installed, and the scoring switch is on. The switch and the model import sit behind the parent password on the child's phone.
+- **On when.** Risk scoring is on only if all are true: consent accepted, role is child, collection allowed, full capture enabled, the verified model file is installed, and the scoring switch is on. The switch, the model import and removing the model sit behind the parent password on the child's phone. Installing the copy included in the app needs no password the first time (it is pinned by size and SHA-256); after a removal it is not reinstalled until a parent enters the password.
 - **Which threads.** One-to-one only. A conversation marked `group`, or one with more than one distinct incoming author, is not scored. Screen captures often have kind `unknown`; those are treated as one-to-one unless a second distinct incoming author appears (Derek's decision, 19 November 2026; see the plan). Messages with direction `unknown` are left out of the prompt.
 - **Speakers.** `outgoing` is `child`, `incoming` is `other`.
 
@@ -48,7 +48,7 @@ A small `risk_report` control record over the existing end-to-end encrypted rela
 - model name and revision
 - per conversation: the conversation key (the same hash the parent's archive already uses), score or null, review reason or null, flagged, scored-at time
 
-No message text, no names, no quotes. The model file never leaves the phone it was imported on.
+No message text, no names, no quotes. The model file never leaves the phone it was installed or imported on.
 
 ## Parent side
 
@@ -57,7 +57,7 @@ No message text, no names, no quotes. The model file never leaves the phone it w
 
 ## Not verified without a phone
 
-The native library compiles for `arm64-v8a` here but has never run on a device. Speed, memory use, battery cost, whether `JobScheduler` idle-and-charging windows are long enough, and whether a 1.1 GB import through the system file picker is practical are all unmeasured.
+The native library compiles for `arm64-v8a` here but has never run on a device. Speed, memory use, battery cost, whether `JobScheduler` idle-and-charging windows are long enough, whether a 1.1 GB import through the system file picker is practical, whether a 1.1 GB APK installs and starts cleanly, and the first-start copy of the included model out of the APK are all unmeasured.
 
 ## Open before any release
 

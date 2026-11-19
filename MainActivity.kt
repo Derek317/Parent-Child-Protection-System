@@ -640,6 +640,8 @@ object GuardEngine {
             if (previous == "child" && role != "child") RiskLocal.resetFamily(ctx)
         }
         syncChildComponents(ctx)
+        // The child role was set or confirmed: install the model included in the app, if any (no-op everywhere else).
+        if (role == "child") try { BundledModel.maybeAutoInstall(ctx) } catch (_: RuntimeException) {}
     }
 
     fun syncChildComponents(ctx: Context) {
@@ -2595,6 +2597,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         modelPickAuthorized = savedInstanceState?.getBoolean("model_pick_authorized", false) == true
+        // App start on a child phone: install the model included in the app, if there is one and it is missing. Not on a recreation.
+        if (savedInstanceState == null) try { BundledModel.maybeAutoInstall(this) } catch (_: RuntimeException) {}
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         try {
             LocalVault.preferences(this).all
@@ -3718,24 +3722,26 @@ class MainActivity : Activity() {
             rootContainer.addView(card); return
         }
         val job = ModelImportJob
-        val outcome = ScoresChildCopy.result(job.result, job.wasCancelled)
+        val outcome = ScoresChildCopy.result(job.result, job.wasCancelled, job.bundled, RiskModelStore.freeSpace(this))
         if (outcome != null && !job.running) {
             val card = noticeCard(t, false, "scores_import_result")
             card.addView(iconLine(if (job.result == RiskImportResult.OK) "check-circle" else "shield-warning", if (job.result == RiskImportResult.OK) t.accentSeafoam else t.warmCoral, outcome.first, t))
             card.addView(label(outcome.second, 14f, t.textSecondary, bottomPad = 6))
             card.addView(actionButton(ScoresChildCopy.OK_DISMISS, t.btnSecondaryBg, t.btnSecondaryText) { ModelImportJob.dismissResult(); renderUi() })
+            if (job.bundled && job.result != RiskImportResult.OK && job.result != RiskImportResult.UNSUPPORTED_DEVICE)
+                card.addView(actionButton(ScoresChildCopy.RETRY, t.btnPrimaryBg, t.btnPrimaryText) { ModelImportJob.dismissResult(); startBundledInstall() }.apply { tag = "scores_bundled_retry" })
             rootContainer.addView(card)
         }
         if (job.running) {
             val card = noticeCard(t, false, "scores_import_progress")
-            card.addView(label("正在匯入模型檔…\nImporting the model file…", 15f, t.textPrimary, true, bottomPad = 8))
+            card.addView(label(if (job.bundled) ScoresChildCopy.BUNDLED_PROGRESS else "正在匯入模型檔…\nImporting the model file…", 15f, t.textPrimary, true, bottomPad = 8))
             val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 1000; progress = (job.copied * 1000L / RiskModelSpec.FILE_BYTES).toInt().coerceIn(0, 1000)
-                contentDescription = "匯入進度 ${progress / 10}%"; tag = "scores_import_bar"
+                contentDescription = (if (job.bundled) "安裝進度 " else "匯入進度 ") + "${progress / 10}%"; tag = "scores_import_bar"
             }
             card.addView(bar, LinearLayout.LayoutParams(-1, dp(12)))
             card.addView(label(ScoresChildCopy.progress(job.copied), 13f, t.textSecondary, topPad = 8, bottomPad = 6).apply { tag = "scores_import_text" })
-            card.addView(actionButton(ScoresChildCopy.IMPORT_CANCEL, t.btnSecondaryBg, t.btnSecondaryText) { ModelImportJob.requestCancel(); Toast.makeText(this, "正在取消…\nCancelling…", Toast.LENGTH_SHORT).show() }.apply { tag = "scores_import_cancel" })
+            card.addView(actionButton(if (job.bundled) ScoresChildCopy.BUNDLED_CANCEL else ScoresChildCopy.IMPORT_CANCEL, t.btnSecondaryBg, t.btnSecondaryText) { ModelImportJob.requestCancel(); Toast.makeText(this, "正在取消…\nCancelling…", Toast.LENGTH_SHORT).show() }.apply { tag = "scores_import_cancel" })
             rootContainer.addView(card); return
         }
         when (RiskModelStore.state(this)) {
@@ -3743,10 +3749,18 @@ class MainActivity : Activity() {
             RiskModelState.MISMATCH -> rootContainer.addView(label(ScoresChildCopy.MISMATCH, 14f, t.warmCoral, true, bottomPad = 8).apply { tag = "scores_model_state" })
             else -> {}
         }
+        val bundledHere = RiskModelStore.bundledModelPresent(this)
+        // A failed or cancelled install shows its own Retry on the result card, so the row appears when no result is on show.
+        if (RiskModelStore.state(this) == RiskModelState.MISSING && bundledHere && !(job.bundled && job.result != null && job.result != RiskImportResult.OK)) {
+            val password = BundledModel.needsPassword(this)
+            rootContainer.addView(row("plus", ScoresChildCopy.BUNDLED_ROW, if (password) ScoresChildCopy.BUNDLED_ROW_DESC_PASSWORD else ScoresChildCopy.BUNDLED_ROW_DESC, t) {
+                if (password) verifyParentForRoleChange(ScoresChildCopy.PASSWORD_BUNDLED_TITLE) { startBundledInstall() } else startBundledInstall()
+            }.apply { getChildAt(0).tag = "model_bundled_row" })
+        }
         if (RiskModelStore.state(this) != RiskModelState.INSTALLED)
-            rootContainer.addView(row("plus", ScoresChildCopy.IMPORT_ROW, ScoresChildCopy.IMPORT_ROW_DESC, t) { verifyParentForRoleChange(ScoresChildCopy.PASSWORD_IMPORT_TITLE) { pickModelFile() } }.apply { getChildAt(0).tag = "model_import_row" })
+            rootContainer.addView(row("plus", ScoresChildCopy.IMPORT_ROW, if (bundledHere) ScoresChildCopy.IMPORT_ROW_DESC_BUNDLED else ScoresChildCopy.IMPORT_ROW_DESC, t) { verifyParentForRoleChange(ScoresChildCopy.PASSWORD_IMPORT_TITLE) { pickModelFile() } }.apply { getChildAt(0).tag = "model_import_row" })
         if (RiskModelStore.file(this).isFile) rootContainer.addView(actionButton(ScoresChildCopy.REMOVE, t.btnSecondaryBg, t.btnSecondaryText) {
-            alert().setTitle(ScoresChildCopy.REMOVE_TITLE).setMessage(ScoresChildCopy.REMOVE_BODY).setNegativeButton(ScoresChildCopy.CANCEL, null)
+            alert().setTitle(ScoresChildCopy.REMOVE_TITLE).setMessage(ScoresChildCopy.REMOVE_BODY + if (RiskModelStore.bundledModelPresent(this)) ScoresChildCopy.REMOVE_BUNDLED_NOTE else "").setNegativeButton(ScoresChildCopy.CANCEL, null)
                 .setPositiveButton(ScoresChildCopy.REMOVE) { _, _ -> verifyParentForRoleChange(ScoresChildCopy.PASSWORD_REMOVE_TITLE) { RiskLocal.removeModel(this); ModelImportJob.dismissResult(); renderUi() } }.show()
         }.apply { tag = "scores_model_remove" })
     }
@@ -3755,6 +3769,11 @@ class MainActivity : Activity() {
             modelPickAuthorized = true   // only reached after the parent's password was accepted
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), modelPickRequest)
         } catch (_: Exception) { modelPickAuthorized = false; Toast.makeText(this, "找不到檔案選擇器。\nNo file picker is available.", Toast.LENGTH_LONG).show() }
+    }
+    private fun startBundledInstall() {
+        if (!GuardEngine.isChildMode(this)) return
+        ModelImportJob.startBundled(this)
+        renderUi()
     }
     private fun startModelImport(uri: Uri) {
         if (!GuardEngine.isChildMode(this) || !RiskModelStore.supported(this)) return

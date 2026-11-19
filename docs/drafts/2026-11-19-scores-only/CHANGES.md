@@ -72,12 +72,14 @@ A change is needed, so a draft was written. The live document covers only the pa
 11. **Wording on model limits.** Are "tested mostly on invented conversations and on a small number of real ones" and "no promise about detection accuracy" sufficient, given the third-style test (112/120 risk, 6/55 benign flagged) and the real testing chats (6 of 10 grooming chats and 0 of 37 ordinary windows flagged, not a fresh test because they also helped choose the model)? The drafts quote no accuracy figure on purpose.
 12. **OPEN ITEM: real conversations used in training.** The shipped model (v7, confirmed by Derek on 19 November 2026) was trained mostly on invented conversations and partly on a small number of real conversations supplied by the developer. They are not in the app or the repository, and the conversations are not stored as files inside the model. A trained model can sometimes reproduce fragments of its training text, and this has not been tested for this model. What is the lawful basis, and what consent is needed (including from the other people in those conversations), under Hong Kong privacy law? The privacy-policy and privacy-data-flow drafts state the fact and mark this open; nothing in them claims it is cleared.
 
+13. **Model inside a locally built package.** Derek decided (19 November 2026) that the model can arrive inside one APK that he builds on his own PC, in addition to manual import. The package is never uploaded or hosted, but it holds a model trained partly on real conversations. Is handing such a package to a family, even without publishing it, something the lawyer needs to look at (training data, licence terms of the base model)? The drafts say only how the file arrives; nothing in them claims it is cleared.
+
 ## 7. Gaps in the drafts that Derek or the builder must fill
 
 - Whether the store is deleted when the parent switches the mode off, when the model file is removed, or when app data is cleared (the plan states only withdrawal). Whether pause keeps stored messages.
 - Whether the 30-day archive default, or any deletion rule, applies to scores and state on the parent's phone (plan task 4 says "the archive's deletion rules").
 - What the child's agreement record contains and how long it is kept.
-- Where the imported model file is kept and whether clearing app data removes it.
+- Where the model file is kept (the copy in the app's private storage, and the copy inside the installed package when the app was built with the model) and whether clearing app data removes each.
 - Names of the screens and controls (child status page, parent score deletion).
 - The terms revision string, and removal of the banner and drafting note before anything is bundled (the banner would otherwise change the hash).
 - The 8 GB wording: plan decision 5 treats 7 GB or more reported memory as "about 8 GB". The drafts say "about 8 GB".

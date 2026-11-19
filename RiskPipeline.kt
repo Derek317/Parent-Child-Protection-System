@@ -93,6 +93,26 @@ internal object RiskModelStore {
     const val MIN_MEMORY_BYTES = 7L * 1024 * 1024 * 1024
     private const val SPACE_MARGIN = 32L * 1024 * 1024
     private const val VERIFY_FAILED = "risk_model_verify_failed"
+    /** Set when a parent removed the model (password-gated): the included copy is then never installed on its own. */
+    private const val REMOVED_BY_PARENT = "risk_model_removed_by_parent"
+    /** The [installKey] of an app install whose automatic install of the included copy failed for good (wrong asset) or was cancelled. */
+    private const val AUTO_BLOCKED = "risk_bundled_auto_blocked"
+    /** Test hook: free space of the volume holding the model. */
+    @Volatile internal var freeSpaceProbe: (File) -> Long = { it.usableSpace }
+    /** Where a locally built package keeps the model (tools/package_with_model.py): assets/risk/<file name>. */
+    fun bundledAssetPath() = "risk/${RiskModelSpec.FILE_NAME}"
+    /** Test hook: opens the included copy, or returns null when this app has none. */
+    @Volatile internal var bundledOpener: (Context) -> InputStream? = { ctx ->
+        try { ctx.applicationContext.assets.open(bundledAssetPath(), android.content.res.AssetManager.ACCESS_STREAMING) } catch (_: IOException) { null }
+    }
+    /** The app was packaged with the model: the asset exists. Opening it reads nothing. */
+    fun bundledModelPresent(ctx: Context): Boolean = try { bundledOpener(ctx)?.use { true } ?: false } catch (_: IOException) { false } catch (_: RuntimeException) { false }
+    /** Free space required before a copy starts: the model plus a margin. */
+    fun spaceNeeded(bytes: Long = expectation.bytes): Long = bytes + SPACE_MARGIN
+    fun freeSpace(ctx: Context): Long = freeSpaceProbe(ctx.applicationContext.filesDir)
+    fun removedByParent(ctx: Context): Boolean = prefs(ctx).getBoolean(REMOVED_BY_PARENT, false)
+    fun autoBlocked(ctx: Context): Boolean = prefs(ctx).getString(AUTO_BLOCKED, "") == installKey(ctx)
+    fun blockAuto(ctx: Context) { prefs(ctx).edit().putString(AUTO_BLOCKED, installKey(ctx)).commit() }
 
     private fun prefs(ctx: Context) = LocalVault.preferences(ctx)
     /** Enough memory, an arm64 CPU, and a native library that has not failed to load in this app version. */
@@ -130,12 +150,19 @@ internal object RiskModelStore {
         return ok
     }
 
-    /**
-     * Streams [input] to a `.part` file while hashing, and renames it only on an exact size and SHA-256 match.
-     * The `expected*` parameters exist for tests; production callers use the defaults.
-     */
+    /** Imports from a stream the caller already holds (the file picker); see [installModel]. */
     fun importModel(
         ctx: Context, input: InputStream, onProgress: (Long) -> Unit = {},
+        expectedBytes: Long = RiskModelSpec.FILE_BYTES, expectedSha: String = RiskModelSpec.FILE_SHA256
+    ): RiskImportResult = installModel(ctx, { input }, onProgress, expectedBytes, expectedSha)
+
+    /**
+     * Streams the source to a `.part` file while hashing, and renames it only on an exact size and SHA-256 match. The source
+     * is opened (and closed) here, after the space check, so nothing is opened when there is no room. Used by the file picker
+     * and by the copy of the model included in the app. The `expected*` parameters exist for tests; production callers use the defaults.
+     */
+    fun installModel(
+        ctx: Context, source: () -> InputStream, onProgress: (Long) -> Unit = {},
         expectedBytes: Long = RiskModelSpec.FILE_BYTES, expectedSha: String = RiskModelSpec.FILE_SHA256
     ): RiskImportResult {
         if (!supported(ctx)) return RiskImportResult.UNSUPPORTED_DEVICE
@@ -146,21 +173,23 @@ internal object RiskModelStore {
         try {
             part.delete()   // a stale partial file must not count against the free space
             if (!dir.isDirectory && !dir.mkdirs()) return RiskImportResult.IO_ERROR
-            if (dir.usableSpace - SPACE_MARGIN < expectedBytes) return RiskImportResult.NOT_ENOUGH_SPACE
+            if (freeSpaceProbe(dir) - SPACE_MARGIN < expectedBytes) return RiskImportResult.NOT_ENOUGH_SPACE
             val digest = MessageDigest.getInstance("SHA-256")
             val buffer = ByteArray(1 shl 16)
             var total = 0L
-            FileOutputStream(part).use { out ->
-                while (true) {
-                    val n = input.read(buffer)
-                    if (n < 0) break
-                    total += n
-                    if (total > expectedBytes) return RiskImportResult.WRONG_FILE
-                    digest.update(buffer, 0, n)
-                    out.write(buffer, 0, n)
-                    onProgress(total)
+            source().use { input ->
+                FileOutputStream(part).use { out ->
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        total += n
+                        if (total > expectedBytes) return RiskImportResult.WRONG_FILE
+                        digest.update(buffer, 0, n)
+                        out.write(buffer, 0, n)
+                        onProgress(total)
+                    }
+                    out.fd.sync()
                 }
-                out.fd.sync()
             }
             val sha = digest.digest().joinToString("") { "%02x".format(it) }
             if (total != expectedBytes || sha != expectedSha) return RiskImportResult.WRONG_FILE
@@ -169,7 +198,7 @@ internal object RiskModelStore {
                 target.delete()
                 if (!part.renameTo(target)) return RiskImportResult.IO_ERROR
             }
-            prefs(ctx).edit().remove(VERIFY_FAILED).commit()
+            prefs(ctx).edit().remove(VERIFY_FAILED).remove(REMOVED_BY_PARENT).remove(AUTO_BLOCKED).commit()
             done = true
             return RiskImportResult.OK
         } catch (e: IOException) {
@@ -186,7 +215,7 @@ internal object RiskModelStore {
     fun remove(ctx: Context) {
         file(ctx).delete()
         File(directory(ctx), RiskModelSpec.FILE_NAME + ".part").delete()
-        prefs(ctx).edit().remove(VERIFY_FAILED).commit()
+        prefs(ctx).edit().remove(VERIFY_FAILED).putBoolean(REMOVED_BY_PARENT, true).commit()
         RiskLocal.wipeData(ctx)
     }
 }
@@ -391,6 +420,10 @@ internal object RiskLocal {
     fun modelState(ctx: Context): RiskModelState = RiskModelStore.state(ctx)
     fun importModel(ctx: Context, input: InputStream, onProgress: (Long) -> Unit = {}): RiskImportResult =
         RiskModelStore.importModel(ctx, input, onProgress).also { if (it == RiskImportResult.OK) changed(ctx) }
+    /** Copies the model included in the app (see [RiskModelStore.bundledOpener]) with the same checks as [importModel]. No password: the copy is pinned by size and hash. */
+    fun installBundledModel(ctx: Context, source: () -> InputStream, onProgress: (Long) -> Unit = {}): RiskImportResult =
+        RiskModelStore.installModel(ctx, source, onProgress, RiskModelStore.expectation.bytes, RiskModelStore.expectation.sha256).also { if (it == RiskImportResult.OK) changed(ctx) }
+    /** Parent-password gated by the caller. Afterwards the included copy is not installed again until a parent asks. */
     fun removeModel(ctx: Context) { RiskModelStore.remove(ctx); changed(ctx) }
 
     /**

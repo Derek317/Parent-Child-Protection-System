@@ -38,7 +38,7 @@ On the **child phone**, open [name of the scores-only status screen, to be fille
 
 On the **parent phone**, scores, content-free alerts and the child's status already received stay there after a pause or withdrawal. To delete them, use [control to be named when built, following the archive's deletion rules]. Deleting scores does not delete the parent's existing message archive; that archive is deleted with the controls below, and switching the mode on does not delete it.
 
-Packets already sent cannot be recalled. Clearing app data on the child's phone also removes the store [to be confirmed: and the imported model file]. Safe Guard does not hold the store, so it cannot be deleted by emailing the address below; the other person in a conversation can still use that address to ask about information Safe Guard holds.
+Packets already sent cannot be recalled. Clearing app data on the child's phone also removes the store [to be confirmed: and the model file the app copied or imported; a package that includes the model keeps its own copy inside the installed app until the app is uninstalled]. Safe Guard does not hold the store, so it cannot be deleted by emailing the address below; the other person in a conversation can still use that address to ask about information Safe Guard holds.
 
 ## Delete captured records on the parent’s phone
 

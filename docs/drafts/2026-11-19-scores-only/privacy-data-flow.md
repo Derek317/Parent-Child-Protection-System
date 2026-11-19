@@ -45,7 +45,7 @@ Off by default. The parent switches it on after the child's phone has reported a
 
 | Stage | Implementation | Who normally has access |
 | --- | --- | --- |
-| Model import | The parent copies the model file (1,107,408,736 bytes, SHA-256 checked) to the child's phone and imports it there; any other file is refused. It is not sent through the relay and not downloaded. | The child's phone. |
+| Model arrival | Either the model file (1,107,408,736 bytes) is inside a package the developer built on his own computer and the app copies it into its private storage when the child's phone first starts, or a parent copies the file to the child's phone and imports it there. In both cases size and SHA-256 are checked and any other file is refused. It is not sent through the relay and not downloaded by the app. The package is not published or hosted. | The child's phone. |
 | Mode switch | The parent sends a signed, encrypted `scores_mode_policy` message, like the existing capture policy. | Relay handles ciphertext and routing metadata only. |
 | Child's agreement | A separate consent page and receipt on the child's phone, acknowledged to the parent. Nothing is stored or scored before it. | The child's phone; the parent learns agreed or waiting. |
 | Child-side store | Captured one-to-one messages go into an encrypted store using the existing device-bound vault keys: latest 60 per thread, nothing older than 14 days. They are not queued for the parent. | The child's phone and app only. Not the relay, Safe Guard or the parent's phone. |

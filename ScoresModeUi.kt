@@ -193,11 +193,11 @@ internal object ScoresUi {
             "說明文字已更新，子女需要在自己的手機上再次同意。在子女再次同意之前，子女手機不會儲存或分析任何內容，也不會把訊息文字傳給你，只會傳送不含文字的提醒。你不能代替子女同意。",
             "下一步：請向孩子說明，並請孩子打開 IG Guard 查看。")
         ScoresPage.MODEL_MISSING -> StateCopy("子女手機尚未安裝模型",
-            "分析需要一個模型檔（$MODEL_FILE），要在子女手機手動匯入。在安裝之前不會有新的分數，而在這個模式下你也不會收到訊息內容。",
-            "下一步：在子女手機的「權限」頁匯入模型檔。")
+            "分析需要一個模型檔（$MODEL_FILE）。如果安裝的 IG Guard 已內附模型，子女手機打開 App 後會自己安裝；否則要在子女手機手動匯入。在安裝之前不會有新的分數，而在這個模式下你也不會收到訊息內容。",
+            "下一步：請子女打開 IG Guard，等安裝完成（手機需要約 1.1 GB 可用空間）；如果安裝的版本沒有內附模型，請在子女手機的「權限」頁匯入模型檔。")
         ScoresPage.MODEL_WRONG -> StateCopy("子女手機的模型檔不正確",
             "子女手機上的檔案不是指定的模型檔，所以不會被使用。只接受完全相同的檔案：$MODEL_FILE，$MODEL_SIZE_TEXT。",
-            "下一步：在子女手機移除該檔案，再匯入正確的模型檔。")
+            "下一步：在子女手機移除該檔案（需要家長密碼），再安裝內附的模型或匯入正確的模型檔。")
         ScoresPage.MODEL_UNSUPPORTED -> StateCopy("子女手機不支援這個功能",
             "這個模式需要約 8 GB 記憶體和 64 位元 ARM 處理器（arm64）的手機。子女手機的記憶體不足或處理器不支援，不能在手機上分析。",
             "下一步：如不打算使用，可以到「家庭」頁關閉僅分數模式。")
@@ -241,8 +241,8 @@ internal object ScoresUi {
         state == null -> "還沒有收到子女手機的回報，暫時不能開啟。"
         state.model == "unsupported_device" -> "子女手機的記憶體不足或處理器不支援，不能使用這個模式。"
         state.model == "engine_unavailable" -> "子女手機的分析功能未能啟動。更新或重新安裝 IG Guard 可能有幫助。"
-        state.model == "mismatch" -> "子女手機上的模型檔不正確。請先在子女手機匯入模型檔 $MODEL_FILE。"
-        else -> "請先在子女手機匯入模型檔 $MODEL_FILE，子女手機回報模型有效後才能開啟。"
+        state.model == "mismatch" -> "子女手機上的模型檔不正確。請先在子女手機移除它，再安裝內附的模型或匯入模型檔 $MODEL_FILE。"
+        else -> "請先讓子女手機安裝內附的模型，或匯入模型檔 $MODEL_FILE，子女手機回報模型有效後才能開啟。"
     }
 
     const val PARENT_ON_TITLE = "改用「僅分數模式」？ / Switch to scores-only mode?"
@@ -318,7 +318,7 @@ internal object ScoresChildCopy {
         StatusState.RECONSENT -> listOf(UNTIL_AGREE_AGAIN, PARENT_GETS_NO_TEXT)
         StatusState.PAUSED -> listOf("暫停期間不會儲存或分析任何訊息，家長已被告知你暫停了。不含文字的提醒仍會傳給家長，家長不會收到你的訊息文字。\nWhile paused no messages are stored or analysed, and your parent is told you paused. Alerts without text still go to your parent, who does not receive your message text.")
         StatusState.WITHDRAWN -> listOf("你已撤回同意：分析已停止，這部手機上儲存的訊息已刪除，家長已被告知。在家長關閉僅分數模式之前，家長不會收到訊息文字，只會收到不含文字的提醒。\nYou withdrew: analysis stopped, the messages stored on this phone were deleted and your parent is told. Until your parent turns the mode off, they do not receive message text, only alerts without text.")
-        StatusState.MODEL_MISSING -> listOf("這部手機沒有有效的模型檔，所以不會儲存或分析任何內容。請到「權限」頁匯入模型檔。\nThere is no valid model file on this phone, so nothing is stored or analysed. Import it in Permissions.", PARENT_GETS_NO_TEXT)
+        StatusState.MODEL_MISSING -> listOf("這部手機沒有有效的模型檔，所以不會儲存或分析任何內容。如果這個 App 內附模型，會自動安裝；否則請到「權限」頁匯入模型檔。\nThere is no valid model file on this phone, so nothing is stored or analysed. If this app includes the model it installs by itself; otherwise import the file in Permissions.", PARENT_GETS_NO_TEXT)
         StatusState.NOT_AVAILABLE -> listOf("這部手機的記憶體不足或處理器不支援，不能使用這個功能，所以不會儲存或分析任何內容。\nThis phone does not have enough memory or the right processor, so nothing is stored or analysed.") + noteForConsent(consent)
         StatusState.ENGINE_UNAVAILABLE -> listOf("這個 App 的分析部分未能在這部手機上啟動，所以不會儲存或分析任何內容。更新或重新安裝 App 可能有幫助。\nThe analysis part of this app could not start on this phone, so nothing is stored or analysed. Updating or reinstalling the app may help.") + noteForConsent(consent)
         StatusState.NOT_RUNNING -> listOf("目前沒有儲存或分析任何內容（擷取已停止，或雙向擷取尚未確認）。\nNothing is being stored or analysed right now (capture is stopped, or two-way capture is not confirmed).", PARENT_GETS_NO_TEXT)
@@ -364,21 +364,39 @@ internal object ScoresChildCopy {
     const val IMPORT_TITLE = "分析模型檔 / Analysis model file"
     const val IMPORT_ROW = "匯入分析模型"
     const val IMPORT_ROW_DESC = "需要家長的密碼。由家長把模型檔放到這部手機，再在這裡選取。\nA parent's password is needed. A parent puts the model file on this phone, then picks it here."
+    /** Manual import when this app already includes the model. */
+    const val IMPORT_ROW_DESC_BUNDLED = "也可以手動匯入模型檔，需要家長的密碼。這個 App 已內附模型，通常不需要。\nYou can also import a model file by hand with a parent's password. This app already includes the model, so this is usually not needed."
+    const val BUNDLED_ROW = "安裝 App 內附的模型 / Install the model included in this app"
+    const val BUNDLED_ROW_DESC = "把這個 App 內附的模型複製到這部手機，不需要選取檔案。\nCopies the model that came with this app onto this phone. No file needs to be picked."
+    const val BUNDLED_ROW_DESC_PASSWORD = "需要家長的密碼。模型被移除後，不會自動重新安裝。\nA parent's password is needed. After the model was removed, it is not installed again automatically."
+    const val PASSWORD_BUNDLED_TITLE = "安裝內附的模型，需要家長密碼。\nInstalling the included model needs a parent's password."
+    const val BUNDLED_PROGRESS = "正在安裝 App 內附的模型…\nInstalling the model included in this app…"
+    const val BUNDLED_CANCEL = "取消安裝 / Cancel install"
+    const val RETRY = "重試 / Retry"
+    const val REMOVE_BUNDLED_NOTE = "\n\n這個 App 內附模型，但移除後不會自動重新安裝；需要時可輸入家長密碼再安裝。\nThis app includes the model, but after removal it is not installed again automatically. A parent's password can install it again."
     const val PASSWORD_IMPORT_TITLE = "匯入模型，需要家長密碼。\nImporting the model needs a parent's password."
     const val PASSWORD_REMOVE_TITLE = "移除模型，需要家長密碼。\nRemoving the model needs a parent's password."
     const val IMPORT_CANCEL = "取消匯入 / Cancel import"
     const val REMOVE = "移除模型 / Remove model"
     const val REMOVE_TITLE = "移除模型？ / Remove the model?"
-    const val REMOVE_BODY = "分析會停止，這部手機上為分析儲存的訊息會刪除，家長會被告知這部手機已沒有模型。之後可以再匯入。\nAnalysis stops, the messages stored for it are deleted, and your parent is told the model is no longer installed. You can import the file again later.\n\n需要家長的密碼才能移除。\nA parent's password is needed to remove it."
+    const val REMOVE_BODY = "分析會停止，這部手機上為分析儲存的訊息會刪除，家長會被告知這部手機已沒有模型。之後可以再安裝或匯入。\nAnalysis stops, the messages stored for it are deleted, and your parent is told the model is no longer installed. You can install or import it again later.\n\n需要家長的密碼才能移除。\nA parent's password is needed to remove it."
     const val UNSUPPORTED_TITLE = "這部手機不能使用 AI 風險分析\nNot available on this phone"
     const val UNSUPPORTED_BODY = "這個功能需要約 8 GB 記憶體和 64 位元 ARM 處理器（arm64），這部手機不符合。其他保護不受影響。\nThis feature needs about 8 GB of memory and a 64-bit ARM (arm64) processor, and this phone does not meet that. Other protection is unaffected."
     const val INSTALLED = "模型已安裝（大小與校驗碼已核對）\nModel installed (size and checksum checked)"
-    const val MISMATCH = "模型檔不正確，不會被使用。請移除後再匯入。\nThe model file is not correct and will not be used. Remove it and import again."
+    const val MISMATCH = "模型檔不正確，不會被使用。請移除後再安裝或匯入。\nThe model file is not correct and will not be used. Remove it, then install or import it again."
     const val OK_DISMISS = "知道了 / OK"
 
     private const val GIB = 1073741824.0
     fun progress(copied: Long): String = "已複製 %.2f GB / %.2f GB\nCopied %.2f GB of %.2f GB".format(copied / GIB, RiskModelSpec.FILE_BYTES / GIB, copied / GIB, RiskModelSpec.FILE_BYTES / GIB)
-    fun result(r: RiskImportResult?, cancelled: Boolean): Pair<String, String>? = when {
+    private const val BUNDLED_FAILED = "App 內附的模型安裝失敗 / The included model could not be installed"
+    /** [bundled] is true for the copy included in the app; [freeBytes] is the free space at that moment, or negative when unknown. */
+    fun result(r: RiskImportResult?, cancelled: Boolean, bundled: Boolean = false, freeBytes: Long = -1L): Pair<String, String>? = when {
+        bundled && cancelled -> "已取消安裝 / Install cancelled" to "沒有保存任何內容。可以隨時再安裝。\nNothing was saved. You can install it again at any time."
+        bundled && r == RiskImportResult.NOT_ENOUGH_SPACE -> "手機儲存空間不足 / Not enough free space" to
+            "安裝 App 內附的模型需要約 %.2f GB 可用空間，這部手機目前只有 %.2f GB。請先釋放空間，再按「重試」。沒有保存任何部分檔案。\nInstalling the model included in this app needs about %.2f GB of free space, and this phone has %.2f GB. Free some space, then tap Retry. No partial file was kept."
+                .format(RiskModelStore.spaceNeeded() / GIB, maxOf(0L, freeBytes) / GIB, RiskModelStore.spaceNeeded() / GIB, maxOf(0L, freeBytes) / GIB)
+        bundled && r == RiskImportResult.WRONG_FILE -> BUNDLED_FAILED to "App 內附的模型與指定的檔案不符（大小或校驗碼不同），所以沒有安裝，也不會被使用。請改用完整的安裝包，或用檔案匯入模型。\nThe model inside this app does not match the expected file (its size or checksum differs), so it was not installed and will not be used. Use a complete package, or import the file by hand."
+        bundled && r == RiskImportResult.IO_ERROR -> BUNDLED_FAILED to "複製時出錯，沒有保存任何部分檔案。請重試。\nSomething went wrong while copying. No partial file was kept. Try again."
         cancelled -> "已取消匯入 / Import cancelled" to "沒有保存任何內容。\nNothing was saved."
         r == null -> null
         r == RiskImportResult.OK -> "模型已安裝 / Model installed" to "檔案大小與 SHA-256 校驗碼都核對正確。分析要等你同意、家長開啟模式後才會開始。\nSize and SHA-256 checksum match. Analysis starts only after you agree and your parent turns the mode on."
@@ -396,8 +414,11 @@ internal object ModelImportJob {
     @Volatile var cancelled = false
     @Volatile var wasCancelled = false
     @Volatile var result: RiskImportResult? = null
+    /** True while, and after, the run is the install of the model included in the app (so the screen words it that way). */
+    @Volatile var bundled = false
     /** Test seams. Production never changes them. */
     @Volatile var importer: (Context, InputStream, (Long) -> Unit) -> RiskImportResult = { c, i, p -> RiskLocal.importModel(c, i, p) }
+    @Volatile var bundledInstaller: (Context, () -> InputStream, (Long) -> Unit) -> RiskImportResult = { c, s, p -> RiskLocal.installBundledModel(c, s, p) }
     @Volatile var runner: (Runnable) -> Unit = { Thread(it, "Model import").start() }
 
     fun dismissResult() { result = null; wasCancelled = false }
@@ -407,33 +428,68 @@ internal object ModelImportJob {
     @Volatile var listener: (() -> Unit)? = null
     fun notifyChange() { listener?.invoke() }
 
-    /** Opens [uri] and imports on a background thread. [notifyChange] is called from that thread whenever the display should update. */
-    fun start(ctx: Context, uri: Uri): Boolean {
+    /** Cancellation surfaces as a read error: the engine deletes its partial file and keeps nothing. */
+    private fun guard(stream: InputStream) = object : InputStream() {
+        override fun read(): Int = stream.read().also { check() }
+        override fun read(b: ByteArray, off: Int, len: Int): Int { check(); return stream.read(b, off, len) }
+        override fun close() = stream.close()
+        private fun check() { if (cancelled) throw IOException("cancelled") }
+    }
+
+    private fun launch(app: Context, isBundled: Boolean, work: ((Long) -> Unit) -> RiskImportResult): Boolean {
         synchronized(this) {
             if (running) return false
-            running = true; copied = 0L; cancelled = false; wasCancelled = false; result = null
+            running = true; copied = 0L; cancelled = false; wasCancelled = false; result = null; bundled = isBundled
         }
-        val app = ctx.applicationContext
         runner(Runnable {
             var outcome: RiskImportResult
             try {
-                val stream = app.contentResolver.openInputStream(uri) ?: throw IOException("no stream")
-                // Cancellation surfaces as a read error: the engine deletes its partial file and keeps nothing.
-                val guarded = object : InputStream() {
-                    override fun read(): Int = stream.read().also { check() }
-                    override fun read(b: ByteArray, off: Int, len: Int): Int { check(); return stream.read(b, off, len) }
-                    override fun close() = stream.close()
-                    private fun check() { if (cancelled) throw IOException("cancelled") }
-                }
                 var last = 0L
-                outcome = guarded.use {
-                    importer(app, it) { n -> copied = n; if (n - last >= 8L * 1024 * 1024) { last = n; notifyChange() } }
-                }
+                outcome = work { n -> copied = n; if (n - last >= 8L * 1024 * 1024) { last = n; notifyChange() } }
             } catch (_: Exception) { outcome = RiskImportResult.IO_ERROR }
             synchronized(this) { wasCancelled = cancelled && outcome != RiskImportResult.OK; result = outcome; running = false }
+            // A wrong copy or a cancel is not retried on its own until the app is updated; the screen offers Retry.
+            if (isBundled && (wasCancelled || outcome == RiskImportResult.WRONG_FILE)) RiskModelStore.blockAuto(app)
             notifyChange()
         })
         return true
+    }
+
+    /** Opens [uri] and imports on a background thread. [notifyChange] is called from that thread whenever the display should update. */
+    fun start(ctx: Context, uri: Uri): Boolean {
+        val app = ctx.applicationContext
+        return launch(app, false) { progress ->
+            val stream = app.contentResolver.openInputStream(uri) ?: throw IOException("no stream")
+            guard(stream).use { importer(app, it, progress) }
+        }
+    }
+
+    /** Copies the model included in the app on a background thread. Same checks and progress as [start]; the caller decides whether a password is needed. */
+    fun startBundled(ctx: Context): Boolean {
+        val app = ctx.applicationContext
+        if (!BundledModel.available(app)) return false
+        val started = launch(app, true) { progress ->
+            bundledInstaller(app, { guard(RiskModelStore.bundledOpener(app) ?: throw IOException("no included model")) }, progress)
+        }
+        if (started) notifyChange()
+        return started
+    }
+}
+
+/** When the model included in the app is installed without a file picker. Never reads or stores message text, and never touches consent or mode state. */
+internal object BundledModel {
+    /** A child phone that can run the model, has none, and whose app includes it. */
+    fun available(ctx: Context): Boolean =
+        GuardEngine.isChildMode(ctx) && RiskModelStore.state(ctx) == RiskModelState.MISSING && RiskModelStore.bundledModelPresent(ctx)
+
+    /** After a parent removed the model, installing the included copy again needs the parent's password. */
+    fun needsPassword(ctx: Context): Boolean = RiskModelStore.removedByParent(ctx)
+
+    /** Called when the child role is set and when the app starts. Does nothing after a removal, after a failed copy, or while a copy runs. */
+    fun maybeAutoInstall(ctx: Context): Boolean {
+        val app = ctx.applicationContext
+        if (ModelImportJob.running || RiskModelStore.removedByParent(app) || RiskModelStore.autoBlocked(app)) return false
+        return ModelImportJob.startBundled(app)
     }
 }
 

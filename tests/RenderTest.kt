@@ -178,7 +178,26 @@ class ScoresScreenshotTest {
                 org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
                 ShotSupport.shoot(c.get(), "scores-child-import-wrong-file", 360, 1700)
             } finally { c.pause().stop().destroy() }
+
+            // The model included in the app: the install row, the progress card, and the not-enough-space result.
+            childReset(); RiskModelStore.expectation = RiskModelStore.Expectation(tiny.size.toLong(), sha(tiny))
+            RiskModelStore.bundledOpener = { java.io.ByteArrayInputStream(tiny) }; RiskModelStore.blockAuto(ctx)
+            ModelImportJob.runner = { it.run() }; ModelImportJob.dismissResult(); ModelImportJob.bundled = false
+            c = ShotSupport.open("permissions")
+            try {
+                ShotSupport.shoot(c.get(), "scores-child-bundled-install-row", 360, 1500)
+            } finally { c.pause().stop().destroy() }
+            ModelImportJob.running = true; ModelImportJob.bundled = true; ModelImportJob.copied = RiskModelSpec.FILE_BYTES * 2 / 5
+            c = ShotSupport.open("permissions")
+            try { ShotSupport.shoot(c.get(), "scores-child-bundled-install-progress", 360, 1000) } finally { c.pause().stop().destroy() }
+            ModelImportJob.running = false; ModelImportJob.copied = 0L; ModelImportJob.dismissResult()
+            RiskModelStore.expectation = RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256)
+            RiskModelStore.freeSpaceProbe = { 400L * 1024 * 1024 }
+            ModelImportJob.startBundled(ctx)
+            c = ShotSupport.open("permissions")
+            try { ShotSupport.shoot(c.get(), "scores-child-bundled-not-enough-space", 360, 1100) } finally { c.pause().stop().destroy() }
         } finally {
+            RiskModelStore.bundledOpener = { null }; RiskModelStore.freeSpaceProbe = { it.usableSpace }; ModelImportJob.running = false; ModelImportJob.bundled = false
             ModelImportJob.runner = { Thread(it, "Model import").start() }; ModelImportJob.dismissResult()
             RiskModelStore.expectation = RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256)
             RiskModelStore.abiProbe = { android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a") }

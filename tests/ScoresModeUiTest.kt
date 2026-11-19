@@ -105,7 +105,7 @@ class ScoresParentUiTest {
             ("僅分數模式未開啟" to "下一步：到「家庭」頁") to {},
             ("等待子女同意" to "下一步：請向孩子說明") to { enable() },
             ("等待子女同意" to "下一步：請向孩子說明") to { enable(); report(consent = "none") },
-            ("子女手機尚未安裝模型" to "下一步：在子女手機的「權限」頁") to { enable(); report(model = "missing") },
+            ("子女手機尚未安裝模型" to "下一步：請子女打開 IG Guard") to { enable(); report(model = "missing") },
             ("子女手機的模型檔不正確" to "下一步：在子女手機移除") to { enable(); report(model = "mismatch") },
             ("子女手機不支援這個功能" to "下一步：如不打算使用") to { enable(); report(model = "unsupported_device") },
             ("子女已暫停分析" to "下一步：如果想知道原因") to { enable(); report(paused = true, rows = listOf(row("amy", 60.0, now - 1000))) },

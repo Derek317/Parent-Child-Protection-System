@@ -32,6 +32,10 @@ The last three commands prompt for values. Run the workflow manually after all f
 
 Without secrets, tests and release compilation still run and upload **`ig-guard-unsigned-apk`**. This artifact requires private signing before installation. With all four secrets configured, the artifact is **`ig-guard-signed-apk`**. A new key normally requires reinstalling existing installations; arrange records/backups or a signing-lineage migration before replacing an installed production APK.
 
+## Packaging with the local model
+
+`tools/package_with_model.py` re-signs the release APK on the owner's PC after adding the model, using this same keystore (the `.jks` file, alias `igguard`) and the same passwords. Use the keystore that signed the GitHub release: a different certificate cannot update an installed IG Guard, and the app's data would be lost on reinstall. The script reads the passwords from the environment variables `IG_GUARD_KEYSTORE_PASSWORD` and `IG_GUARD_KEY_PASSWORD` or asks for them with a hidden prompt, never from the command line, and prints the new certificate digest next to the one the APK had and the one pinned in `.github/workflows/build-apk.yml`. The keystore stays outside the repository. See [local-model-package.md](local-model-package.md). The packaged APK is never uploaded.
+
 ## Diagnose signing failures
 
 The packaging step verifies the decoded keystore, alias and private-key password before compiling the APK. It reports only validation results; private keys, passwords, file hashes and certificate details are not printed.
