@@ -14,13 +14,42 @@ import java.util.Locale
  * these models so the private theme helpers stay private. Nothing in this file reads or shows message text.
  */
 
-/** What the parent's score page shows. */
-internal enum class ScoresPage { OFF, WAITING, MODEL_MISSING, MODEL_WRONG, MODEL_UNSUPPORTED, PAUSED, WITHDRAWN, STALE, EMPTY, LIST, ERROR }
+/** What the parent's score page shows. The stale banner is not a page: it is a flag that can sit on any page with a child state. */
+internal enum class ScoresPage { OFF, WAITING, MODEL_MISSING, MODEL_WRONG, MODEL_UNSUPPORTED, ENGINE_UNAVAILABLE, PAUSED, WITHDRAWN, NOT_RUNNING, EMPTY, LIST, ERROR }
 
 internal data class ScoresPageModel(
     val page: ScoresPage, val rows: List<RiskScoreRow>, val needAttention: Int, val needReview: Int,
-    val state: ScoresModeState?, val noReportYet: Boolean = false
+    val state: ScoresModeState?, val noReportYet: Boolean = false,
+    val stale: Boolean = false,
+    /** Set on PAUSED when the model is also not valid: both facts are shown. */
+    val alsoModelProblem: String? = null,
+    /** The child has not answered the current policy for more than a moment: offer to send it again. */
+    val offerResend: Boolean = false
 )
+
+/**
+ * Calls into the engine that the screens depend on. Production values call the engine; tests replace them to force a
+ * refusal. Where the engine API is still being added the fallback is marked.
+ */
+internal object ScoresEngineBridge {
+    var sendPolicy: (Context, Boolean) -> Boolean = { c, enabled -> GuardEngine.sendScoresModePolicy(c, enabled) }
+    var resendPolicy: (Context) -> Boolean = { c -> GuardEngine.resendScoresModePolicy(c) }
+    var accept: (Context) -> Boolean = { RiskLocal.accept(it) }
+    var pause: (Context) -> Boolean = { RiskLocal.pause(it) }
+    var resume: (Context) -> Boolean = { RiskLocal.resume(it) }
+    var withdraw: (Context) -> Boolean = { RiskLocal.withdraw(it) }
+    var pendingNotice: (Context) -> String? = { RiskLocal.pendingChangeNotice(it) }
+    var acknowledgeNotice: (Context, String) -> Unit = { c, _ -> RiskLocal.acknowledgeChangeNotice(c) }
+    /** Whether the child's phone says analysis is actually running; null when the report does not say. */
+    var activeOf: (ScoresModeState) -> Boolean? = { it.active }
+    fun reset() {
+        sendPolicy = { c, enabled -> GuardEngine.sendScoresModePolicy(c, enabled) }
+        resendPolicy = { c -> GuardEngine.resendScoresModePolicy(c) }
+        accept = { RiskLocal.accept(it) }; pause = { RiskLocal.pause(it) }; resume = { RiskLocal.resume(it) }; withdraw = { RiskLocal.withdraw(it) }
+        pendingNotice = { RiskLocal.pendingChangeNotice(it) }; acknowledgeNotice = { c, _ -> RiskLocal.acknowledgeChangeNotice(c) }
+        activeOf = { it.active }
+    }
+}
 
 internal object ScoresUi {
     const val NEEDS_ATTENTION_FROM = 50
@@ -39,25 +68,64 @@ internal object ScoresUi {
 
     fun band(row: RiskScoreRow): RiskBand? = row.score?.let { RiskBand.forScore(it) }
 
-    fun classify(policy: ScoresModePolicy?, state: ScoresModeState?, rows: List<RiskScoreRow>): ScoresPageModel {
+    const val RESEND_AFTER_MS = 60_000L
+
+    /**
+     * Order of precedence once the parent has the mode on: no answer for the current policy, no consent, withdrawn,
+     * paused (a pause is never hidden by a model problem), a model problem, agreed-but-not-running, then scores.
+     * [active] is the child's own report of whether analysis is running; null means the report does not say.
+     */
+    fun classify(policy: ScoresModePolicy?, state: ScoresModeState?, rows: List<RiskScoreRow>, now: Long = System.currentTimeMillis(), active: Boolean? = null): ScoresPageModel {
         val sorted = sort(rows)
         val attention = sorted.count { it.score != null && whole(it.score) >= NEEDS_ATTENTION_FROM }
         val review = sorted.count { it.score == null }
-        fun model(page: ScoresPage, noReport: Boolean = false) = ScoresPageModel(page, sorted, attention, review, state, noReport)
+        fun model(page: ScoresPage, noReport: Boolean = false, also: String? = null, resend: Boolean = false) =
+            ScoresPageModel(page, sorted, attention, review, state, noReport, state != null && state.stale && page != ScoresPage.OFF, also, resend)
         if (policy == null || !policy.enabled) return model(ScoresPage.OFF)
         // A report about an older policy says nothing about the current one: the child has not answered yet.
-        if (state == null || state.policyId != policy.policyId) return model(ScoresPage.WAITING, noReport = true)
+        if (state == null || state.policyId != policy.policyId) return model(ScoresPage.WAITING, noReport = true, resend = now - policy.sentAt > RESEND_AFTER_MS)
         return when {
             state.consent == "none" -> model(ScoresPage.WAITING)
             state.consent == "withdrawn" -> model(ScoresPage.WITHDRAWN)
+            state.paused -> model(ScoresPage.PAUSED, also = state.model.takeIf { it != "valid" })
             state.model == "unsupported_device" -> model(ScoresPage.MODEL_UNSUPPORTED)
+            state.model == "engine_unavailable" -> model(ScoresPage.ENGINE_UNAVAILABLE)
             state.model == "mismatch" -> model(ScoresPage.MODEL_WRONG)
             state.model != "valid" -> model(ScoresPage.MODEL_MISSING)
-            state.paused -> model(ScoresPage.PAUSED)
-            state.stale -> model(ScoresPage.STALE)
+            active == false -> model(ScoresPage.NOT_RUNNING)
             sorted.isEmpty() -> model(ScoresPage.EMPTY)
             else -> model(ScoresPage.LIST)
         }
+    }
+
+    fun modelWords(wire: String): String = when (wire) {
+        "missing" -> "尚未安裝模型檔"; "mismatch" -> "模型檔不正確"; "unsupported_device" -> "手機不支援這個功能"
+        "engine_unavailable" -> "分析功能未能啟動"; else -> "模型有問題"
+    }
+    fun hoursSince(ms: Long, now: Long = System.currentTimeMillis()): Long = ((now - ms) / 3_600_000L).coerceAtLeast(0)
+    /** Heading above the list of scores. Null when there is nothing to list. */
+    fun listHeading(m: ScoresPageModel): String? = if (m.rows.isEmpty()) null else when (m.page) {
+        ScoresPage.LIST -> "對話（分數由高至低）"
+        ScoresPage.PAUSED -> "以下是暫停前收到的分數"
+        ScoresPage.WITHDRAWN -> "以下分數已不再更新（子女已撤回同意）"
+        else -> "以下分數已不再更新"
+    }
+    /** One line for the overview row: the state, not a count, whenever scores are not currently being produced. */
+    fun overviewSummary(m: ScoresPageModel): String {
+        val base = when (m.page) {
+            ScoresPage.OFF -> "僅分數模式未開啟"
+            ScoresPage.WAITING -> "等待子女同意"
+            ScoresPage.PAUSED -> "子女已暫停分析"
+            ScoresPage.WITHDRAWN -> "子女已撤回同意"
+            ScoresPage.NOT_RUNNING -> "子女已同意，但分析沒有在運行"
+            ScoresPage.MODEL_MISSING, ScoresPage.MODEL_WRONG, ScoresPage.MODEL_UNSUPPORTED, ScoresPage.ENGINE_UNAVAILABLE -> copy(m).title
+            ScoresPage.EMPTY -> "分析進行中，暫時還沒有分數"
+            ScoresPage.ERROR -> "未能讀取分數"
+            ScoresPage.LIST -> "${m.needAttention} 個對話需要留意 · ${m.needReview} 個需要檢視"
+        }
+        if (!m.stale) return base
+        val old = "分數可能已過時 · 最後報告 ${m.state?.receivedAt?.let(::time) ?: ""}"
+        return if (m.page == ScoresPage.LIST || m.page == ScoresPage.EMPTY) old else "$base · 分數可能已過時"
     }
 
     // ---------------- dates ----------------
@@ -102,12 +170,13 @@ internal object ScoresUi {
 
     // ---------------- parent wording ----------------
     const val MODEL_FILE = RiskModelSpec.FILE_NAME
-    const val MODEL_SIZE_TEXT = "1,107,408,736 位元組（約 1.03 GB）"
+    val BYTES_TEXT: String = String.format(Locale.ROOT, "%,d", RiskModelSpec.FILE_BYTES)
+    val MODEL_SIZE_TEXT: String = "$BYTES_TEXT 位元組（約 1.03 GB）"
     const val LIMITS_NOTICE = "分數來自一個只用虛構對話測試過的模型，可能高估，也可能漏掉真正的風險。它是一個訊號，不是結論。"
     const val NEXT_STEPS = "下一步：先和孩子好好談談。如果你認為孩子有即時危險，請致電 999（香港）。"
     const val NO_MESSAGES = "在這個模式下，你不會收到訊息內容。"
     fun unknownText(n: Int) = "因對話類型未能確認而沒有被分析的對話：$n 個。"
-    fun staleBanner(receivedAt: Long) = "分數可能已過時：超過 72 小時沒有收到子女手機的報告。最後一次報告：${time(receivedAt)}。"
+    fun staleBody(receivedAt: Long, now: Long = System.currentTimeMillis()) = "已超過 ${hoursSince(receivedAt, now)} 小時沒有收到子女手機的報告。最後一次報告：${time(receivedAt)}。"
 
     data class StateCopy(val title: String, val body: String, val next: String)
     fun copy(m: ScoresPageModel): StateCopy = when (m.page) {
@@ -128,8 +197,15 @@ internal object ScoresUi {
             "這個模式需要約 8 GB 記憶體和 64 位元 ARM 處理器（arm64）的手機。子女手機的記憶體不足或處理器不支援，不能在手機上分析。",
             "下一步：如不打算使用，可以到「家庭」頁關閉僅分數模式。")
         ScoresPage.PAUSED -> StateCopy("子女已暫停分析",
-            "子女在 ${m.state?.pausedAt?.let(::time) ?: "較早前"} 暫停了分析。暫停期間不會有新的分數；下面只顯示暫停前收到的分數。子女可以隨時恢復，不需要你操作。",
+            "子女在 ${m.state?.pausedAt?.let(::time) ?: "較早前"} 暫停了分析。暫停期間不會有新的分數；下面只顯示暫停前收到的分數。子女可以隨時恢復，不需要你操作。" +
+                (m.alsoModelProblem?.let { "另外，子女手機的模型也有問題：${modelWords(it)}，恢復後也不會有分數，直至處理好。" } ?: ""),
             "下一步：如果想知道原因，可以用不責備的語氣問問孩子。")
+        ScoresPage.ENGINE_UNAVAILABLE -> StateCopy("子女手機的分析功能未能啟動",
+            "這個 App 的分析部分未能在子女手機上啟動，所以不會有分數。這和手機記憶體或處理器不足是不同的問題，在這個模式下你也不會收到訊息內容。",
+            "下一步：請在子女手機更新或重新安裝 IG Guard，然後再看。")
+        ScoresPage.NOT_RUNNING -> StateCopy("子女已同意，但分析沒有在子女手機上運行",
+            "子女已同意，但子女手機目前沒有在分析（可能是雙向擷取尚未確認，或擷取已停止）。在恢復之前不會有新的分數；在這個模式下你也不會收到訊息內容。",
+            "下一步：請確認子女手機已確認雙向擷取的範圍，而且手機有在充電。")
         ScoresPage.WITHDRAWN -> StateCopy("子女已撤回同意",
             "子女已撤回同意，分析已停止，子女手機上儲存的訊息已刪除。你之前收到的分數仍會留在這裡，但不再更新。",
             "下一步：如要再次使用，請先在「家庭」頁關閉僅分數模式，再重新開啟；子女需要重新同意。")
@@ -138,18 +214,19 @@ internal object ScoresUi {
                 (m.state?.lastRun?.let { "最近一次分析：${time(it)}，共 ${m.state.scoredCount} 個對話。" } ?: ""),
             "下一步：不需要操作，請稍後再看。")
         ScoresPage.ERROR -> StateCopy("未能讀取分數", "讀取這部手機上的分數時出錯。已收到的資料沒有被刪除。", "下一步：請稍後重試。")
-        ScoresPage.STALE, ScoresPage.LIST -> StateCopy("對話風險分數", leadSentence(m), "")
+        ScoresPage.LIST -> StateCopy("對話風險分數", leadSentence(m), "")
     }
 
     /** Short state text for the family-tab switch. */
     fun switchStatus(policy: ScoresModePolicy?, state: ScoresModeState?, rows: List<RiskScoreRow>): String {
-        val m = classify(policy, state, rows)
+        val m = classify(policy, state, rows, active = state?.let(ScoresEngineBridge.activeOf))
         return when (m.page) {
             ScoresPage.OFF -> "未開啟"
             ScoresPage.WAITING -> "已開啟 · 等待子女同意"
             ScoresPage.WITHDRAWN -> "已開啟 · 子女已撤回同意"
             ScoresPage.PAUSED -> "已開啟 · 子女已暫停"
-            ScoresPage.MODEL_MISSING, ScoresPage.MODEL_WRONG, ScoresPage.MODEL_UNSUPPORTED -> "已開啟 · 子女手機的模型有問題"
+            ScoresPage.MODEL_MISSING, ScoresPage.MODEL_WRONG, ScoresPage.MODEL_UNSUPPORTED, ScoresPage.ENGINE_UNAVAILABLE -> "已開啟 · 子女手機的模型或分析功能有問題"
+            ScoresPage.NOT_RUNNING -> "已開啟 · 子女已同意，但分析沒有在運行"
             else -> "已開啟 · 子女已同意"
         }
     }
@@ -157,6 +234,7 @@ internal object ScoresUi {
     fun enableBlockedWhy(state: ScoresModeState?): String = when {
         state == null -> "還沒有收到子女手機的回報，暫時不能開啟。"
         state.model == "unsupported_device" -> "子女手機的記憶體不足或處理器不支援，不能使用這個模式。"
+        state.model == "engine_unavailable" -> "子女手機的分析功能未能啟動。更新或重新安裝 IG Guard 可能有幫助。"
         state.model == "mismatch" -> "子女手機上的模型檔不正確。請先在子女手機匯入模型檔 $MODEL_FILE。"
         else -> "請先在子女手機匯入模型檔 $MODEL_FILE，子女手機回報模型有效後才能開啟。"
     }
@@ -172,7 +250,12 @@ internal object ScoresUi {
     )
     const val PARENT_OFF_TITLE = "關閉「僅分數模式」？ / Turn off scores-only mode?"
     const val PARENT_OFF_BODY = "關閉後，子女手機會停止分析並刪除為分析儲存的訊息，原有的運作方式再次適用：新訊息會再傳到你的手機。已收到的分數仍保留。子女會看到這個改變。\nThe child's phone stops analysing and deletes the messages stored for it. The earlier mode applies again, so new messages reach your phone. Scores already received stay. Your child is told."
-    const val SEND_FAILED = "未能送出設定。子女手機需要先回報模型有效，也請確認這部手機的儲存空間正常，然後重試。"
+    const val SEND_FAILED = "未能開啟。子女手機需要先回報模型有效，也請確認這部手機的儲存空間正常，然後重試。"
+    const val OFF_FAILED = "未能關閉僅分數模式，設定沒有改變。請稍後重試。"
+    const val RESEND_FAILED = "未能再次送出設定，請稍後重試。"
+    const val RESEND = "再次送出設定"
+    const val RESEND_HINT = "子女手機一直沒有回覆這項設定。你可以再送出一次；子女手機收到相同的設定時不會要求重新同意。"
+    const val NO_TEXT_PLAIN = "此提醒沒有附帶文字。"
 }
 
 /** Child-side wording, bilingual in the style of the first-launch consent page. */
@@ -200,10 +283,12 @@ internal object ScoresChildCopy {
     enum class StatusState(val label: String, val icon: String) {
         ON("開啟 / ON", "check-circle"), PAUSED("已暫停 / PAUSED", "clock"), WAITING("等待同意 / WAITING", "info"),
         WITHDRAWN("已撤回 / WITHDRAWN", "x"), MODEL_MISSING("缺少模型 / MODEL MISSING", "shield-warning"),
-        NOT_AVAILABLE("此手機不適用 / NOT AVAILABLE", "lock-key"), NOT_RUNNING("未運作 / NOT RUNNING", "info")
+        NOT_AVAILABLE("此手機不適用 / NOT AVAILABLE", "lock-key"), ENGINE_UNAVAILABLE("分析功能未能啟動 / ENGINE UNAVAILABLE", "shield-warning"),
+        NOT_RUNNING("未運作 / NOT RUNNING", "info")
     }
     fun statusState(s: RiskChildStatus): StatusState = when {
         s.modelState == "unsupported_device" -> StatusState.NOT_AVAILABLE
+        s.modelState == "engine_unavailable" -> StatusState.ENGINE_UNAVAILABLE
         s.consent == "withdrawn" -> StatusState.WITHDRAWN
         s.consent == "none" -> StatusState.WAITING
         s.paused -> StatusState.PAUSED
@@ -211,18 +296,38 @@ internal object ScoresChildCopy {
         s.active -> StatusState.ON
         else -> StatusState.NOT_RUNNING
     }
+    const val UNTIL_AGREE = "你同意之前，不會儲存或分析任何內容，原有的運作方式繼續：你的家長仍會像以往一樣收到訊息。\nUntil you agree, nothing is stored or analysed and the earlier mode continues, so your parent still receives messages as before."
+    private const val PARENT_GETS_NO_TEXT = "家長不會收到你的訊息文字，只會收到不含文字的提醒。\nYour parent does not receive your message text, only alerts without text."
+    /** What is and is not happening in each state. Never says the parent does not see messages unless that is true. */
+    fun statusLines(st: StatusState, consent: String): List<String> = when (st) {
+        StatusState.ON -> listOf(STATUS_RUNS, STATUS_PARENT_SEES)
+        StatusState.WAITING -> listOf(UNTIL_AGREE)
+        StatusState.PAUSED -> listOf("暫停期間不會儲存或分析任何內容，家長已被告知你暫停了。不含文字的提醒仍會傳給家長，家長不會收到你的訊息文字。\nWhile paused nothing is stored or analysed, and your parent is told you paused. Alerts without text still go to your parent, who does not receive your message text.")
+        StatusState.WITHDRAWN -> listOf("你已撤回同意：分析已停止，這部手機上儲存的訊息已刪除，家長已被告知。在家長關閉僅分數模式之前，家長不會收到訊息文字，只會收到不含文字的提醒。\nYou withdrew: analysis stopped, the messages stored on this phone were deleted and your parent is told. Until your parent turns the mode off, they do not receive message text, only alerts without text.")
+        StatusState.MODEL_MISSING -> listOf("這部手機沒有有效的模型檔，所以不會儲存或分析任何內容。請到「權限」頁匯入模型檔。\nThere is no valid model file on this phone, so nothing is stored or analysed. Import it in Permissions.", PARENT_GETS_NO_TEXT)
+        StatusState.NOT_AVAILABLE -> listOf("這部手機的記憶體不足或處理器不支援，不能使用這個功能，所以不會儲存或分析任何內容。\nThis phone does not have enough memory or the right processor, so nothing is stored or analysed.") + noteForConsent(consent)
+        StatusState.ENGINE_UNAVAILABLE -> listOf("這個 App 的分析部分未能在這部手機上啟動，所以不會儲存或分析任何內容。更新或重新安裝 App 可能有幫助。\nThe analysis part of this app could not start on this phone, so nothing is stored or analysed. Updating or reinstalling the app may help.") + noteForConsent(consent)
+        StatusState.NOT_RUNNING -> listOf("目前沒有儲存或分析任何內容（擷取已停止，或雙向擷取尚未確認）。\nNothing is being stored or analysed right now (capture is stopped, or two-way capture is not confirmed).", PARENT_GETS_NO_TEXT)
+    }
+    private fun noteForConsent(consent: String) = if (consent == "none") listOf("原有的運作方式繼續：你的家長仍會像以往一樣收到訊息。\nThe earlier mode continues, so your parent still receives messages as before.") else listOf(PARENT_GETS_NO_TEXT)
     fun lastRun(s: RiskChildStatus): String = s.lastRun?.let { "上次運行：${ScoresUi.time(it)} · ${s.scoredCount} 個對話\nLast run: ${ScoresUi.time(it)} · ${s.scoredCount} conversations" }
         ?: "尚未運行\nNot run yet"
     fun unknown(n: Int) = "未分析的對話（類型未明）：$n 個\nNot analysed (type unknown): $n"
-    fun stateNote(st: StatusState): String? = when (st) {
-        StatusState.WAITING -> "在你同意之前，不會儲存或分析任何內容。\nNothing is stored or analysed until you agree."
-        StatusState.PAUSED -> "已暫停：不會儲存或分析新的訊息，家長已被告知。\nPaused: nothing new is stored or analysed. Your parent is told."
-        StatusState.WITHDRAWN -> "你已撤回同意。這部手機上儲存的訊息已刪除，家長已被告知。\nYou withdrew. The messages stored on this phone were deleted and your parent is told."
-        StatusState.MODEL_MISSING -> "需要匯入模型檔才會開始分析。請到「權限」頁匯入。\nImport the model file in Permissions before analysis can start."
-        StatusState.NOT_AVAILABLE -> "這部手機的記憶體不足或處理器不支援，不能使用這個功能。\nThis phone does not have enough memory or the right processor for this feature."
-        StatusState.NOT_RUNNING -> "目前沒有運行，因為擷取已停止或尚未完成設定。\nNot running because capture is stopped or setup is incomplete."
-        StatusState.ON -> null
-    }
+    const val PAUSE_FAILED = "未能暫停，狀態沒有改變。請再試一次。\nCould not pause. Nothing changed. Please try again."
+    const val RESUME_FAILED = "未能恢復，狀態沒有改變。請再試一次。\nCould not resume. Nothing changed. Please try again."
+    const val WITHDRAW_FAILED = "未能撤回，狀態沒有改變，儲存的訊息仍在。請再試一次。\nCould not withdraw. Nothing changed and the stored messages are still here. Please try again."
+    const val ACCEPT_FAILED = "未能儲存你的同意，沒有開始分析。請重試。\nCould not save your choice. Nothing was started. Please try again."
+    const val ENGINE_CARD_TITLE = "分析功能未能啟動\nThe analysis part could not start"
+    const val ENGINE_CARD_BODY = "這個 App 的分析部分未能在這部手機上啟動。這和記憶體或處理器不足是不同的問題。更新或重新安裝 App 可能有幫助。\nThe analysis part of this app could not start on this phone. This is different from too little memory or the wrong processor. Updating or reinstalling the app may help."
+
+    // Mode-aware replacements for the older lines that say messages are sent to the parent (used only while the mode is content-free).
+    const val MODE_DISCLAIMER = "僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整。在僅分數模式下，訊息文字只留在這部手機，只有分數和不含文字的提醒會傳給家長。可在「擷取範圍與停止」停止擷取；Android 權限可另行關閉，已送達家長的分數和提醒需另行刪除。"
+    const val MODE_CAPTURE_STATUS = "僅分數模式 · 訊息文字只留在這部手機，只傳送分數和不含文字的提醒。點按閱讀說明。"
+    const val MODE_PRIVACY_INTRO = "停止會阻止新擷取與尚未送出的內容。在僅分數模式下，家長沒有收到你的訊息文字，只有分數和不含文字的提醒；已送達家長的分數和提醒需在家長手機另行刪除。重新開始不會自動恢復雙向擷取。"
+    const val MODE_NOTICE_MAIN = "你的家長開啟了僅分數模式：訊息文字只留在這部手機，家長只收到分數和不含文字的提醒。雙向擷取的選項只決定這部手機擷取什麼，不會把訊息文字傳給家長。"
+    const val MODE_NOTICE_TRANSPORT = "分數和不含文字的提醒會先在此手機加密，經本 App 的 Cloudflare 中繼傳送至配對家長手機。開發者及 Cloudflare 可處理密文及連線資料，中繼不會取得家庭解密金鑰。"
+    const val MODE_PERMISSIONS_CLAUSE = "訊息文字只留在這部手機，只有分數和不含文字的提醒會加密傳至配對家長；待傳記錄最多 72 小時。"
+
     const val PAUSE = "暫停 / Pause"
     const val RESUME = "恢復 / Resume"
     const val WHAT = "分析什麼？ / What is analysed?"
@@ -248,10 +353,10 @@ internal object ScoresChildCopy {
     const val IMPORT_CANCEL = "取消匯入 / Cancel import"
     const val REMOVE = "移除模型 / Remove model"
     const val REMOVE_TITLE = "移除模型？ / Remove the model?"
-    const val REMOVE_BODY = "分析會停止，這部手機上為分析儲存的訊息會刪除。之後可以再匯入。\nAnalysis stops and the messages stored for it are deleted. You can import the file again later."
+    const val REMOVE_BODY = "分析會停止，這部手機上為分析儲存的訊息會刪除，家長會被告知這部手機已沒有模型。之後可以再匯入。\nAnalysis stops, the messages stored for it are deleted, and your parent is told the model is no longer installed. You can import the file again later."
     const val UNSUPPORTED_TITLE = "這部手機不能使用 AI 風險分析\nNot available on this phone"
     const val UNSUPPORTED_BODY = "這個功能需要約 8 GB 記憶體和 64 位元 ARM 處理器（arm64），這部手機不符合。其他保護不受影響。\nThis feature needs about 8 GB of memory and a 64-bit ARM (arm64) processor, and this phone does not meet that. Other protection is unaffected."
-    const val INSTALLED = "模型已安裝（大小與簽名已核對）\nModel installed (size and signature checked)"
+    const val INSTALLED = "模型已安裝（大小與校驗碼已核對）\nModel installed (size and checksum checked)"
     const val MISMATCH = "模型檔不正確，不會被使用。請移除後再匯入。\nThe model file is not correct and will not be used. Remove it and import again."
     const val OK_DISMISS = "知道了 / OK"
 
@@ -260,8 +365,8 @@ internal object ScoresChildCopy {
     fun result(r: RiskImportResult?, cancelled: Boolean): Pair<String, String>? = when {
         cancelled -> "已取消匯入 / Import cancelled" to "沒有保存任何內容。\nNothing was saved."
         r == null -> null
-        r == RiskImportResult.OK -> "模型已安裝 / Model installed" to "檔案大小與簽名都核對正確。分析要等你同意、家長開啟模式後才會開始。\nSize and signature match. Analysis starts only after you agree and your parent turns the mode on."
-        r == RiskImportResult.WRONG_FILE -> "這不是指定的模型檔 / This is not the expected model" to "只接受完全相同的檔案：檔名 ${RiskModelSpec.FILE_NAME}，大小 ${ScoresUi.MODEL_SIZE_TEXT}。其他檔案（包括改名或不完整的檔案）會被拒絕，不會被保存。\nOnly the exact file is accepted: name ${RiskModelSpec.FILE_NAME}, size ${RiskModelSpec.FILE_BYTES} bytes (about 1.03 GB). Anything else, including renamed or incomplete copies, is rejected and not kept."
+        r == RiskImportResult.OK -> "模型已安裝 / Model installed" to "檔案大小與 SHA-256 校驗碼都核對正確。分析要等你同意、家長開啟模式後才會開始。\nSize and SHA-256 checksum match. Analysis starts only after you agree and your parent turns the mode on."
+        r == RiskImportResult.WRONG_FILE -> "這不是指定的模型檔 / This is not the expected model" to "只接受完全相同的檔案：檔案大小和 SHA-256 校驗碼都必須完全一致。預期檔名：${RiskModelSpec.FILE_NAME}，大小 ${ScoresUi.MODEL_SIZE_TEXT}。其他檔案不會被保存。\nOnly the exact file is accepted: its size and SHA-256 checksum must match exactly. Expected file name: ${RiskModelSpec.FILE_NAME}, size ${ScoresUi.BYTES_TEXT} bytes (about 1.03 GB). Anything else is not kept."
         r == RiskImportResult.NOT_ENOUGH_SPACE -> "手機儲存空間不足 / Not enough storage" to "需要約 1.1 GB 可用空間。請先釋放空間再試。沒有保存任何部分檔案。\nAbout 1.1 GB of free space is needed. Free some space and try again. No partial file was kept."
         r == RiskImportResult.IO_ERROR -> "讀取檔案時出錯 / Could not read the file" to "檔案可能已移動，或儲存裝置中斷了。沒有保存任何部分檔案，請重試。\nThe file may have moved or the storage was interrupted. No partial file was kept. Try again."
         else -> "這部手機不能使用 / Not available on this phone" to UNSUPPORTED_BODY
@@ -282,8 +387,12 @@ internal object ModelImportJob {
     fun dismissResult() { result = null; wasCancelled = false }
     fun requestCancel() { cancelled = true }
 
-    /** Opens [uri] and imports on a background thread. [onChange] is called from that thread whenever the display should update. */
-    fun start(ctx: Context, uri: Uri, onChange: () -> Unit): Boolean {
+    /** The screen showing the progress, if any. Set when an activity resumes and cleared when it pauses, so a destroyed activity is never held. */
+    @Volatile var listener: (() -> Unit)? = null
+    fun notifyChange() { listener?.invoke() }
+
+    /** Opens [uri] and imports on a background thread. [notifyChange] is called from that thread whenever the display should update. */
+    fun start(ctx: Context, uri: Uri): Boolean {
         synchronized(this) {
             if (running) return false
             running = true; copied = 0L; cancelled = false; wasCancelled = false; result = null
@@ -302,36 +411,13 @@ internal object ModelImportJob {
                 }
                 var last = 0L
                 outcome = guarded.use {
-                    importer(app, it) { n -> copied = n; if (n - last >= 8L * 1024 * 1024) { last = n; onChange() } }
+                    importer(app, it) { n -> copied = n; if (n - last >= 8L * 1024 * 1024) { last = n; notifyChange() } }
                 }
             } catch (_: Exception) { outcome = RiskImportResult.IO_ERROR }
             synchronized(this) { wasCancelled = cancelled && outcome != RiskImportResult.OK; result = outcome; running = false }
-            onChange()
+            notifyChange()
         })
         return true
-    }
-}
-
-/** One-time change-of-mode pages on the child's phone. Markers live in the device vault and are tied to the family. */
-internal object ScoresNotices {
-    private const val ON = "scores_ui_notice_on"
-    private const val OFF = "scores_ui_notice_off"
-    private fun prefs(ctx: Context) = LocalVault.preferences(ctx)
-    private fun key(ctx: Context, policy: String) = GuardEngine.getChannelTopic(ctx) + "|" + policy
-
-    /** "on" when the child agreed and has not seen the page, "off" when the parent switched the mode off after it was on, else null. */
-    fun pending(ctx: Context): String? {
-        if (!GuardEngine.isChildMode(ctx)) return null
-        val id = RiskLocal.policyId(ctx)
-        if (id.isEmpty()) return null
-        if (RiskLocal.policyEnabled(ctx)) return if (RiskLocal.consentState(ctx) == "accepted" && prefs(ctx).getString(ON, "") != key(ctx, id)) "on" else null
-        val on = prefs(ctx).getString(ON, "") ?: ""
-        return if (on.startsWith(GuardEngine.getChannelTopic(ctx) + "|") && prefs(ctx).getString(OFF, "") != key(ctx, id)) "off" else null
-    }
-    fun markSeen(ctx: Context, which: String) {
-        val id = RiskLocal.policyId(ctx)
-        if (which == "on") prefs(ctx).edit().putString(ON, key(ctx, id)).commit()
-        else prefs(ctx).edit().putString(OFF, key(ctx, id)).remove(ON).commit()
     }
 }
 

@@ -29,11 +29,14 @@ the library. The workflow does not set it, so CI APKs include the library.
 
 ## Host check (Linux)
 
-    cmake -S native/risk -B /opt/android-dev/native-build/host -G Ninja \
+`<HOST_BUILD_DIR>` is any scratch directory you choose. The Android build reads `IG_GUARD_BUILD_DIR`, `ANDROID_HOME`,
+`GRADLE_USER_HOME`, `IG_GUARD_TEST_HOME` and `IG_GUARD_LLAMA_DIR` from the environment; set them to paths on your machine.
+
+    cmake -S native/risk -B <HOST_BUILD_DIR> -G Ninja \
           -DLLAMA_CPP_DIR=/path/to/llama.cpp -DRISK_HOST_CHECK=ON
-    cmake --build /opt/android-dev/native-build/host
+    cmake --build <HOST_BUILD_DIR>
     python3.12 native/risk/host_check.py \
-          --host-check /opt/android-dev/native-build/host/host_check \
+          --host-check <HOST_BUILD_DIR>/host_check \
           --model research/models/Qwen3-1.7B-Q8_0.gguf \
           --server research/models/llama-b12503-linux/llama-b12503/llama-server
 

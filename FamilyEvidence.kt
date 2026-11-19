@@ -24,7 +24,7 @@ data class RetentionPreview(val retentionDays:Int,val legacyCount:Int,val legacy
     val expiredCount:Int,val pendingExpiredCount:Int,val preservedCount:Int)
 
 /** Content is encrypted; scopes, opaque IDs, timestamps, reasons and workflow flags remain clear. */
-class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 7), java.io.Closeable {
+class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 8), java.io.Closeable {
     companion object {
         private val openLock=Any()
         private const val DAY=86_400_000L
@@ -115,7 +115,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.execSQL("INSERT INTO archive_maintenance VALUES(1)")
         }
         if(oldVersion<6)retentionSchema(db)
-        if(oldVersion<7)riskSchema(db)
+        if(oldVersion<8)riskSchema(db)
     }
     private fun retentionSchema(db:SQLiteDatabase) {
         // NULL marks existing archives for preview and explicit adoption, never first-open erasure.
@@ -408,6 +408,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             discardPending(scope,"child","data");discardPending(scope,"child","urgent")
             db.delete("evidence","scope=?",arrayOf(scope));db.delete("fragments","scope=?",arrayOf(scope))
             db.delete("capture_windows","scope=?",arrayOf(scope))
+            tombstoneScores(db,scope,System.currentTimeMillis())
             for(table in riskTables)db.delete(table,"scope=?",arrayOf(scope))
             db.setTransactionSuccessful()
         }
@@ -451,7 +452,20 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_scores(scope TEXT NOT NULL,label_index TEXT NOT NULL,label TEXT NOT NULL,result TEXT NOT NULL,scored_at INTEGER NOT NULL,first_reached_50 INTEGER,PRIMARY KEY(scope,label_index))")
         // Content-free replay guard: the last 64 report ids per scope survive deleteArchive, like the seen tombstones.
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_replay(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,command_id TEXT NOT NULL,UNIQUE(scope,command_id))")
+        addColumn(db,"risk_replay","stored_at","INTEGER NOT NULL DEFAULT 0")
+        // Per-label deletion tombstones: a deleted score is not resurrected by a resend, and a notified one does not notify again.
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_tombstones(scope TEXT NOT NULL,label_index TEXT NOT NULL,label TEXT NOT NULL,deleted_at INTEGER NOT NULL,notified_at INTEGER,PRIMARY KEY(scope,label_index))")
         db.execSQL("CREATE TABLE IF NOT EXISTS risk_state(scope TEXT PRIMARY KEY,policy_id TEXT,model TEXT NOT NULL,consent TEXT NOT NULL,paused INTEGER NOT NULL,paused_at INTEGER,last_run INTEGER,scored_count INTEGER NOT NULL,unknown_threads INTEGER NOT NULL,sent_at INTEGER NOT NULL,received_at INTEGER NOT NULL)")
+        addColumn(db,"risk_state","active","INTEGER NOT NULL DEFAULT 0")
+    }
+    private fun addColumn(db:SQLiteDatabase,table:String,column:String,definition:String) {
+        val has=db.rawQuery("PRAGMA table_info($table)",null).use{c->var found=false;while(c.moveToNext())if(c.getString(1)==column)found=true;found}
+        if(!has)db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
+    }
+    /** Remembers the deletion of score rows (all of a scope's, or those scored at or before [upTo]). */
+    private fun tombstoneScores(db:SQLiteDatabase,scope:String,now:Long,upTo:Long?=null) {
+        db.execSQL("INSERT OR REPLACE INTO risk_tombstones(scope,label_index,label,deleted_at,notified_at) SELECT scope,label_index,label,?,first_reached_50 FROM risk_scores WHERE scope=?"+(if(upTo!=null)" AND scored_at<=?" else ""),
+            if(upTo!=null)arrayOf(now,scope,upTo) else arrayOf(now,scope))
     }
     private fun scoreLabelKey(scope:String,label:String):String = index(scope,"score_label",label.trim().removePrefix("@").lowercase(Locale.ROOT))
     private fun protectScore(scope:String,label:String,result:String):ContentValues {
@@ -466,7 +480,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("DELETE FROM risk_threads WHERE scope=? AND thread_index NOT IN (SELECT thread_index FROM risk_store WHERE scope=?) AND thread_index NOT IN (SELECT thread_index FROM risk_results WHERE scope=?)",arrayOf(scope,scope,scope))
         // Parent copies expire on the archive's clock, counted from the time they were scored.
         val retention=(now-retentionDays(scope)*DAY).toString()
+        tombstoneScores(db,scope,now,now-retentionDays(scope)*DAY)
         db.execSQL("DELETE FROM risk_scores WHERE scope=? AND scored_at<=?",arrayOf(scope,retention))
+        db.execSQL("DELETE FROM risk_tombstones WHERE scope=? AND deleted_at<?",arrayOf(scope,(now-30*DAY).toString()))
+        db.execSQL("DELETE FROM risk_replay WHERE scope=? AND stored_at<?",arrayOf(scope,(now-30*DAY).toString()))
         db.execSQL("DELETE FROM risk_state WHERE scope=? AND received_at<=?",arrayOf(scope,retention))
     }
     /** Child: content-free marker so a re-read message is neither stored nor alerted twice. True when [id] is new. */
@@ -551,20 +568,26 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         try{for(table in riskChildTables)db.delete(table,null,null);db.setTransactionSuccessful()}finally{db.endTransaction()}
     }
 
-    /** Parent: stores a validated report. Returns how many conversations reached a score of 50 for the first time in 14 days. */
+    /**
+     * Parent: stores a validated report. Returns how many conversations reached a score of 50 for the first time in 14 days,
+     * or -1 if the report id was already stored (a replay: nothing changed).
+     */
     internal fun storeScoresReport(scope:String,report:ParsedScoresReport,receivedAt:Long):Int {
         val db=writableDatabase;db.beginTransaction()
         try {
             // A report id already stored is a replay (relay redelivery or a stale queued copy): change nothing.
-            val fresh=db.insertWithOnConflict("risk_replay",null,ContentValues().apply{put("scope",scope);put("command_id",report.commandId)},SQLiteDatabase.CONFLICT_IGNORE)!=-1L
-            if(!fresh){db.setTransactionSuccessful();return 0}
-            db.execSQL("DELETE FROM risk_replay WHERE scope=? AND seq NOT IN (SELECT seq FROM risk_replay WHERE scope=? ORDER BY seq DESC LIMIT 64)",arrayOf(scope,scope))
+            val fresh=db.insertWithOnConflict("risk_replay",null,ContentValues().apply{put("scope",scope);put("command_id",report.commandId);put("stored_at",receivedAt)},SQLiteDatabase.CONFLICT_IGNORE)!=-1L
+            if(!fresh){db.setTransactionSuccessful();return -1}
+            // Ids are kept 30 days (see pruneRisk), capped per scope.
+            db.execSQL("DELETE FROM risk_replay WHERE scope=? AND seq NOT IN (SELECT seq FROM risk_replay WHERE scope=? ORDER BY seq DESC LIMIT 5000)",arrayOf(scope,scope))
             var reached=0
             for(row in report.conversations) {
                 val key=scoreLabelKey(scope,row.label)
                 val old=db.rawQuery("SELECT scored_at,first_reached_50 FROM risk_scores WHERE scope=? AND label_index=?",arrayOf(scope,key)).use{if(it.moveToFirst())it.getLong(0) to (if(it.isNull(1))null else it.getLong(1)) else null}
                 if(old!=null && row.scoredAt<=old.first)continue
-                var first=old?.second
+                val tomb=db.rawQuery("SELECT deleted_at,notified_at FROM risk_tombstones WHERE scope=? AND label_index=?",arrayOf(scope,key)).use{if(it.moveToFirst())it.getLong(0) to (if(it.isNull(1))null else it.getLong(1)) else null}
+                if(tomb!=null && row.scoredAt<=tomb.first)continue
+                var first=old?.second ?: tomb?.second
                 if(row.score!=null && row.score>=50.0 && (first==null || first<row.scoredAt-RiskLimits.DAYS*DAY)){first=row.scoredAt;reached++}
                 val result=JSONObject().put("score",row.score ?: JSONObject.NULL).put("review_reason",row.reviewReason ?: JSONObject.NULL).toString()
                 val values=protectScore(scope,row.label,result).apply{put("scope",scope);put("scored_at",row.scoredAt);if(first!=null)put("first_reached_50",first) else putNull("first_reached_50")}
@@ -579,7 +602,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 put("model",s.model);put("consent",s.consent);put("paused",if(s.paused)1 else 0)
                 if(s.pausedAt!=null)put("paused_at",s.pausedAt) else putNull("paused_at")
                 if(s.lastRun!=null)put("last_run",s.lastRun) else putNull("last_run")
-                put("scored_count",s.scoredCount);put("unknown_threads",s.unknownThreads);put("sent_at",minOf(report.sentAt,receivedAt));put("received_at",receivedAt)
+                put("scored_count",s.scoredCount);put("unknown_threads",s.unknownThreads);put("active",if(s.active)1 else 0);put("sent_at",minOf(report.sentAt,receivedAt));put("received_at",receivedAt)
             },SQLiteDatabase.CONFLICT_REPLACE)
             db.setTransactionSuccessful();return reached
         }finally{db.endTransaction()}
@@ -597,10 +620,31 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     }
     /** Parent: the child's last reported state, or null if none has arrived or it has expired. */
     fun scoresModeState(scope:String,now:Long=System.currentTimeMillis()):ScoresModeState? = readableDatabase.rawQuery(
-        "SELECT policy_id,model,consent,paused,paused_at,last_run,scored_count,unknown_threads,sent_at,received_at FROM risk_state WHERE scope=? AND received_at>?",
+        "SELECT policy_id,model,consent,paused,paused_at,last_run,scored_count,unknown_threads,sent_at,received_at,active FROM risk_state WHERE scope=? AND received_at>?",
         arrayOf(scope,(now-retentionDays(scope)*DAY).toString())).use { c ->
         if(!c.moveToFirst())null else ScoresModeState(if(c.isNull(0))null else c.getString(0),c.getString(1),c.getString(2),c.getInt(3)==1,
-            if(c.isNull(4))null else c.getLong(4),if(c.isNull(5))null else c.getLong(5),c.getInt(6),c.getInt(7),c.getLong(8),c.getLong(9),now-c.getLong(9)>RiskLimits.STALE_REPORT_MS)
+            if(c.isNull(4))null else c.getLong(4),if(c.isNull(5))null else c.getLong(5),c.getInt(6),c.getInt(7),c.getLong(8),c.getLong(9),now-c.getLong(9)>RiskLimits.STALE_REPORT_MS,c.getInt(10)==1)
+    }
+    /**
+     * Child: discards queued data and urgent events for which [carriesText] is true of any of their frames; every other
+     * pending record (tamper, unlock, pairing, heartbeat, control) is kept. Same tombstoning as [discardPending].
+     */
+    fun discardPendingMatching(scope:String,carriesText:(String)->Boolean):Int {
+        val db=writableDatabase;db.beginTransaction()
+        try {
+            val events=db.rawQuery("SELECT event_id,wire FROM outbox WHERE scope=? AND role='child' AND relay_kind IN ('data','urgent')",arrayOf(scope)).use { c ->
+                buildSet{while(c.moveToNext())if(carriesText(c.getString(1)))add(c.getString(0))}
+            }
+            for(event in events) {
+                db.execSQL("INSERT OR IGNORE INTO capture_seen(scope,id) VALUES(?,?)",arrayOf(scope,event))
+                db.execSQL("INSERT OR IGNORE INTO seen(scope,id) VALUES(?,?)",arrayOf(scope,event))
+                db.execSQL("UPDATE outbox_lifetimes SET blocked=1 WHERE scope=? AND id=?",arrayOf(scope,event))
+                db.execSQL("DELETE FROM fragments WHERE scope=? AND id=?",arrayOf(scope,event))
+                db.delete("outbox","scope=? AND event_id=?",arrayOf(scope,event))
+            }
+            if(events.isNotEmpty())db.delete("capture_windows","scope=?",arrayOf(scope))
+            db.setTransactionSuccessful();return events.size
+        }finally{db.endTransaction()}
     }
     fun enqueue(scope: String,id: String,wire: String,role:String="child",kind:String="urgent") {
         require(role in setOf("parent","child") && kind in setOf("data","urgent","receipt","control"))
@@ -744,6 +788,13 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 val result=open(old,"risk_scores",key,"result",c.string("result"))
                 protectScore(new,label,result).apply{put("scope",new)}
             }
+            transformRows(db,"risk_tombstones",old) { c ->
+                val key=c.string("label_index")
+                val label=open(old,"risk_scores",key,"label",c.string("label"))
+                val moved=protectScore(new,label,"{}")
+                ContentValues().apply{put("scope",new);put("label_index",moved.getAsString("label_index"));put("label",moved.getAsString("label"))}
+            }
+            db.delete("risk_tombstones","scope=?",arrayOf(old))
             db.execSQL("UPDATE OR IGNORE risk_state SET scope=? WHERE scope=?",arrayOf(new,old))
             db.execSQL("UPDATE OR IGNORE risk_replay SET scope=? WHERE scope=?",arrayOf(new,old))
             db.delete("risk_replay","scope=?",arrayOf(old))

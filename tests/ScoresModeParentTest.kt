@@ -31,7 +31,7 @@ class ScoresModeParentTest {
     private fun row(label: String, score: Double?, at: Long, reason: String? = if (score == null) "insufficient_context" else null) =
         JSONObject().put("account_label", label).put("score", score ?: JSONObject.NULL).put("review_reason", reason ?: JSONObject.NULL).put("scored_at_ms", at)
     private fun state(model: String = "valid") = JSONObject().put("policy_id", UUID.randomUUID().toString()).put("model", model).put("consent", "accepted")
-        .put("paused", false).put("paused_at_ms", JSONObject.NULL).put("last_run_ms", System.currentTimeMillis()).put("scored_count", 2).put("unknown_threads", 1)
+        .put("active", true).put("paused", false).put("paused_at_ms", JSONObject.NULL).put("last_run_ms", System.currentTimeMillis()).put("scored_count", 2).put("unknown_threads", 1)
     private fun report(rows: List<JSONObject> = listOf(row("alice", 42.0, System.currentTimeMillis() - 1000)), sentAt: Long = System.currentTimeMillis(), state: JSONObject = state()) =
         JSONObject().put("type", "scores_mode_report").put("sent_at_ms", sentAt).put("state", state).put("conversations", JSONArray(rows))
             .put("scope", scope).put("command_id", UUID.randomUUID().toString())
@@ -54,7 +54,7 @@ class ScoresModeParentTest {
         assertEquals(at, rows.last().scoredAt)
         val s = childState()!!
         assertEquals("valid", s.model); assertEquals("accepted", s.consent); assertFalse(s.paused); assertNull(s.pausedAt)
-        assertEquals(2, s.scoredCount); assertEquals(1, s.unknownThreads); assertFalse(s.stale); assertTrue(s.receivedAt > 0)
+        assertTrue(s.active); assertEquals(2, s.scoredCount); assertEquals(1, s.unknownThreads); assertFalse(s.stale); assertTrue(s.receivedAt > 0)
     }
     @Test fun aReportCreatesNoEvidenceNotificationOrStatistics() {
         var notified = 0
@@ -83,6 +83,8 @@ class ScoresModeParentTest {
             "empty label" to { getJSONArray("conversations").getJSONObject(0).put("account_label", " ") },
             "long label" to { getJSONArray("conversations").getJSONObject(0).put("account_label", "x".repeat(65)) },
             "scored after sent" to { getJSONArray("conversations").getJSONObject(0).put("scored_at_ms", now + 10_000) },
+            "active missing" to { getJSONObject("state").remove("active") },
+            "active not boolean" to { getJSONObject("state").put("active", "yes") },
             "bad model" to { getJSONObject("state").put("model", "other") },
             "bad consent" to { getJSONObject("state").put("consent", "yes") },
             "paused without time" to { getJSONObject("state").put("paused", true) },
@@ -225,15 +227,20 @@ class ScoresModeParentTest {
         FamilyEvidence(ctx).use { it.deleteArchive(scope) }
         deliver(JSONObject(first.toString()), { notified++ })
         assertTrue(scores().isEmpty()); assertNull(childState()); assertEquals(1, notified)
-        deliver(report(listOf(row("alice", 80.0, now - 500)), sentAt = now), { notified++ }); assertEquals(1, scores().size)
+        val later = System.currentTimeMillis() + 60_000
+        deliver(report(listOf(row("alice", 80.0, later)), sentAt = later), { notified++ }); assertEquals(1, scores().size)
+        assertEquals("a notified label does not notify again after deletion", 1, notified)
     }
-    @Test fun onlyTheLast64ReportIdsAreRemembered() {
-        val first = report(); deliver(first)
-        repeat(64) { deliver(report()) }
-        FamilyEvidence(ctx).use { db -> db.writableDatabase.execSQL("DELETE FROM risk_scores"); db.writableDatabase.execSQL("DELETE FROM risk_state") }
-        deliver(JSONObject(first.toString()))   // forgotten: stored again
-        assertNotNull(childState())
-        assertEquals(64, count("risk_replay"))
+    @Test fun anOldReportReplayedAfterManyNewerOnesChangesNothing() {
+        val first = report(listOf(row("alice", 20.0, System.currentTimeMillis() - 5000)), sentAt = System.currentTimeMillis() - 4000); deliver(first)
+        repeat(100) { deliver(report(listOf(row("alice", 20.0 + it % 5, System.currentTimeMillis() - 3000 + it)), sentAt = System.currentTimeMillis())) }
+        val before = scores().single(); val received = childState()!!.receivedAt
+        deliver(JSONObject(first.toString()))
+        assertEquals(before, scores().single()); assertEquals(received, childState()!!.receivedAt)
+        assertEquals(101, count("risk_replay"))
+        // Ids are pruned after 30 days.
+        FamilyEvidence(ctx).use { it.pruneExpired(scope, System.currentTimeMillis() + 31 * day) }
+        assertEquals(0, count("risk_replay"))
     }
     @Test fun aChildClockAheadDoesNotBlockLaterStates() {
         val now = System.currentTimeMillis()
@@ -253,7 +260,88 @@ class ScoresModeParentTest {
         assertTrue(GuardEngine.sendScoresModePolicy(ctx, false)); assertNotEquals(id, GuardEngine.scoresModePolicy(ctx)!!.policyId)
         assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)); assertNotEquals(id, GuardEngine.scoresModePolicy(ctx)!!.policyId)
     }
-    @Test fun schemaIsVersionSeven() {
-        FamilyEvidence(ctx).use { assertEquals(7, it.readableDatabase.version) }
+    @Test fun schemaIsVersionEight() {
+        FamilyEvidence(ctx).use { assertEquals(8, it.readableDatabase.version) }
+    }
+
+    // ---------- second review ----------
+    private fun queuedPolicies(): List<JSONObject> = FamilyEvidence(ctx).use { it.due(scope, Long.MAX_VALUE, "parent") }
+        .mapNotNull { GuardEngine.decryptPayload(token, it.wire)?.optJSONObject("envelope") }.map { JSONObject(it.getString("payload")) }.filter { it.optString("type") == "scores_mode_policy" }
+    @Test fun aReportThatShowsAnUnappliedPolicyTriggersOneRepostPerHourWithTheSameId() {
+        GuardEngine.relayPublicKey(ctx)
+        deliver(report(state = state("valid")))
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)); val id = GuardEngine.scoresModePolicy(ctx)!!.policyId
+        val sent = queuedPolicies().size
+        // The child reports another (or no) policy: re-post the current one with a new signature and time.
+        deliver(report(state = state("valid").put("policy_id", JSONObject.NULL).put("consent", "none")))
+        val after = queuedPolicies()
+        assertEquals(sent + 1, after.size)
+        assertTrue(after.all { it.getString("policy_id") == id && it.getBoolean("enabled") })
+        assertTrue(after.map { it.getString("command_id") }.toSet().size == after.size)
+        deliver(report(state = state("valid").put("policy_id", UUID.randomUUID().toString())))
+        assertEquals("rate limited to once an hour", sent + 1, queuedPolicies().size)
+        // A child that holds the current policy triggers nothing.
+        FamilyEvidence(ctx).use { it.writableDatabase.execSQL("DELETE FROM outbox") }
+        prefs.edit().putLong("scores_policy_repost_ms", 0).commit()
+        deliver(report(state = state("valid").put("policy_id", id)))
+        assertEquals(0, queuedPolicies().size)
+        // Manual send again keeps the id.
+        assertTrue(GuardEngine.resendScoresModePolicy(ctx)); assertEquals(id, GuardEngine.scoresModePolicy(ctx)!!.policyId); assertEquals(id, queuedPolicies().single().getString("policy_id"))
+    }
+    @Test fun aSwitchOffThatTheChildMissedIsRepostedAsOffWithTheSameId() {
+        GuardEngine.relayPublicKey(ctx)
+        deliver(report(state = state("valid")))
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)); assertTrue(GuardEngine.sendScoresModePolicy(ctx, false))
+        val off = GuardEngine.scoresModePolicy(ctx)!!; assertFalse(off.enabled)
+        FamilyEvidence(ctx).use { it.writableDatabase.execSQL("DELETE FROM outbox") }
+        prefs.edit().putLong("scores_policy_repost_ms", 0).commit()
+        deliver(report(state = state("valid").put("policy_id", UUID.randomUUID().toString()).put("consent", "accepted")))
+        val re = queuedPolicies().single(); assertEquals(off.policyId, re.getString("policy_id")); assertFalse(re.getBoolean("enabled"))
+        // Once the child shows the switched-off policy and no consent nothing more is sent.
+        FamilyEvidence(ctx).use { it.writableDatabase.execSQL("DELETE FROM outbox") }
+        prefs.edit().putLong("scores_policy_repost_ms", 0).commit()
+        deliver(report(state = state("valid").put("policy_id", off.policyId).put("consent", "none")))
+        assertEquals(0, queuedPolicies().size)
+    }
+    @Test fun aPolicyThatCannotBeQueuedIsNotReportedAsSent() {
+        GuardEngine.relayPublicKey(ctx)
+        deliver(report(state = state("valid")))
+        TestKeyStore.failEcSigning = true
+        try {
+            assertFalse(GuardEngine.sendScoresModePolicy(ctx, true)); assertNull(GuardEngine.scoresModePolicy(ctx))
+        } finally { TestKeyStore.failEcSigning = false }
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true))
+    }
+    @Test fun aDeletedScoreIsNotResurrectedByAResendButNewerScoresAreAccepted() {
+        val now = System.currentTimeMillis()
+        deliver(report(listOf(row("alice", 70.0, now - 5000)), sentAt = now - 4000)); assertEquals(1, scores().size)
+        FamilyEvidence(ctx).use { it.deleteArchive(scope) }
+        deliver(report(listOf(row("alice", 70.0, now - 5000)), sentAt = now))   // the child's resend of the same score
+        assertTrue(scores().isEmpty())
+        val later = System.currentTimeMillis() + 60_000
+        deliver(report(listOf(row("alice", 30.0, later)), sentAt = later)); assertEquals(30.0, scores().single().score!!, 0.001)
+    }
+    @Test fun retentionPrunedRowsAreTombstonedAndTombstonesExpireAfterThirtyDaysAndRotate() {
+        val now = System.currentTimeMillis()
+        FamilyEvidence(ctx).use { it.setRetentionDays(scope, 7) }
+        deliver(report(listOf(row("alice", 60.0, now - 1000)), sentAt = now))
+        FamilyEvidence(ctx).use { db ->
+            db.pruneExpired(scope, now + 8 * day); assertEquals(0, count("risk_scores")); assertEquals(1, count("risk_tombstones"))
+            db.rotate(scope, "moved") { it }
+            assertEquals(1, count("risk_tombstones"))
+            db.readableDatabase.rawQuery("SELECT scope,label FROM risk_tombstones", null).use { c -> assertTrue(c.moveToFirst()); assertEquals("moved", c.getString(0)); assertFalse(c.getString(1).contains("alice")) }
+            db.pruneExpired("moved", now + 39 * day); assertEquals(0, count("risk_tombstones"))
+        }
+    }
+    @Test fun aRowNotifiedWithinFourteenDaysDoesNotNotifyAgainEvenAfterDeletion() {
+        val now = System.currentTimeMillis(); var notified = 0
+        deliver(report(listOf(row("alice", 80.0, now - 3000)), sentAt = now), { notified++ }); assertEquals(1, notified)
+        FamilyEvidence(ctx).use { it.deleteArchive(scope) }
+        val later = now + 60_000
+        deliver(report(listOf(row("alice", 90.0, later)), sentAt = later), { notified++ }); assertEquals(1, notified)
+        // After the 14-day window it may notify again.
+        FamilyEvidence(ctx).use { it.writableDatabase.execSQL("UPDATE risk_scores SET first_reached_50=first_reached_50-?", arrayOf(15 * day)) }
+        val again = later + 60_000
+        deliver(report(listOf(row("alice", 90.0, again)), sentAt = again), { notified++ }); assertEquals(2, notified)
     }
 }

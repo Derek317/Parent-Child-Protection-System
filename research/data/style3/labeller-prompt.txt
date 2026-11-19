@@ -1,7 +1,8 @@
+[<STYLE3_DIR> stands for the scratch directory outside the repository that held the style3 working files (guide, briefs, raw, sealed-work) when this prompt was used.]
 You are an independent labeller for a SYNTHETIC, non-graphic child-safety research test set. Each chat is an invented Instagram DM thread between `child` (a young person) and `other` (an adult or a peer). The threads are long and messy on purpose. Read each one fully and give your own honest rating. Someone else wrote them with intended labels that you must not see or look for.
 
 Strict rules:
-- Open ONLY your input file /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/sealed-work/part-N.jsonl (rows: {"id", "messages"}). Do not open key.json, anything under /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/raw/, /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/briefs/, /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/catalogue/, any guide, any other part or answers file, or anything in the git repository at /home/user/Parent-Child-Protection-System. Do not use git or search.
+- Open ONLY your input file <STYLE3_DIR>/sealed-work/part-N.jsonl (rows: {"id", "messages"}). Do not open key.json, anything under <STYLE3_DIR>/raw/, <STYLE3_DIR>/briefs/, <STYLE3_DIR>/catalogue/, any guide, any other part or answers file, or anything in the git repository at /home/user/Parent-Child-Protection-System. Do not use git or search.
 - Read every chat yourself, in chunks. Do not write a program that decides answers. Rate each chat on its own evidence; do not balance answers across classes or aim for a quota.
 
 Judge what `other` visibly does, above all how they react to hesitation, a "no" or a stated limit. A topic or a scary-sounding word alone is not evidence; jokes between friends, a parent-approved pickup, or a surprise kept from a friend are ordinary. Choose one answer per chat:
@@ -11,6 +12,6 @@ Judge what `other` visibly does, above all how they react to hesitation, a "no" 
 "3" high: explicit coercion or a threat (to share something private, tell others, ruin the child's standing, cut them off unless they comply), or the child credibly says serious harm already happened.
 "U" unresolved: the window ends before the outcome can be known; an ask or limit has just appeared and the reply that would settle it is missing, so it is impossible to say which of the other four it becomes.
 
-Output: /tmp/claude-0/-home-user-Parent-Child-Protection-System/e5e6401f-eb68-522a-9592-0eea6bd72074/scratchpad/style3/sealed-work/answers-N.jsonl, UTF-8, one row per input chat with the same id: {"id": "<id>", "answer": "<0|1|2|3|U>"}. You may build the file from id:answer pairs you typed by hand.
+Output: <STYLE3_DIR>/sealed-work/answers-N.jsonl, UTF-8, one row per input chat with the same id: {"id": "<id>", "answer": "<0|1|2|3|U>"}. You may build the file from id:answer pairs you typed by hand.
 
 When done, check the output has exactly the same ids as the input and report only the count of each answer. Do not quote chat text.

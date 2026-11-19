@@ -86,7 +86,7 @@ internal object ShotSupport {
     }
     fun report(model: String = "valid", consent: String = "accepted", paused: Boolean = false, rows: List<ScoresReportRow> = emptyList(), receivedAt: Long = System.currentTimeMillis()) {
         val scope = GuardEngine.getChannelTopic(ctx); val sent = System.currentTimeMillis() - 1000
-        val state = ChildScoresState(GuardEngine.scoresModePolicy(ctx)?.policyId, model, consent, paused, if (paused) sent - 3_600_000L else null, sent - 100, rows.size, 2)
+        val state = ChildScoresState(GuardEngine.scoresModePolicy(ctx)?.policyId, model, consent, paused, if (paused) sent - 3_600_000L else null, sent - 100, rows.size, 2, true)
         FamilyEvidence(ctx).use { it.storeScoresReport(scope, ParsedScoresReport(java.util.UUID.randomUUID().toString(), sent, state, rows), receivedAt) }
     }
     fun enable() { report(); check(GuardEngine.sendScoresModePolicy(ctx, true)) }
@@ -156,7 +156,7 @@ class ScoresScreenshotTest {
     }
     @Test fun childScreens() {
         try {
-            childReset(); install(); RiskLocal.receivePolicy(ctx, java.util.UUID.randomUUID().toString(), true); RiskLocal.accept(ctx); ScoresNotices.markSeen(ctx, "on")
+            childReset(); install(); RiskLocal.receivePolicy(ctx, java.util.UUID.randomUUID().toString(), true); RiskLocal.accept(ctx); RiskLocal.acknowledgeChangeNotice(ctx)
             RiskLocal.recordRun(ctx, 14, System.currentTimeMillis() - 3_600_000L)
             var c = ShotSupport.open("overview")
             try { ShotSupport.shoot(c.get(), "scores-child-overview-status-on", 360, 1500) } finally { c.pause().stop().destroy() }

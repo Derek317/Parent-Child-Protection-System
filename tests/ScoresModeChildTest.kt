@@ -406,7 +406,7 @@ class ScoresModeChildTest {
         runBatch()
         val report = reports().last()
         assertEquals(setOf("type", "sent_at_ms", "state", "conversations", "scope", "command_id"), report.keys().asSequence().toSet())
-        assertEquals(setOf("policy_id", "model", "consent", "paused", "paused_at_ms", "last_run_ms", "scored_count", "unknown_threads"), report.getJSONObject("state").keys().asSequence().toSet())
+        assertEquals(setOf("policy_id", "model", "consent", "active", "paused", "paused_at_ms", "last_run_ms", "scored_count", "unknown_threads"), report.getJSONObject("state").keys().asSequence().toSet())
         val row = report.getJSONArray("conversations").getJSONObject(0)
         assertEquals(setOf("account_label", "score", "review_reason", "scored_at_ms"), row.keys().asSequence().toSet())
         assertEquals("friend", row.getString("account_label")); assertEquals(100.0, row.getDouble("score"), 0.001)
@@ -522,8 +522,8 @@ class ScoresModeChildTest {
         activate(); capture(obs(text(1)))
         val result = RiskBatch.run(ctx, { throw UnsatisfiedLinkError("libigguard_risk.so not found") }, { false })
         assertEquals(RiskBatch.Outcome.FAILED, result.outcome)
-        assertEquals(RiskModelState.UNSUPPORTED_DEVICE, RiskModelStore.state(ctx)); assertFalse(RiskLocal.active(ctx))
-        assertEquals("unsupported_device", reports().last().getJSONObject("state").getString("model"))
+        assertEquals(RiskModelState.ENGINE_UNAVAILABLE, RiskModelStore.state(ctx)); assertFalse(RiskLocal.active(ctx))
+        assertEquals("engine_unavailable", reports().last().getJSONObject("state").getString("model"))
         assertTrue(ctx.getSystemService(JobScheduler::class.java).allPendingJobs.none { it.service.className.endsWith("RiskScoringJob") })
         // Thrown from the scorer itself, and the CPU gate.
         reset(); activate(); capture(obs(text(1)))
@@ -542,14 +542,16 @@ class ScoresModeChildTest {
         FamilyEvidence(ctx).use { db -> assertTrue("both members were marked sent", db.riskReportRows(scope, System.currentTimeMillis()).none { it.changed }) }
         assertNotNull(ScoresReportCodec.parse(reports().last(), scope, System.currentTimeMillis()))
     }
-    @Test fun rowsAreResentAfterADayOrWhenAQueuedReportWasDropped() {
+    @Test fun theDailyReportIsStateOnlyAndRowsAreResentOnlyAfterAnUndeliveredReportWasPurged() {
         activate(); capture(obs(text(1))); runBatch()
         clearOutbox()   // the queue lost the report (TTL or discardPending)
         RiskLocal.dailyReport(ctx, System.currentTimeMillis() + 60_000)
         assertTrue("no second report inside a day", reports().isEmpty())
         RiskLocal.dailyReport(ctx, System.currentTimeMillis() + 25 * 3_600_000L)
-        assertEquals(1, reports().single().getJSONArray("conversations").length())
-        // A newer report replaces an older unsent one, so a stale copy cannot arrive after it.
+        assertEquals(0, reports().single().getJSONArray("conversations").length())
+        // A newer report replaces an older unsent one (a stale copy cannot arrive after it); then everything is resent.
+        clearOutbox(); assertTrue(RiskReporter.send(ctx)); assertEquals(0, reports().single().getJSONArray("conversations").length())
+        capture(obs(text(2))); runBatch(); assertEquals(1, reports().last().getJSONArray("conversations").length())
         RiskLocal.pause(ctx); RiskLocal.resume(ctx)
         assertEquals(1, reports().size)
         assertEquals(1, reports().single().getJSONArray("conversations").length())
@@ -672,5 +674,107 @@ class ScoresModeChildTest {
         assertTrue(scheduler.allPendingJobs.none { it.service.className.endsWith("RiskScoringJob") })
         assertTrue(RiskLocal.resume(ctx)); assertEquals(2, scheduler.allPendingJobs.count { it.service.className.endsWith("RiskScoringJob") })
         RiskLocal.withdraw(ctx); assertTrue(scheduler.allPendingJobs.none { it.service.className.endsWith("RiskScoringJob") })
+    }
+    // ---------- second review ----------
+    @Test fun aPolicyThatArrivesLateIsRejectedAndTheParentsRepostIsApplied() {
+        activate(); capture(obs(text(1)))
+        val id = UUID.randomUUID().toString()
+        receiveSigned(policyCommand(id, false).put("ts_ms", System.currentTimeMillis() - 25 * 3_600_000L))
+        assertTrue("a 25-hour-old command is rejected", RiskLocal.policyEnabled(ctx)); assertEquals(1, count("risk_store"))
+        assertEquals(RelayConsumption.CONSUMED, receiveSigned(policyCommand(id, false)))   // the parent's re-post: same id, fresh time
+        assertFalse(RiskLocal.policyEnabled(ctx)); assertEquals(RiskCapture.NORMAL, RiskLocal.captureMode(ctx)); assertEquals(0, count("risk_store"))
+        assertEquals(id, RiskLocal.policyId(ctx))
+    }
+    @Test fun theModelValidReportSurvivesMaintenanceAndAStateReportGoesOutDaily() {
+        assertTrue(installModel())
+        assertEquals("valid", reports().last().getJSONObject("state").getString("model"))
+        ArchiveMaintenance.pruneAll(ctx)
+        assertEquals("the queued model-valid report is still there", "valid", reports().last().getJSONObject("state").getString("model"))
+        val later = System.currentTimeMillis() + 30 * 3_600_000L
+        RiskLocal.dailyReport(ctx, later)   // mode is off
+        val r = reports().last(); assertEquals(later, r.getLong("sent_at_ms")); assertEquals(0, r.getJSONArray("conversations").length())
+        assertEquals("valid", r.getJSONObject("state").getString("model"))
+        RiskLocal.dailyReport(ctx, later + 3_600_000L); assertEquals(later, reports().last().getLong("sent_at_ms"))   // not again within a day
+    }
+    @Test fun theConsentNoneReportAfterANewPolicySurvivesMaintenance() {
+        assertTrue(installModel()); enablePolicy()
+        ArchiveMaintenance.pruneAll(ctx)
+        val state = reports().last().getJSONObject("state")
+        assertEquals(RiskLocal.policyId(ctx), state.getString("policy_id")); assertEquals("none", state.getString("consent")); assertFalse(state.getBoolean("active"))
+    }
+    @Test fun aSendNeverContainsRowsUnlessConsentIsAccepted() {
+        activate(); capture(obs(text(1))); runBatch()
+        assertTrue(count("risk_results") > 0)
+        ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).edit().putString("receipt", "x").commit()   // reads as withdrawn
+        FamilyEvidence(ctx).use { it.resetRiskSent(scope) }; clearOutbox()
+        assertTrue(RiskReporter.send(ctx))
+        assertEquals(0, reports().single().getJSONArray("conversations").length()); assertTrue(count("risk_results") > 0)
+        ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).edit().remove("receipt").commit()   // none
+        clearOutbox(); assertTrue(RiskReporter.send(ctx)); assertEquals(0, reports().single().getJSONArray("conversations").length())
+    }
+    @Test fun theStateSaysWhetherAnalysisIsActuallyRunning() {
+        activate()
+        assertTrue(RiskReporter.send(ctx)); assertTrue(reports().last().getJSONObject("state").getBoolean("active"))
+        val ack = prefs.getString("capture_local_ack_id", "")!!
+        prefs.edit().remove("capture_local_ack_id").commit()   // agreed, but full capture is not confirmed
+        assertEquals("accepted", RiskLocal.consentState(ctx)); assertTrue(RiskReporter.send(ctx))
+        assertFalse(reports().last().getJSONObject("state").getBoolean("active"))
+        prefs.edit().putString("capture_local_ack_id", ack).commit()
+    }
+    @Test fun aSwitchOffNoticeIsPostedOnceAndTheChangeFlagsAreExposed() {
+        assertTrue(installModel()); enablePolicy()
+        assertNull(RiskLocal.pendingChangeNotice(ctx))
+        assertTrue(RiskLocal.accept(ctx)); assertEquals("on", RiskLocal.pendingChangeNotice(ctx))
+        RiskLocal.acknowledgeChangeNotice(ctx); assertNull(RiskLocal.pendingChangeNotice(ctx))
+        val nm = org.robolectric.Shadows.shadowOf(ctx.getSystemService(android.app.NotificationManager::class.java))
+        assertNull(nm.getNotification(7002))
+        enablePolicy(false)
+        assertEquals("off", RiskLocal.pendingChangeNotice(ctx))
+        val text = nm.getNotification(7002).extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString()
+        assertTrue(text.contains("再次適用") && text.contains("sent to your parent again"))
+        assertFalse(nm.getNotification(7001).extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString().contains("AI risk analysis ON"))
+        RiskLocal.acknowledgeChangeNotice(ctx); assertNull(RiskLocal.pendingChangeNotice(ctx))
+        // Switching off a mode that was never on says nothing.
+        nm.allNotifications.forEach { }
+        reset(); enablePolicy(false); assertNull(RiskLocal.pendingChangeNotice(ctx))
+    }
+    @Test fun acceptingKeepsQueuedTamperAndHeartbeatRecordsButDropsMessageText() {
+        assertTrue(installModel()); enablePolicy()
+        GuardEngine.sendAlertFromChild(ctx, "tamper_attempt", "Brute-Force Protection", "locked for 10 minutes", bypassDedupe = true)
+        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx, force = true)
+        capture(obs("send nudes ${secret}", conversation = "badguy"), obs(text(2)))
+        assertTrue(outbox().any { it.toString().contains(secret) })
+        assertTrue(RiskLocal.accept(ctx))
+        assertNoPrivateText()
+        val alerts = outbox().filter { it.optString("type") == "alert" && !it.optBoolean("relay_control") }
+        assertTrue("the tamper alert and the heartbeat (a tamper alert while the listener is off) survive", alerts.count { it.getString("reason") == "tamper_attempt" } >= 2)
+        assertTrue(outbox().none { it.optString("type") == "captured_message" })
+        assertTrue(alerts.none { it.getString("reason") == "sexual_or_grooming_content" || it.getString("reason") == "stranger_message" })
+    }
+    @Test fun theLibraryFailureStateIsItsOwnAndEndsWithAnUpdate() {
+        assertTrue(installModel())
+        RiskModelStore.markNativeUnavailable(ctx)
+        assertEquals(RiskModelState.ENGINE_UNAVAILABLE, RiskModelStore.state(ctx)); assertEquals("engine_unavailable", RiskModelState.ENGINE_UNAVAILABLE.wire)
+        assertTrue(RiskModelStore.supported(ctx))
+        assertTrue(RiskModelStore.installKey(ctx).startsWith("${BuildConfig.VERSION_CODE}:"))
+        prefs.edit().putString("risk_native_unavailable_for", "0:0").commit()   // recorded for another build or install time
+        assertEquals(RiskModelState.INSTALLED, RiskModelStore.state(ctx))
+        RiskModelStore.memoryProbe = { 1L shl 30 }; RiskModelStore.markNativeUnavailable(ctx)
+        assertEquals(RiskModelState.UNSUPPORTED_DEVICE, RiskModelStore.state(ctx))   // memory and CPU come first
+    }
+    @Test fun controlTokenLookAlikesAreAllNeutralised() {
+        for (t in listOf("<|im_start|>", "<think>", "</think>", "<tool_call>", "</tool_call>", "<tool_response>", "</tool_response>", "<|anything|>")) {
+            val clean = RiskMessages.sanitize("x $t y")
+            assertFalse(t, clean.contains(t)); assertTrue(clean.contains("<​" + t.substring(1)))
+        }
+        assertEquals("a < b <b> <tool> </p>", RiskMessages.sanitize("a < b <b> <tool> </p>"))
+    }
+    @Test fun aStalePartFileIsDeletedBeforeTheSpaceCheckAndAtSync() {
+        val dir = RiskModelStore.directory(ctx); dir.mkdirs()
+        val part = File(dir, RiskModelSpec.FILE_NAME + ".part")
+        part.writeBytes(ByteArray(10))
+        assertEquals(RiskImportResult.NOT_ENOUGH_SPACE, RiskModelStore.importModel(ctx, ByteArrayInputStream(tinyBytes), {}, Long.MAX_VALUE / 4, sha(tinyBytes)))
+        assertFalse(part.exists())
+        part.writeBytes(ByteArray(10)); GuardEngine.syncChildComponents(ctx); assertFalse(part.exists())
     }
 }

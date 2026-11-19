@@ -74,14 +74,14 @@ class ScoresParentUiTest {
             override fun connectFailed(u: URI, a: SocketAddress, e: IOException) {}
         })
     }
-    @After fun cleanup() { ProxySelector.setDefault(original); original = null }
+    @After fun cleanup() { ProxySelector.setDefault(original); original = null; ScoresEngineBridge.reset() }
 
     private fun row(label: String, score: Double?, at: Long) = ScoresReportRow(label, score, if (score == null) "insufficient_context" else null, at)
     /** Seeds the child's last report through the parent store, the same path a real report takes. */
     private fun report(model: String = "valid", consent: String = "accepted", paused: Boolean = false, rows: List<ScoresReportRow> = emptyList(),
-                       policyId: String? = GuardEngine.scoresModePolicy(ctx)?.policyId, receivedAt: Long = System.currentTimeMillis(), unknown: Int = 3) {
+                       policyId: String? = GuardEngine.scoresModePolicy(ctx)?.policyId, receivedAt: Long = System.currentTimeMillis(), unknown: Int = 3, active: Boolean = true) {
         val sent = System.currentTimeMillis() - 1000
-        val state = ChildScoresState(policyId, model, consent, paused, if (paused) sent - 5000 else null, sent - 100, rows.size, unknown)
+        val state = ChildScoresState(policyId, model, consent, paused, if (paused) sent - 5000 else null, sent - 100, rows.size, unknown, active)
         FamilyEvidence(ctx).use { it.storeScoresReport(scope, ParsedScoresReport(UUID.randomUUID().toString(), sent, state, rows), receivedAt) }
     }
     private fun enable() { report(policyId = null); assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)) }
@@ -311,7 +311,7 @@ class ScoresParentUiTest {
     @Test fun contentFreeAlertsRenderCategoryAccountAndTimeWithANoTextLine() {
         val now = System.currentTimeMillis()
         val alert = JSONObject().put("type", "alert").put("reason", "stranger_message").put("event_id", "cf-1").put("sender", "stranger_amy").put("text", "")
-            .put("ts_ms", now).put("time", "10:00:00")
+            .put("ts_ms", now).put("time", "10:00:00").put("content_free", true)
         assertTrue(GuardEngine.recordParentAlert(ctx, alert, "cf-1"))
         val c = launch()
         try {
@@ -319,7 +319,7 @@ class ScoresParentUiTest {
             UiSupport.views(a, "evidence_loading").filterIsInstance<Button>().single { it.text.toString() == "需要跟進" }.performClick()
             UiSupport.views(a, "evidence_loading")
             val rows = UiSupport.texts(a.window.decorView)
-            assertTrue(rows.any { it.contains("此提醒不含訊息文字") })
+            assertTrue("the list line is neutral: it cannot tell the marker", rows.any { it.contains(ScoresUi.NO_TEXT_PLAIN) })
             val stored = FamilyEvidence(ctx).use { it.find(scope, "cf-1") }!!
             val t = UiSupport.theme(a)
             MainActivity::class.java.getDeclaredMethod("showAlertDetails", JSONObject::class.java, t.javaClass).apply { isAccessible = true }.invoke(a, stored, t)
@@ -348,6 +348,221 @@ class ScoresParentUiTest {
         assertEquals(listOf("低風險", "潛在風險", "中度風險", "高風險"), RiskBand.entries.map { ScoresUi.bandTitle(it) })
         assertEquals(5, (RiskBand.entries.map<RiskBand, RiskBand?> { it } + null).map { ScoresUi.bandIcon(it) }.toSet().size)
     }
+
+    // ======================= review fixes (U3, U4, U8, U9) =======================
+    private fun state(policy: String?, model: String, consent: String, paused: Boolean, stale: Boolean, active: Boolean) = ScoresModeState(policy, model, consent, paused,
+        if (paused) 1000L else null, 2000L, 3, 1, 5000L, 6000L, stale, active)
+
+    @Test fun classifyWalksEveryCombinationAndKeepsItsInvariants() {
+        val now = 10_000_000L; val id = "P1"
+        val rows = listOf(RiskScoreRow("a", 70.0, null, 5L))
+        val policies = listOf<ScoresModePolicy?>(null, ScoresModePolicy(id, false, 1L), ScoresModePolicy(id, true, now - 5 * 60_000L), ScoresModePolicy(id, true, now - 1_000L))
+        val states = mutableListOf<ScoresModeState?>(null, state("other", "valid", "accepted", false, false, true), state(null, "valid", "none", false, false, true))
+        for (consent in listOf("none", "accepted", "withdrawn")) for (model in listOf("valid", "missing", "mismatch", "unsupported_device", "engine_unavailable"))
+            for (paused in listOf(false, true)) for (stale in listOf(false, true)) for (active in listOf(false, true)) states.add(state(id, model, consent, paused, stale, active))
+        var checked = 0
+        for (policy in policies) for (st in states) for (r in listOf(emptyList(), rows)) {
+            val m = ScoresUi.classify(policy, st, r, now, st?.active)
+            checked++
+            val expected = when {
+                policy == null || !policy.enabled -> ScoresPage.OFF
+                st == null || st.policyId != id -> ScoresPage.WAITING
+                st.consent == "none" -> ScoresPage.WAITING
+                st.consent == "withdrawn" -> ScoresPage.WITHDRAWN
+                st.paused -> ScoresPage.PAUSED
+                st.model == "unsupported_device" -> ScoresPage.MODEL_UNSUPPORTED
+                st.model == "engine_unavailable" -> ScoresPage.ENGINE_UNAVAILABLE
+                st.model == "mismatch" -> ScoresPage.MODEL_WRONG
+                st.model == "missing" -> ScoresPage.MODEL_MISSING
+                !st.active -> ScoresPage.NOT_RUNNING
+                r.isEmpty() -> ScoresPage.EMPTY
+                else -> ScoresPage.LIST
+            }
+            val label = "$policy $st ${r.size}"
+            assertEquals(label, expected, m.page)
+            // A pause is never hidden by a model problem, and both facts are carried.
+            if (st != null && policy?.enabled == true && st.policyId == id && st.consent == "accepted" && st.paused) {
+                assertEquals(label, ScoresPage.PAUSED, m.page); assertEquals(label, st.model.takeIf { it != "valid" }, m.alsoModelProblem)
+            } else assertNull(label, m.alsoModelProblem)
+            // The stale banner follows the child's state on every page except OFF.
+            assertEquals(label, st != null && st.stale && m.page != ScoresPage.OFF, m.stale)
+            // Scores already received are never hidden, and never described as current.
+            assertEquals(label, r.isNotEmpty(), ScoresUi.listHeading(m) != null)
+            if (m.page != ScoresPage.LIST && r.isNotEmpty()) assertTrue(label, ScoresUi.listHeading(m)!!.let { it.contains("不再更新") || it.contains("暫停前") })
+            // Resend only when the child has not answered the current policy for more than a moment.
+            val unanswered = policy?.enabled == true && (st == null || st.policyId != id)
+            assertEquals(label, unanswered && now - policy!!.sentAt > 60_000L, m.offerResend)
+            // The overview line names the state whenever scores are not being produced.
+            val line = ScoresUi.overviewSummary(m)
+            if (m.page != ScoresPage.LIST) assertFalse(label + line, line.contains("需要留意"))
+            if (m.page == ScoresPage.LIST && m.stale) assertTrue(line.contains("過時"))
+        }
+        assertTrue(checked > 400)
+    }
+    @Test fun pausedIsShownTogetherWithAModelProblem() {
+        enable(); report(paused = true, model = "missing", rows = listOf(row("amy", 60.0, System.currentTimeMillis() - 1000)))
+        val c = launch()
+        try {
+            val v = page(c)
+            assertEquals("子女已暫停分析", (tagged(v, "scores_state_title").single() as TextView).text.toString())
+            val text = UiSupport.texts(UiSupport.current(c.get())).joinToString("\n")
+            assertTrue(text.contains("另外，子女手機的模型也有問題：尚未安裝模型檔"))
+            assertEquals(1, tagged(v, "score_row").size)
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun staleBannerShowsOnEveryPageWithAChildState() {
+        val old = System.currentTimeMillis() - 100L * 3_600_000L
+        val seeds = listOf<Pair<String, () -> Unit>>(
+            "paused" to { enable(); report(paused = true, rows = listOf(row("amy", 60.0, old)), receivedAt = old) },
+            "withdrawn" to { enable(); report(consent = "withdrawn", rows = listOf(row("amy", 60.0, old)), receivedAt = old) },
+            "waiting" to { enable(); report(consent = "none", receivedAt = old) },
+            "model" to { enable(); report(model = "mismatch", receivedAt = old) },
+            "list" to { enable(); report(rows = listOf(row("amy", 60.0, old)), receivedAt = old) },
+        )
+        for ((name, seed) in seeds) {
+            reset(); seed()
+            val c = launch()
+            try {
+                val v = page(c); val banner = tagged(v, "scores_stale_banner")
+                assertEquals(name, 1, banner.size)
+                val body = UiSupport.texts(banner.single()).joinToString("\n")
+                assertTrue(body.contains(ScoresUi.time(old))); assertTrue(body.contains("100 小時"))
+                assertEquals("title once, not repeated in the body", 1, UiSupport.texts(banner.single()).count { it.contains("分數可能已過時") })
+            } finally { c.pause().stop().destroy() }
+        }
+    }
+    @Test fun offAndWaitingStillListEarlierScoresAsNoLongerUpdated() {
+        val now = System.currentTimeMillis()
+        report(policyId = null, rows = listOf(row("amy", 60.0, now - 2000), row("bob", 12.0, now - 3000)))
+        var c = launch()
+        try {
+            val v = page(c); assertEquals("僅分數模式未開啟", (tagged(v, "scores_state_title").single() as TextView).text.toString())
+            assertEquals(2, tagged(v, "score_row").size); assertTrue((tagged(v, "scores_list_title").single() as TextView).text.contains("不再更新"))
+        } finally { c.pause().stop().destroy() }
+        reset(); report(policyId = null, rows = listOf(row("amy", 60.0, now - 2000))); assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)); report(consent = "none", rows = listOf(row("amy", 60.0, now - 2000)))
+        c = launch()
+        try {
+            val v = page(c); assertEquals("等待子女同意", (tagged(v, "scores_state_title").single() as TextView).text.toString())
+            assertEquals(1, tagged(v, "score_row").size); assertTrue((tagged(v, "scores_list_title").single() as TextView).text.contains("不再更新"))
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun overviewRowShowsTheStateNotACountWhenNothingIsBeingScored() {
+        val now = System.currentTimeMillis(); val old = now - 100L * 3_600_000L
+        val cases = listOf<Triple<String, () -> Unit, String>>(
+            Triple("paused", { enable(); report(paused = true, rows = listOf(row("a", 80.0, now - 1000))) }, "子女已暫停分析"),
+            Triple("withdrawn", { enable(); report(consent = "withdrawn", rows = listOf(row("a", 80.0, now - 1000))) }, "子女已撤回同意"),
+            Triple("waiting", { enable(); report(consent = "none", rows = listOf(row("a", 80.0, now - 1000))) }, "等待子女同意"),
+            Triple("stale", { enable(); report(rows = listOf(row("a", 80.0, old)), receivedAt = old) }, "分數可能已過時"),
+            Triple("model", { enable(); report(model = "missing", rows = listOf(row("a", 80.0, now - 1000))) }, "子女手機尚未安裝模型"),
+            Triple("not running", { enable(); report(active = false, rows = listOf(row("a", 80.0, now - 1000))) }, "分析沒有在運行"),
+        )
+        for ((name, seed, expect) in cases) {
+            reset(); seed()
+            val c = launch()
+            try {
+                val d = UiSupport.all(c.get().window.decorView).single { it.tag == "scores_overview_row" }.contentDescription.toString()
+                assertTrue("$name: $d", d.contains(expect)); assertFalse("$name: $d", d.contains("需要留意"))
+            } finally { c.pause().stop().destroy() }
+        }
+    }
+    @Test fun agreedButNotRunningHasItsOwnPageAndNextStep() {
+        enable(); report(active = false)
+        val c = launch()
+        try {
+            val v = page(c)
+            assertEquals("子女已同意，但分析沒有在子女手機上運行", (tagged(v, "scores_state_title").single() as TextView).text.toString())
+            val next = (tagged(v, "scores_next_step").single() as TextView).text.toString()
+            assertTrue(next.contains("確認雙向擷取") && next.contains("充電")); assertFalse(UiSupport.texts(UiSupport.current(c.get())).any { it.contains("不需要操作") })
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun engineUnavailableIsSeparateFromUnsupportedOnTheParentPhone() {
+        enable(); report(model = "engine_unavailable")
+        val c = launch()
+        try {
+            val v = page(c)
+            assertEquals("子女手機的分析功能未能啟動", (tagged(v, "scores_state_title").single() as TextView).text.toString())
+            val text = UiSupport.texts(UiSupport.current(c.get())).joinToString("\n")
+            assertTrue(text.contains("更新或重新安裝")); assertFalse(text.contains("8 GB"))
+        } finally { c.pause().stop().destroy() }
+        reset(); report(model = "engine_unavailable", policyId = null)
+        val d = launch()
+        try { assertTrue(family(d).single { it.tag == "scores_mode_switch" }.let { !it.isEnabled && UiSupport.texts(it).joinToString().contains("更新或重新安裝") }) } finally { d.pause().stop().destroy() }
+    }
+    @Test fun resendIsOfferedOnlyWhenTheChildHasNotAnsweredForAWhile() {
+        val calls = mutableListOf<Boolean>()
+        ScoresEngineBridge.resendPolicy = { calls.add(true); true }
+        try {
+            report(policyId = "some-older-policy")
+            LocalVault.preferences(ctx).edit().clear().commit(); GuardEngine.setFamilyToken(ctx, UUID.randomUUID().toString()); GuardEngine.setRole(ctx, "parent")
+            report(policyId = "some-older-policy")
+            assertTrue(RiskLocal.saveParentPolicy(ctx, UUID.randomUUID().toString(), true, System.currentTimeMillis() - 5 * 60_000L))
+            var c = launch()
+            try {
+                val v = page(c); assertEquals("等待子女同意", (tagged(v, "scores_state_title").single() as TextView).text.toString())
+                tagged(v, "scores_resend").single().performClick(); assertEquals(1, calls.size)
+            } finally { c.pause().stop().destroy() }
+            assertTrue(RiskLocal.saveParentPolicy(ctx, UUID.randomUUID().toString(), true, System.currentTimeMillis()))
+            c = launch()
+            try { assertTrue(tagged(page(c), "scores_resend").isEmpty()) } finally { c.pause().stop().destroy() }
+        } finally { ScoresEngineBridge.reset() }
+    }
+    @Test fun turningOnAndOffHaveTheirOwnFailureMessages() {
+        report(policyId = null)
+        ScoresEngineBridge.sendPolicy = { _, _ -> false }
+        try {
+            var c = launch()
+            try {
+                family(c).single { it.tag == "scores_mode_switch" }.performClick()
+                UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).first { it.tag == "scores_on_confirm" }.performClick()
+                assertEquals(ScoresUi.SEND_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+            } finally { c.pause().stop().destroy() }
+            reset(); enable(); ScoresEngineBridge.sendPolicy = { _, _ -> false }
+            c = launch()
+            try {
+                family(c).single { it.tag == "scores_mode_switch" }.performClick()
+                ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle()
+                val said = org.robolectric.shadows.ShadowToast.getTextOfLatestToast()
+                assertEquals(ScoresUi.OFF_FAILED, said); assertFalse(said.contains("模型"))
+                assertEquals(true, GuardEngine.scoresModePolicy(ctx)?.enabled)
+            } finally { c.pause().stop().destroy() }
+        } finally { ScoresEngineBridge.reset() }
+    }
+
+    private fun alertJson(id: String, contentFree: Boolean, text: String = "") = JSONObject().put("type", "alert").put("reason", "stranger_message").put("event_id", id)
+        .put("sender", "test_account_z").put("text", text).put("ts_ms", System.currentTimeMillis()).put("time", "10:00:00").apply { if (contentFree) put("content_free", true) }
+    private fun detailsText(a: MainActivity, id: String): List<String> {
+        val stored = FamilyEvidence(ctx).use { it.find(scope, id) }!!
+        val t = UiSupport.theme(a)
+        MainActivity::class.java.getDeclaredMethod("showAlertDetails", JSONObject::class.java, t.javaClass).apply { isAccessible = true }.invoke(a, stored, t)
+        return UiSupport.texts(ShadowDialog.getLatestDialog().window!!.decorView)
+    }
+    @Test fun noTextLineAppearsOnlyForAlertsMarkedContentFree() {
+        assertTrue(GuardEngine.recordParentAlert(ctx, alertJson("cf-marked", true), "cf-marked"))
+        assertTrue(GuardEngine.recordParentAlert(ctx, alertJson("cf-plain", false), "cf-plain"))
+        assertTrue(GuardEngine.recordParentAlert(ctx, alertJson("cf-text", false, "ordinary words"), "cf-text"))
+        val c = launch()
+        try {
+            val a = c.get()
+            val marked = detailsText(a, "cf-marked")
+            assertTrue(marked.any { it.contains("僅分數模式不分享訊息內容") }); assertTrue(marked.any { it.startsWith("帳戶 · ") })
+            val plain = detailsText(a, "cf-plain")
+            assertTrue(plain.any { it == ScoresUi.NO_TEXT_PLAIN }); assertTrue(plain.none { it.contains("僅分數模式") })
+            assertTrue("ordinary alerts keep the direction label", plain.any { it.contains("方向未能判斷") }); assertTrue(plain.none { it.startsWith("帳戶 · ") })
+            val ordinary = detailsText(a, "cf-text")
+            assertTrue(ordinary.contains("ordinary words")); assertTrue(ordinary.none { it.contains("僅分數模式") })
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun staleBodyIsShortAndFamilyTabHasOneScoresModeTitle() {
+        val received = System.currentTimeMillis() - 90L * 3_600_000L
+        val body = ScoresUi.staleBody(received)
+        assertFalse(body.contains("分數可能已過時")); assertTrue(body.contains("90 小時") && body.contains(ScoresUi.time(received)))
+        report(policyId = null)
+        val c = launch()
+        try {
+            val texts = UiSupport.texts(UiSupport.current(c.get()).let { family(c); UiSupport.current(c.get()) })
+            assertEquals(1, texts.count { it == "僅分數模式 / Scores-only mode" })
+        } finally { c.pause().stop().destroy() }
+    }
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -371,7 +586,7 @@ class ScoresNarrowLargeTextTest {
         val now = System.currentTimeMillis()
         FamilyEvidence(ctx).use {
             val scope = GuardEngine.getChannelTopic(ctx)
-            it.storeScoresReport(scope, ParsedScoresReport(UUID.randomUUID().toString(), now - 1000, ChildScoresState(null, "valid", "accepted", false, null, now - 2000, 2, 1), listOf(ScoresReportRow("a_long_account_label.with.dots", 88.0, null, now - 3000), ScoresReportRow("bob", null, "context_too_long", now - 4000))), now)
+            it.storeScoresReport(scope, ParsedScoresReport(UUID.randomUUID().toString(), now - 1000, ChildScoresState(null, "valid", "accepted", false, null, now - 2000, 2, 1, true), listOf(ScoresReportRow("a_long_account_label.with.dots", 88.0, null, now - 3000), ScoresReportRow("bob", null, "context_too_long", now - 4000))), now)
         }
         GuardEngine.sendScoresModePolicy(ctx, true)
         val c = Robolectric.buildActivity(MainActivity::class.java).setup()
@@ -415,7 +630,7 @@ class ScoresChildUiTest {
         })
     }
     @After fun cleanup() {
-        ProxySelector.setDefault(original); original = null; RuntimeEnvironment.setFontScale(1f)
+        ProxySelector.setDefault(original); original = null; RuntimeEnvironment.setFontScale(1f); ScoresEngineBridge.reset()
         ModelImportJob.importer = { c, i, p -> RiskLocal.importModel(c, i, p) }; ModelImportJob.runner = { Thread(it, "Model import").start() }; ModelImportJob.dismissResult()
         RiskModelStore.expectation = RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256)
         RiskModelStore.abiProbe = { android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a") }
@@ -473,12 +688,12 @@ class ScoresChildUiTest {
             assertEquals("accepted", RiskLocal.consentState(ctx))
             assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("新訊息不再傳給家長") })
             tag(c, "scores_change_done").single().performClick()
-            assertTrue(tag(c, "scores_change_card").isEmpty()); assertNull(ScoresNotices.pending(ctx))
+            assertTrue(tag(c, "scores_change_card").isEmpty()); assertNull(RiskLocal.pendingChangeNotice(ctx))
             assertTrue(stateLabel(c).contains("ON"))
         } finally { c.pause().stop().destroy() }
     }
     @Test fun parentTurningTheModeOffShowsTheOffPageOnce() {
-        activate(); ScoresNotices.markSeen(ctx, "on")
+        activate(); RiskLocal.acknowledgeChangeNotice(ctx)
         policy(false)
         val c = launch()
         try {
@@ -489,7 +704,7 @@ class ScoresChildUiTest {
         } finally { c.pause().stop().destroy() }
     }
     @Test fun whatIsAnalysedIsReadOnly() {
-        activate(); ScoresNotices.markSeen(ctx, "on")
+        activate(); RiskLocal.acknowledgeChangeNotice(ctx)
         val c = launch()
         try {
             tag(c, "scores_what").single().performClick()
@@ -499,15 +714,20 @@ class ScoresChildUiTest {
     }
 
     // ---------------- status block ----------------
-    @Test fun statusBlockShowsEachState() {
-        data class Case(val expect: String, val seed: () -> Unit)
+    @Test fun statusBlockShowsEachStateAndSaysOnlyWhatIsTrueInIt() {
+        val sees = "They do not see your messages"; val runs = "Runs on this phone while charging"
+        // (label, seed, must contain, must not contain)
+        data class Case(val expect: String, val has: List<String>, val hasNot: List<String>, val seed: () -> Unit)
         val cases = listOf(
-            Case("WAITING") { installModel(); policy() },
-            Case("ON") { activate(); ScoresNotices.markSeen(ctx, "on") },
-            Case("PAUSED") { activate(); assertTrue(RiskLocal.pause(ctx)) },
-            Case("WITHDRAWN") { activate(); assertTrue(RiskLocal.withdraw(ctx)) },
-            Case("MODEL MISSING") { installModel(); policy(); assertTrue(RiskLocal.accept(ctx)); RiskLocal.removeModel(ctx) },
-            Case("NOT AVAILABLE") { RiskModelStore.memoryProbe = { 2L shl 30 }; policy() },
+            Case("WAITING", listOf("nothing is stored or analysed", "your parent still receives messages as before", "你的家長仍會像以往一樣收到訊息"), listOf(sees, runs, "看不到你的訊息", "充電時運行")) { installModel(); policy() },
+            Case("ON", listOf(sees, runs, "看不到你的訊息", "充電時運行"), emptyList()) { activate(); RiskLocal.acknowledgeChangeNotice(ctx) },
+            Case("PAUSED", listOf("nothing is stored or analysed", "Alerts without text still go to your parent", "暫停期間不會儲存或分析任何內容"), listOf(sees, runs, "still receives messages as before")) { activate(); assertTrue(RiskLocal.pause(ctx)) },
+            Case("WITHDRAWN", listOf("deleted", "do not receive message text", "不會收到訊息文字"), listOf(sees, runs, "still receives messages as before")) { activate(); assertTrue(RiskLocal.withdraw(ctx)) },
+            Case("MODEL MISSING", listOf("nothing is stored or analysed", "does not receive your message text"), listOf(sees, runs, "still receives messages as before")) { installModel(); policy(); assertTrue(RiskLocal.accept(ctx)); RiskLocal.removeModel(ctx) },
+            Case("NOT AVAILABLE", listOf("nothing is stored or analysed", "still receives messages as before"), listOf(sees, runs)) { RiskModelStore.memoryProbe = { 2L shl 30 }; policy() },
+            Case("NOT AVAILABLE", listOf("nothing is stored or analysed", "does not receive your message text"), listOf(sees, runs, "still receives messages as before")) { installModel(); policy(); assertTrue(RiskLocal.accept(ctx)); RiskModelStore.memoryProbe = { 2L shl 30 } },
+            Case("ENGINE UNAVAILABLE", listOf("could not start", "Updating or reinstalling"), listOf(sees, runs, "memory")) { installModel(); policy(); assertTrue(RiskLocal.accept(ctx)); RiskModelStore.markNativeUnavailable(ctx) },
+            Case("NOT RUNNING", listOf("Nothing is being stored or analysed", "does not receive your message text"), listOf(sees, runs)) { installModel(); policy(); assertTrue(RiskLocal.accept(ctx)); prefs.edit().remove("capture_local_ack_id").commit(); RiskLocal.changed(ctx) },
         )
         val labels = mutableSetOf<String>()
         for (case in cases) {
@@ -516,15 +736,17 @@ class ScoresChildUiTest {
             try {
                 val block = tag(c, "scores_status_block").single(); val text = UiSupport.texts(block).joinToString("\n")
                 assertTrue(case.expect + " in " + stateLabel(c), stateLabel(c).contains(case.expect))
-                for (needle in listOf("AI 風險分析", "充電時運行", "Runs on this phone while charging", "看不到你的訊息", "They do not see your messages", "類型未明")) assertTrue(needle, text.contains(needle))
-                assertTrue(text.contains("Last run") || text.contains("Not run yet"))
+                assertTrue(text.contains("AI 風險分析"))
+                for (needle in case.has) assertTrue("${case.expect} should say: $needle\n$text", text.contains(needle))
+                for (needle in case.hasNot) assertFalse("${case.expect} must not say: $needle\n$text", text.contains(needle))
+                if (RiskLocal.consentState(ctx) != "none") { assertTrue(text.contains("類型未明")); assertTrue(text.contains("Last run") || text.contains("Not run yet")) }
                 labels.add(stateLabel(c))
             } finally { c.pause().stop().destroy() }
         }
-        assertEquals(6, labels.size)
+        assertEquals(8, labels.size)
     }
     @Test fun statusShowsLastRunAndUnknownCount() {
-        activate(); ScoresNotices.markSeen(ctx, "on")
+        activate(); RiskLocal.acknowledgeChangeNotice(ctx)
         val now = System.currentTimeMillis()
         RiskLocal.recordRun(ctx, 14, now)
         FamilyEvidence(ctx).use { it.noteRiskUnknown(scope, "thread-x", now) }
@@ -535,7 +757,7 @@ class ScoresChildUiTest {
         } finally { c.pause().stop().destroy() }
     }
     @Test fun pauseResumeAndWithdrawCallTheEngineAndUpdateTheScreen() {
-        activate(); ScoresNotices.markSeen(ctx, "on")
+        activate(); RiskLocal.acknowledgeChangeNotice(ctx)
         val c = launch()
         try {
             tag(c, "scores_pause").single().performClick()
@@ -637,7 +859,7 @@ class ScoresChildUiTest {
     // ---------------- layout ----------------
     @Test fun childScreensKeepTargetsAtLeast48dpAt320dpAndFontScale15() {
         RuntimeEnvironment.setFontScale(1.5f)
-        activate(); ScoresNotices.markSeen(ctx, "on")
+        activate(); RiskLocal.acknowledgeChangeNotice(ctx)
         val c = launch()
         try {
             for (screen in listOf("overview", "permissions", "scores_consent")) {
@@ -651,6 +873,157 @@ class ScoresChildUiTest {
                 for ((a, b) in sorted.zipWithNext()) assertTrue("buttons need 8dp between them", b.first - (a.first + a.second) >= 8 || b.first == a.first)
                 for (tv in UiSupport.all(UiSupport.current(c.get())).filterIsInstance<TextView>()) assertTrue(tv.measuredWidth <= 320)
             }
+        } finally { c.pause().stop().destroy() }
+    }
+
+    // ======================= review fixes (U2, U4, U5, U6, U7, U10) =======================
+    private fun overviewAndPermissionsText(c: org.robolectric.android.controller.ActivityController<MainActivity>): String {
+        UiSupport.nav(c.get(), "overview"); val o = UiSupport.texts(UiSupport.current(c.get())).joinToString("\n")
+        UiSupport.nav(c.get(), "permissions"); val p = UiSupport.texts(UiSupport.current(c.get())).joinToString("\n")
+        return o + "\n" + p
+    }
+    private fun rowByTitle(c: org.robolectric.android.controller.ActivityController<MainActivity>, title: String) =
+        UiSupport.all(UiSupport.current(c.get())).first { it.isClickable && it.contentDescription?.toString()?.startsWith(title) == true }
+    private fun dialogText() = UiSupport.texts(ShadowDialog.getLatestDialog().window!!.decorView).joinToString("\n")
+
+    @Test fun olderLinesAreModeAwareWhenContentFreeAndUnchangedWhenOff() {
+        val oldDisclaimer = "警報會加密轉傳至配對家長"; val oldScope = "擴展擷取已啟用"
+        // Mode off: exactly as before.
+        installModel(); prefs.edit().putString("capture_policy_id", "p").putString("capture_local_ack_id", "p").commit()
+        var c = launch()
+        try {
+            val text = overviewAndPermissionsText(c)
+            assertTrue(text.contains(oldDisclaimer)); assertTrue(text.contains(GuardEngine.captureScopeSummary(ctx))); assertFalse(text.contains("僅分數模式"))
+            UiSupport.nav(c.get(), "overview"); rowByTitle(c, "擷取範圍與停止").performClick(); assertTrue(dialogText().contains("已送達家長的副本需在家長手機另行刪除。重新開始"))
+            rowByTitle(c, "雙向對話記錄").also { ShadowDialog.getLatestDialog().dismiss() }.performClick()
+            assertTrue(dialogText().contains("家長可收到 Instagram 實際擷取的傳入訊息")); assertTrue(dialogText().contains("Cloudflare 中繼傳送至配對家長手機"))
+        } finally { c.pause().stop().destroy() }
+        for (seed in listOf<Pair<String, () -> Unit>>("accepted" to { policy(); assertTrue(RiskLocal.accept(ctx)) }, "paused" to { policy(); assertTrue(RiskLocal.accept(ctx)); assertTrue(RiskLocal.pause(ctx)) },
+            "withdrawn" to { policy(); assertTrue(RiskLocal.accept(ctx)); assertTrue(RiskLocal.withdraw(ctx)) })) {
+            reset(); installModel(); seed.second()
+            c = launch()
+            try {
+                val text = overviewAndPermissionsText(c)
+                assertFalse(seed.first + " still says alerts carrying messages go to the parent", text.contains(oldDisclaimer)); assertFalse(text.contains(oldScope))
+                assertTrue(text.contains("訊息文字只留在這部手機，只有分數和不含文字的提醒會傳給家長"))
+                assertTrue(text.contains("訊息文字只留在這部手機，只傳送分數和不含文字的提醒"))
+                UiSupport.nav(c.get(), "overview"); rowByTitle(c, "擷取範圍與停止").performClick()
+                val privacy = dialogText(); assertTrue(privacy.contains("家長沒有收到你的訊息文字")); assertFalse(privacy.contains("已送達家長的副本需在家長手機另行刪除。重新開始"))
+                ShadowDialog.getLatestDialog().dismiss()
+                rowByTitle(c, "雙向對話記錄").performClick()
+                val notice = dialogText(); assertTrue(notice.contains("家長只收到分數和不含文字的提醒")); assertFalse(notice.contains("家長可收到 Instagram 實際擷取的傳入訊息")); assertFalse(notice.contains("傳送至配對家長手機。新待傳記錄"))
+            } finally { c.pause().stop().destroy() }
+        }
+    }
+    @Test fun failedEngineCallsAreSaidPlainlyAndLeaveTheStateAlone() {
+        activate(); RiskLocal.acknowledgeChangeNotice(ctx)
+        val c = launch()
+        try {
+            ScoresEngineBridge.pause = { false }
+            tag(c, "scores_pause").single().performClick()
+            assertEquals(ScoresChildCopy.PAUSE_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast()); assertFalse(RiskLocal.paused(ctx)); assertTrue(stateLabel(c).contains("ON"))
+            ScoresEngineBridge.reset(); assertTrue(RiskLocal.pause(ctx)); UiSupport.nav(c.get(), "permissions"); UiSupport.nav(c.get(), "overview")
+            ScoresEngineBridge.resume = { false }
+            tag(c, "scores_resume").single().performClick()
+            assertEquals(ScoresChildCopy.RESUME_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast()); assertTrue(RiskLocal.paused(ctx)); assertTrue(stateLabel(c).contains("PAUSED"))
+            ScoresEngineBridge.reset(); assertTrue(RiskLocal.resume(ctx)); UiSupport.nav(c.get(), "permissions"); UiSupport.nav(c.get(), "overview")
+            ScoresEngineBridge.withdraw = { false }
+            tag(c, "scores_withdraw").single().performClick()
+            ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(ScoresChildCopy.WITHDRAW_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast()); assertEquals("accepted", RiskLocal.consentState(ctx)); assertTrue(stateLabel(c).contains("ON"))
+        } finally { ScoresEngineBridge.reset(); c.pause().stop().destroy() }
+    }
+    @Test fun aFailedAgreeStaysOnTheDecisionPage() {
+        installModel(); policy()
+        val c = launch()
+        try {
+            tag(c, "scores_consent_open").single().performClick()
+            ScoresEngineBridge.accept = { false }
+            tag(c, "scores_agree").single().performClick()
+            assertEquals(ScoresChildCopy.ACCEPT_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+            assertEquals("none", RiskLocal.consentState(ctx)); assertEquals(1, tag(c, "scores_agree").size)
+        } finally { ScoresEngineBridge.reset(); c.pause().stop().destroy() }
+    }
+    @Test fun leavingANoticeWithBackKeepsItAndTheOffNoticeStillComes() {
+        installModel(); policy()
+        val c = launch()
+        try {
+            tag(c, "scores_consent_open").single().performClick(); tag(c, "scores_agree").single().performClick()
+            assertEquals("on", RiskLocal.pendingChangeNotice(ctx))
+            UiSupport.nav(c.get(), "overview")   // Back does not acknowledge
+            assertEquals("on", RiskLocal.pendingChangeNotice(ctx)); assertEquals(1, tag(c, "scores_change_card").size)
+            policy(false)
+            assertEquals("off", RiskLocal.pendingChangeNotice(ctx))
+            UiSupport.nav(c.get(), "permissions"); UiSupport.nav(c.get(), "overview")
+            UiSupport.all(tag(c, "scores_change_card").single()).filterIsInstance<Button>().single().performClick()
+            assertTrue(UiSupport.texts(UiSupport.current(c.get())).any { it.contains("原有的運作方式再次適用") })
+            tag(c, "scores_change_done").single().performClick(); assertNull(RiskLocal.pendingChangeNotice(ctx)); assertTrue(tag(c, "scores_change_card").isEmpty())
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun importProgressKeepsUpdatingAfterTheActivityIsRecreated() {
+        var queued: Runnable? = null
+        ModelImportJob.runner = { queued = it }
+        val first = launch()
+        try {
+            permissions(first)
+            val uri = Uri.parse("content://test.picker/model")
+            shadowOf(ctx.contentResolver).registerInputStream(uri, ByteArrayInputStream(tiny))
+            MainActivity::class.java.getDeclaredMethod("onActivityResult", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Intent::class.java).apply { isAccessible = true }
+                .invoke(first.get(), 9032, android.app.Activity.RESULT_OK, Intent().setData(uri))
+            assertTrue(ModelImportJob.running); assertEquals(1, tag(first, "scores_import_progress").size)
+        } finally { first.pause().stop().destroy() }
+        assertNull("a destroyed activity is not held", ModelImportJob.listener)
+        val second = launch()
+        try {
+            permissions(second)
+            ModelImportJob.copied = 553_704_368L; ModelImportJob.notifyChange(); shadowOf(Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+            val text = (tag(second, "scores_import_text").single() as TextView).text.toString()
+            assertTrue(text, text.contains("0.52 GB / 1.03 GB"))
+            ModelImportJob.copied = 1_000_000_000L; ModelImportJob.notifyChange(); shadowOf(Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+            assertTrue((tag(second, "scores_import_text").single() as TextView).text.contains("0.93 GB / 1.03 GB"))
+        } finally { ModelImportJob.running = false; second.pause().stop().destroy() }
+    }
+    @Test fun wrongFileWordingIsHonestAboutWhatIsChecked() {
+        val text = ScoresChildCopy.result(RiskImportResult.WRONG_FILE, false)!!.let { it.first + "\n" + it.second }
+        assertTrue(text.contains("只接受完全相同的檔案") && text.contains("SHA-256") && text.contains("Only the exact file is accepted"))
+        assertFalse(text.contains("改名")); assertFalse(text.contains("renamed")); assertFalse(text.contains("簽名")); assertFalse(text.lowercase().contains("signature"))
+        assertEquals(2, Regex("1,107,408,736").findAll(text).count()); assertFalse(text.contains("1107408736"))
+        val installed = ScoresChildCopy.result(RiskImportResult.OK, false)!!.second + ScoresChildCopy.INSTALLED
+        assertFalse(installed.contains("簽名")); assertFalse(installed.lowercase().contains("signature")); assertTrue(installed.contains("校驗碼"))
+    }
+    @Test fun readOnlyPageIsStillReadOnlyAfterRecreation() {
+        policy()
+        var c = launch()
+        val state = android.os.Bundle()
+        try { tag(c, "scores_what").single().performClick(); assertTrue(tag(c, "scores_agree").isEmpty()); c.saveInstanceState(state) } finally { c.pause().stop().destroy() }
+        c = Robolectric.buildActivity(MainActivity::class.java).setup(state)
+        try {
+            shadowOf(Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+            assertTrue(UiSupport.texts(UiSupport.current(c.get())).any { it.contains("一對一對話") }); assertTrue(tag(c, "scores_agree").isEmpty()); assertEquals(1, tag(c, "scores_back").size)
+        } finally { c.pause().stop().destroy() }
+        // The decision page, opened from the card, comes back as the decision page.
+        val state2 = android.os.Bundle()
+        c = launch()
+        try { tag(c, "scores_consent_open").single().performClick(); assertEquals(1, tag(c, "scores_agree").size); c.saveInstanceState(state2) } finally { c.pause().stop().destroy() }
+        c = Robolectric.buildActivity(MainActivity::class.java).setup(state2)
+        try { shadowOf(Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS); assertEquals(1, tag(c, "scores_agree").size) } finally { c.pause().stop().destroy() }
+    }
+    @Test fun removeConfirmationSaysTheParentIsTold() {
+        installModel()
+        val c = launch()
+        try {
+            permissions(c); tag(c, "scores_model_remove").single().performClick()
+            val said = ShadowAlertDialog.getLatestAlertDialog().findViewById<TextView>(android.R.id.message).text.toString()
+            assertTrue(said.contains("家長會被告知這部手機已沒有模型")); assertTrue(said.contains("your parent is told the model is no longer installed"))
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun engineUnavailableGetsItsOwnCardInsteadOfTheMemoryMessage() {
+        installModel(); RiskModelStore.markNativeUnavailable(ctx)
+        val c = launch()
+        try {
+            permissions(c)
+            assertEquals(1, tag(c, "scores_engine_unavailable").size); assertTrue(tag(c, "scores_model_unsupported").isEmpty()); assertTrue(tag(c, "model_import_row").isEmpty())
+            assertFalse(UiSupport.texts(tag(c, "scores_engine_unavailable").single()).joinToString().contains("8 GB"))
         } finally { c.pause().stop().destroy() }
     }
 }
