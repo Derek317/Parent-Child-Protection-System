@@ -147,4 +147,25 @@ class PairingGuardTest {
             assertEquals(other.token,GuardEngine.getOrCreateFamilyToken(ctx))
         } finally {c.pause().stop().destroy()}
     }
+
+    // ---- F9(b): one rate-limited alert, however often another app fires the link ----
+    private fun fire(a:MainActivity,i:FamilySecurity.Invite)=MainActivity::class.java.getDeclaredMethod("onNewIntent",Intent::class.java).apply{isAccessible=true}.invoke(a,Intent(Intent.ACTION_VIEW,link(i)))
+    @Test fun repeatedLinksAtALockedChildRaiseOneRateLimitedAlert() {
+        pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx);val topic=GuardEngine.getChannelTopic(ctx)
+        var mono=9_000_000L;var wall=System.currentTimeMillis()
+        GuardEngine.monotonicClock={mono};GuardEngine.wallClock={wall};GuardEngine.bootMarker={"5"}
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            fun alerts()=queuedAlerts(token,topic).count{it.optString("reason")=="tamper_attempt" && it.optString("sender")=="Deep-Link Guard"}
+            repeat(5){fire(c.get(),foreignInvite());mono+=61_000;wall+=61_000;ShadowDialog.getShownDialogs().forEach{it.dismiss()}}
+            assertEquals("five links within five minutes must produce one alert",1,alerts())
+            mono+=61*60_000L;wall+=61*60_000L
+            fire(c.get(),foreignInvite())
+            assertEquals("a new window may alert once more",2,alerts())
+            assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
+        } finally {
+            GuardEngine.wallClock={System.currentTimeMillis()};GuardEngine.monotonicClock={android.os.SystemClock.elapsedRealtime()};GuardEngine.bootMarker={"-1"}
+            c.pause().stop().destroy()
+        }
+    }
 }

@@ -966,6 +966,16 @@ object GuardEngine {
             true
         }
     }
+    /** An app opened a pairing link on a locked child phone. At most one alert per hour (monotonic), so a hostile app cannot spam the parent. */
+    fun noteInviteLinkOnChild(ctx: Context) {
+        if (!isChildMode(ctx) || isTemporarilyUnlocked(ctx)) return
+        val p = prefs(ctx); val now = monotonicClock(); val boot = bootMarker(ctx)
+        val last = p.getLong("link_alert_rt", 0L)
+        if (p.getString("link_alert_boot", "") == boot && now >= last && last != 0L && now - last < 60 * 60_000L) return
+        p.edit().putLong("link_alert_rt", now).putString("link_alert_boot", boot).apply()
+        sendAlertFromChild(ctx, "tamper_attempt", "Deep-Link Guard",
+            "有程式在子女手機開啟了家庭配對邀請。更換家庭需要家長主密碼；每小時最多通知一次。", bypassDedupe = true)
+    }
     private fun announceRepair(ctx: Context, waitMs: Long) {
         val delivered = java.util.concurrent.CountDownLatch(1)
         sendAlertFromChild(ctx, "tamper_attempt", "Re-pair Guard",
@@ -2452,7 +2462,7 @@ class MainActivity : Activity() {
         }
         box.addView(TextView(this).apply {text="家長資料已鎖定\nParent data is locked";textSize=24f})
         box.addView(TextView(this).apply {text="使用手機的生物辨識或螢幕鎖驗證後查看。背景接收仍會繼續；請勿與其他人共用手機解鎖憑證。\nAuthenticate with your device lock to view family records. Background delivery continues.";textSize=16f;setPadding(0,dp(20),0,dp(20))})
-        box.addView(Button(this).apply {text="驗證並開啟 / Authenticate";tag="parent_authenticate";setOnClickListener{requestParentAuthentication()}})
+        box.addView(Button(this).apply {text="驗證並開啟 / Authenticate";tag="parent_authenticate";filterTouchesWhenObscured=true;setOnClickListener{requestParentAuthentication()}})
         box.addView(Button(this).apply {text="設定手機螢幕鎖 / Set device lock";setOnClickListener{
             try{startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))}catch(_:Exception){Toast.makeText(this@MainActivity,"請在 Android 設定啟用螢幕鎖。",Toast.LENGTH_LONG).show()}
         }})
@@ -2781,6 +2791,7 @@ class MainActivity : Activity() {
         if (incoming.action != Intent.ACTION_VIEW || !data.scheme.equals("igguard", true) || !data.host.equals("pair", true)) return
         val parsed = GuardEngine.parsePairingString(data.toString()) ?: return
         if (showPairingBlock()) return
+        GuardEngine.noteInviteLinkOnChild(this)
         confirmPairing(parsed)
     }
     private fun confirmPairing(parsed: FamilySecurity.Invite, onAccepted: () -> Unit = {}) {
@@ -3920,7 +3931,11 @@ class MainActivity : Activity() {
     private fun alert(): AlertDialog.Builder {
         val session = GuardEngine.captureRelaySession(this)
         return object : AlertDialog.Builder(this@MainActivity) {
-            override fun show(): AlertDialog = create().also { trackDialog(it);it.show() }
+            override fun show(): AlertDialog = create().also { dialog ->
+                // Confirmation buttons ignore touches delivered while another app's window covers them.
+                dialog.setOnShowListener { for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) dialog.getButton(which)?.filterTouchesWhenObscured = true }
+                trackDialog(dialog);dialog.show()
+            }
             override fun setPositiveButton(text: CharSequence?, listener: DialogInterface.OnClickListener?): AlertDialog.Builder =
                 super.setPositiveButton(text) { dialog, which ->
                     if (GuardEngine.captureRelaySession(this@MainActivity) == session && parentUnlocked()) listener?.onClick(dialog, which)
@@ -4007,12 +4022,14 @@ class MainActivity : Activity() {
         text = title; textSize = 14f; typeface = font(true); isAllCaps = false
         setTextColor(color(hexText)); background = ripple(hexBg, 8, if (hexBg != currentTheme().btnPrimaryBg) currentTheme().accentPowderSky else null)
         minimumHeight = dp(52); setPadding(dp(14), dp(13), dp(14), dp(13)); setOnClickListener(sessionClick(onClick))
+        filterTouchesWhenObscured = true
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(5), 0, dp(8)) }
     }
     private fun textAction(title: String, onClick: () -> Unit): Button = Button(this).apply {
         val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
         setTextColor(color(t.accentSeafoam)); background = ripple(t.bgCard, 8, t.accentPowderSky); minimumHeight = dp(48)
         gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(dp(12), dp(10), dp(12), dp(10)); setOnClickListener(sessionClick(onClick))
+        filterTouchesWhenObscured = true
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply{setMargins(0,dp(4),0,dp(6))}
     }
     private fun checkInitialPairingConfirmation() {

@@ -98,7 +98,7 @@ object AppConsent {
         })
         val green = Color.rgb(36, 94, 80)
         val accept = Button(activity).apply {
-            text = "同意並繼續 / Agree and continue"; tag = "consent_accept"; isEnabled = false; isAllCaps = false
+            text = "同意並繼續 / Agree and continue"; tag = "consent_accept"; isEnabled = false; isAllCaps = false; filterTouchesWhenObscured = true
             backgroundTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()), intArrayOf(green, Color.rgb(214, 220, 217)))
             setTextColor(ColorStateList(arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()), intArrayOf(Color.WHITE, Color.rgb(60, 73, 67))))
         }
@@ -109,7 +109,7 @@ object AppConsent {
             "consent_family" to "我只會在有合法權限的私人家庭保障情況下使用，並已與子女／家長了解用途；不作其他監視用途，也不把第 52 條當作自動合法授權。\nI will use this only for authorised private family safeguarding, with the child/parent informed, and will not treat section 52 as automatic legal permission."
         )) {
             boxes[tag] = CheckBox(activity).apply {
-                this.tag = tag; text = caption; textSize = 16f; setTextColor(Color.rgb(30, 43, 41))
+                this.tag = tag; filterTouchesWhenObscured = true; text = caption; textSize = 16f; setTextColor(Color.rgb(30, 43, 41))
                 isChecked = false; isSaveEnabled = false; setPadding(0, dp(10), 0, dp(10))
                 buttonTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(green, Color.rgb(68, 84, 77)))
                 setOnCheckedChangeListener { _, _ -> accept.isEnabled = boxes.size == acknowledgments.size && boxes.values.all { it.isChecked } }
@@ -125,7 +125,7 @@ object AppConsent {
         }
         content.addView(accept)
         content.addView(Button(activity).apply {
-            text = "不同意，返回主畫面 / Decline and return Home"; tag = "consent_decline"
+            text = "不同意，返回主畫面 / Decline and return Home"; tag = "consent_decline"; filterTouchesWhenObscured = true
             isAllCaps = false; backgroundTintList = ColorStateList.valueOf(Color.rgb(66, 76, 71)); setTextColor(Color.WHITE)
             setOnClickListener { leaveToHome(activity) }
         })
