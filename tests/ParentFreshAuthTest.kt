@@ -137,4 +137,91 @@ class ParentFreshAuthTest {
             answer(a,false);assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
         } finally {c.pause().stop().destroy()}
     }
+
+    // ---- S8: actions that delete data or export the family secret also need a fresh authentication ----
+    private fun idle()=shadowOf(android.os.Looper.getMainLooper()).idle()
+    private fun alertPositive(){(ShadowDialog.getLatestDialog() as android.app.AlertDialog).getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();idle()}
+    private fun seed(){
+        GuardEngine.recordParentAlert(ctx,JSONObject().put("type","alert").put("event_id","e1").put("sender","peer").put("text","body").put("reason","stranger_message").put("ts_ms",System.currentTimeMillis()),"relay:e1")
+    }
+    @Test fun deleteAllEvidenceNeedsFreshAuthentication() {
+        seed()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            call(a,"navigateTo","alerts");idle()
+            repeat(50){if(all(a.window.decorView).any{it is Button && it.text.toString()=="刪除此家庭的全部證據"})return@repeat;idle();Thread.sleep(50)}
+            drain(a)
+            all(a.window.decorView).filterIsInstance<Button>().first{it.text.toString()=="刪除此家庭的全部證據"}.performClick();idle()
+            alertPositive()
+            assertTrue(prompted(a));assertEquals("nothing deleted before authentication",1,GuardEngine.getParentAlerts(ctx).size)
+            answer(a,false);assertEquals(1,GuardEngine.getParentAlerts(ctx).size)
+            all(a.window.decorView).filterIsInstance<Button>().first{it.text.toString()=="刪除此家庭的全部證據"}.performClick();idle()
+            alertPositive();assertTrue(prompted(a));answer(a,true)
+            assertTrue(GuardEngine.getParentAlerts(ctx).isEmpty())
+        } finally {c.pause().stop().destroy()}
+    }
+    @Test fun retentionChangeAndLegacyAdoptionNeedFreshAuthentication() {
+        seed()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            val scope=GuardEngine.getChannelTopic(ctx)
+            call(a,"showRetentionSettings",MainActivity::class.java.getDeclaredMethod("currentTheme").apply{isAccessible=true}.invoke(a))
+            drain(a)
+            val retention=ShadowDialog.getLatestDialog()
+            button(retention,"新記錄保留 7 天").performClick();idle()
+            alertPositive()
+            assertTrue(prompted(a));assertEquals(30,FamilyEvidence(ctx).use{it.retentionPreview(scope).retentionDays})
+            answer(a,false);assertEquals(30,FamilyEvidence(ctx).use{it.retentionPreview(scope).retentionDays})
+            button(retention,"新記錄保留 7 天").performClick();idle()
+            alertPositive();assertTrue(prompted(a));answer(a,true)
+            assertEquals(7,FamilyEvidence(ctx).use{it.retentionPreview(scope).retentionDays})
+        } finally {c.pause().stop().destroy()}
+    }
+    @Test fun sharingOrCopyingTheInviteAndGeneratingAnUnlockCodeNeedFreshAuthentication() {
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        val clip=ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        try {
+            call(a,"navigateTo","family")
+            drain(a)
+            all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("邀請子女配對")==true}.performClick();idle()
+            val sheet=ShadowDialog.getLatestDialog()
+            assertFalse("the invite is not copied before authentication",clip.hasPrimaryClip())
+            button(sheet,"複製配對訊息").performClick();idle()
+            assertTrue(prompted(a));assertFalse(clip.hasPrimaryClip())
+            answer(a,false);assertFalse(clip.hasPrimaryClip())
+            button(openInvite(a),"複製配對訊息").performClick();idle()
+            assertTrue(prompted(a));answer(a,true)
+            assertTrue(clip.primaryClip!!.getItemAt(0).text.toString().contains("igguard://pair"))
+            clip.setPrimaryClip(android.content.ClipData.newPlainText("x","y"))
+            button(openInvite(a),"傳送配對邀請").performClick();idle()
+            assertTrue("sharing needs it too",prompted(a));assertTrue(generateSequence{shadowOf(a).nextStartedActivity}.none{it.action==Intent.ACTION_CHOOSER});answer(a,false)
+            // unlock code: no code is generated or pushed before authentication
+            prefs.edit().remove("synced_15m_code").commit()
+            all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("15 分鐘臨時解鎖")==true}.performClick();idle()
+            assertTrue(prompted(a));assertNull(prefs.getString("synced_15m_code",null))
+            answer(a,true)
+            assertNotNull(prefs.getString("synced_15m_code",null))
+        } finally {c.pause().stop().destroy()}
+    }
+    private fun openInvite(a:MainActivity):android.app.Dialog{
+        ShadowDialog.getShownDialogs().forEach{it.dismiss()}
+        all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("邀請子女配對")==true}.performClick();idle()
+        return ShadowDialog.getLatestDialog()
+    }
+
+    @Test fun legacyRetentionAdoptionNeedsFreshAuthentication() {
+        val scope=GuardEngine.getChannelTopic(ctx)
+        FamilyEvidence(ctx).use{it.append(scope,"old",JSONObject().put("type","alert").put("event_id","old").put("sender","peer").put("text","old body").put("reason","stranger_message").put("ts_ms",System.currentTimeMillis()-90*24*3600_000L),legacy=true)}
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            call(a,"showRetentionSettings",MainActivity::class.java.getDeclaredMethod("currentTheme").apply{isAccessible=true}.invoke(a))
+            drain(a)
+            val retention=ShadowDialog.getLatestDialog()
+            button(retention,"預覽後，將期限套用至舊記錄").performClick();idle()
+            alertPositive();assertTrue(prompted(a))
+            assertEquals("the legacy record is untouched before authentication",1,FamilyEvidence(ctx).use{it.retentionPreview(scope).legacyCount})
+            answer(a,true)
+            assertEquals(0,FamilyEvidence(ctx).use{it.retentionPreview(scope).legacyCount})
+        } finally {c.pause().stop().destroy()}
+    }
 }

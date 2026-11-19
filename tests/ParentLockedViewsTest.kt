@@ -87,10 +87,15 @@ class ParentLockedViewsTest {
             assertTrue(all(a.window.decorView).any{it.tag=="nav_alerts"})
         } finally {c.pause().stop().destroy()}
     }
+    /** Copying the invite and generating an unlock code ask for a fresh device authentication (see ParentFreshAuthTest). */
+    private fun reauthenticate(a:MainActivity) {
+        MainActivity::class.java.getDeclaredMethod("onActivityResult",Int::class.javaPrimitiveType,Int::class.javaPrimitiveType,Intent::class.java).apply{isAccessible=true}.invoke(a,9031,android.app.Activity.RESULT_OK,null)
+    }
     private fun clipboardExtras():android.os.PersistableBundle? =
         (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClipDescription?.extras
     private fun unlockedActivity():org.robolectric.android.controller.ActivityController<MainActivity> {
         ParentUiAuthFixture.autoApprove=true
+        shadowOf(ctx.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager).setIsDeviceSecure(true)
         return Robolectric.buildActivity(MainActivity::class.java).setup()
     }
     @Test fun copiedMessageTextInvitesAndUnlockCodesAreMarkedSensitive() {
@@ -115,10 +120,12 @@ class ParentLockedViewsTest {
             all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("邀請子女配對")==true}.performClick()
             val invite=ShadowDialog.getLatestDialog()
             all(invite.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="複製配對訊息"}.performClick()
+            reauthenticate(a)
             assertSensitive("invite","igguard://pair")
             clip.setPrimaryClip(android.content.ClipData.newPlainText("x","y"))
             // 15-minute unlock code
             all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("15 分鐘臨時解鎖")==true}.performClick()
+            reauthenticate(a)
             val code=ShadowDialog.getLatestDialog()
             all(code.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="複製解鎖碼"}.performClick()
             assertSensitive("unlock code","")

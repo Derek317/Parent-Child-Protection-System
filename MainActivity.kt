@@ -3342,7 +3342,7 @@ class MainActivity : Activity() {
     private fun renderParentFamily(t: ThemeColors) {
         heading("一起建立，安心的界線。", "家庭配對、信任好友與臨時解鎖。", t)
         rootContainer.addView(row("link", "邀請子女配對", "傳送家庭專屬配對邀請", t) { showPairingInvite(t) })
-        rootContainer.addView(row("key", "15 分鐘臨時解鎖", "給需要的片刻空間，無需透露主密碼", t) {
+        rootContainer.addView(row("key", "15 分鐘臨時解鎖", "給需要的片刻空間，無需透露主密碼", t) { requireFreshParentAuth {
             displayed15MinCode = GuardEngine.generate15MinUnlockCode(this)
             GuardEngine.push15MinUnlockCodeFromParent(this, displayed15MinCode)
             showSheet("給孩子，15 分鐘的空間。") { dialog ->
@@ -3351,7 +3351,7 @@ class MainActivity : Activity() {
                 addView(label("正在透過加密通道傳送。子女手機收到後才能使用；有效期為產生後 15 分鐘。", 13f, t.textSecondary, bottomPad = 18))
                 addView(actionButton("複製解鎖碼", t.btnPrimaryBg, t.btnPrimaryText) { copyText("IGGuardUnlock", displayed15MinCode); dialog.dismiss() })
             }
-        })
+        } })
         sectionTitle("信任好友", t)
         val current = GuardEngine.getTrustedHandles(this)
         if (current.isEmpty()) rootContainer.addView(label("尚未加入信任好友。請確認對方身份後，再加入名單。", 14f, t.textSecondary, bottomPad = 16))
@@ -3378,11 +3378,11 @@ class MainActivity : Activity() {
             addView(label(GuardEngine.getSafetyEmojis(this@MainActivity), 30f, t.textPrimary, bottomPad = 22).apply { gravity = Gravity.CENTER })
             addView(label("安全代碼：${GuardEngine.getSafetyCode(this@MainActivity)}", 16f, t.textPrimary, true, bottomPad = 12))
             addView(label("請在家長手機查看並與子女手機核對完整安全代碼；代碼同時驗證家長金鑰及密碼設定。", 13f, t.textSecondary, bottomPad = 18))
-            addView(actionButton("傳送配對邀請", t.btnPrimaryBg, t.btnPrimaryText) {
+            addView(actionButton("傳送配對邀請", t.btnPrimaryBg, t.btnPrimaryText) { requireFreshParentAuth {
                 val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, GuardEngine.buildPairingInviteText(this@MainActivity)) }
                 startActivity(Intent.createChooser(intent, "傳送配對邀請"))
-            })
-            addView(actionButton("複製配對訊息", t.btnSecondaryBg, t.btnSecondaryText) { copyText("IGGuardInvite", GuardEngine.buildPairingInviteText(this@MainActivity)); dialog.dismiss() })
+            } })
+            addView(actionButton("複製配對訊息", t.btnSecondaryBg, t.btnSecondaryText) { requireFreshParentAuth { copyText("IGGuardInvite", GuardEngine.buildPairingInviteText(this@MainActivity)); dialog.dismiss() } })
         }
     }
     private fun clearTrustDraft() { inputDrafts.remove("輸入好友帳號，以逗號分隔") }
@@ -3558,7 +3558,7 @@ class MainActivity : Activity() {
         rootContainer.addView(textAction("重新同步可用記錄"){thread{GuardEngine.pollChannelOnce(applicationContext,since="all")};Toast.makeText(this,"正在同步；未擷取或中繼站已過期的內容無法復原。",Toast.LENGTH_LONG).show()})
         if(!inConversation)rootContainer.addView(textAction("刪除此家庭的全部證據"){
             alert(critical = true).setTitle("永久刪除證據？").setMessage("將刪除此家庭本機記錄及收藏。圖表統計保留；操作無法復原。")
-                .setNegativeButton("取消",null).setPositiveButton("永久刪除"){_,_->GuardEngine.clearParentAlerts(this);evidencePage=0;renderUi()}.show()
+                .setNegativeButton("取消",null).setPositiveButton("永久刪除"){_,_->requireFreshParentAuth{GuardEngine.clearParentAlerts(this);evidencePage=0;renderUi()}}.show()
         })
     }
     private fun conversationBubble(message:JSONObject,t:ThemeColors):View {
@@ -3901,7 +3901,7 @@ class MainActivity : Activity() {
             if(other>0)rootContainer.addView(row("shield-check","其他家庭的本機封存","$other 項記錄，與目前家庭分開保存",t) {
                 alert().setTitle("刪除其他家庭的封存？").setMessage("只刪除其他家庭在此手機上的封存文字和片段。目前家庭的證據不受影響；此操作無法復原。")
                     .setNegativeButton("取消",null).setPositiveButton("永久刪除") { _,_ ->
-                        FamilyEvidence(this).use{it.deleteOtherArchives(scope)};renderUi()
+                        requireFreshParentAuth{FamilyEvidence(this).use{it.deleteOtherArchives(scope)};renderUi()}
                     }.show()
             })
         }
@@ -3932,16 +3932,16 @@ class MainActivity : Activity() {
             addView(label("新封存預設保留 ${preview.retentionDays} 天，待傳內容最多 72 小時。明確保留供檢視的個別記錄最多 90 天。舊版本記錄不會在升級時直接刪除。",14f,t.textSecondary,bottomPad=12))
             for(days in listOf(7,30))addView(actionButton("新記錄保留 $days 天",t.btnSecondaryBg,t.btnSecondaryText){
                 alert().setTitle("變更為 $days 天？").setMessage("現有新格式記錄的期限可能縮短；已過期內容會刪除。舊格式記錄仍須另行確認套用，限期保留的記錄不受縮短影響。")
-                    .setNegativeButton("取消",null).setPositiveButton("確認變更"){_,_->
+                    .setNegativeButton("取消",null).setPositiveButton("確認變更"){_,_->requireFreshParentAuth{
                         FamilyEvidence(this@MainActivity).use{it.setRetentionDays(scope,days);it.pruneExpired(scope)};dialog.dismiss();renderUi()
-                    }.show()
+                    }}.show()
             })
             addView(label("舊記錄：${preview.legacyCount} 則；按目前期限已過期：${preview.legacyExpiredCount} 則。採用後，過期內容會刪除，防重播識別碼仍保留。",14f,t.textSecondary,bottomPad=12))
             if(preview.legacyCount>0)addView(actionButton("預覽後，將期限套用至舊記錄",t.warningButtonBg,t.warningButtonText){
                 alert().setTitle("將期限套用至舊記錄？").setMessage("${preview.legacyExpiredCount} 則舊記錄可能立即到期。先在記錄詳情選擇限期保留；已複製的外部副本不受影響。")
-                    .setNegativeButton("取消",null).setPositiveButton("確認採用") {_,_->
+                    .setNegativeButton("取消",null).setPositiveButton("確認採用") {_,_->requireFreshParentAuth{
                         FamilyEvidence(this@MainActivity).use{it.applyRetentionToLegacy(scope);it.pruneExpired(scope,System.currentTimeMillis())};dialog.dismiss();renderUi()
-                    }.show()
+                    }}.show()
             })
         }
     }
