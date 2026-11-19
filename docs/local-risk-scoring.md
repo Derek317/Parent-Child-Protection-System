@@ -4,7 +4,7 @@
 
 Build spec, 19 November 2026. Status: in progress on branch `app/local-risk-scoring`. Not released.
 
-Everything about the model's accuracy is measured on invented chats only (see `research/results/stage4-report.md`). Nothing here is validated on real conversations.
+The model was tested mostly on invented chats and on a small number of real ones (see `research/results/stage4-report.md`, section "Retrain with real chats added: v7"). On the real testing chats it flagged 6 of 10 grooming chats and 0 of 37 ordinary chat windows; those chats were also used to choose the model, so this is not a fresh test. It fails the handoff 90-chat set (27/36 risk chats flagged, 5/36 harmless chats flagged). Nothing here shows that it reliably detects real grooming. v7 was trained partly on a small number of real chats that Derek supplied; they are private, are not in the repository, and so v7 cannot be rebuilt from the repository alone. v7 was not run on the sealed set.
 
 ## Decisions
 
@@ -12,7 +12,7 @@ Everything about the model's accuracy is measured on invented chats only (see `r
 | --- | --- | --- |
 | Where scoring runs | Derek | On the child's phone. |
 | How the model file arrives | Derek | A person imports the file by hand with a file picker. No download code, no hosting. |
-| Model | Research | `qwen3-1.7b-lora-v4-Q4_K_M.gguf` (v4, retrained on the restyled data and chosen by Derek on 19 November 2026; v3 is no longer accepted), 1,107,408,736 bytes, SHA-256 `833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314`. Any other file is refused. |
+| Model | Research | `qwen3-1.7b-lora-v7-Q4_K_M.gguf` (v7, retrained with a small number of real chats added; confirmed by Derek on 19 November 2026; the v3 and v4 files are no longer accepted), 1,107,408,736 bytes, SHA-256 `32c05d65e380072e01ab194021419ec5bb8026a07fdcea5290e773a0995dff60`. Any other file is refused. |
 | Engine | Research | llama.cpp tag `b12503` (commit `4577932fab595eaa8b27ad71734d5de1f3c07d8c`), built for `arm64-v8a` with the NDK. |
 | Keyword detection | Derek | Unchanged. The model is an addition. |
 

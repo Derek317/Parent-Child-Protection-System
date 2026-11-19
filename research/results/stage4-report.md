@@ -103,3 +103,42 @@ v4 by language, risk · benign: sealed English 98/100 · 0/49, Cantonese 96/100 
 - **On the three files both models saw unchanged, v4 is not better than v3.** It flags fewer risk chats on the third-style test and the handoff 90-chat set, where it falls below the pass mark, mostly in Cantonese (7/12). It raises fewer false alarms on the third-style test.
 - **The differences are small against the sample sizes** (9 chats of 120; 4 of 36), and one training run each cannot separate a real effect of the restyle from run-to-run variation.
 - **Which model the app ships is Derek's decision.** v4 was trained on the Cantonese wording Derek approved; v3 has the slightly better numbers on wording neither was trained on. Both files are kept.
+
+## Retrain with real chats added: v7 (19 November 2026)
+
+Derek supplied two kinds of real chats, which are **not in this repository and must never be added to it**:
+
+- **Real grooming chats:** 30 text transcripts of chat screenshots, 10 each for training, verification and testing, all labelled level 3. Simplified Chinese. Graphic messages had been replaced by a marker; the marker lines were dropped before use. The three folders overlap: the same conversations appear in more than one.
+- **Real ordinary chats:** Derek's own Instagram conversations, 11 one-to-one threads cut into 151 windows of up to 30 messages, all labelled level 0. Split by thread: 64 windows for training, 50 for verification, 37 for testing. Shared posts were replaced by `[link]`.
+
+v7 is the v4 recipe on `train-mixed-v3-restyled.jsonl` plus the 10 real grooming training chats (each repeated ten times) and the 64 real ordinary training windows. Same base, settings, conversion and quantization as v4. Because the real chats are kept out of the repository, **v7 cannot be rebuilt from the repository alone.**
+
+- File: `qwen3-1.7b-lora-v7-Q4_K_M.gguf`, 1,107,408,736 bytes, SHA-256 `32c05d65e380072e01ab194021419ec5bb8026a07fdcea5290e773a0995dff60`.
+
+4-bit files through the harness. Real chats, flagged at the 0.5 cutoff:
+
+| Model | Grooming, verification (of 10) | Grooming, testing (of 10) | Ordinary, verification (of 50) | Ordinary, testing (of 37) |
+| --- | --- | --- | --- | --- |
+| v3 | 3 | 3 | 17 | 13 |
+| v4 | 0 | 3 | 10 | 11 |
+| v5 (grooming chats added, markers kept) | 8 | 6 | 39 | 32 |
+| v6 (grooming chats added, markers dropped) | 7 | 7 | 34 | 30 |
+| **v7 (grooming and ordinary chats added)** | **7** | **6** | **2** | **0** |
+| Gemma 4 E2B, retrained like v6 (3.42 GB) | 7 | 6 | 16 | 19 |
+| d1-omni-600M, unedited | 0 | 0 | 0 | 0 |
+
+Invented sets, risk flagged · benign flagged:
+
+| Set | v7 | v4 |
+| --- | --- | --- |
+| Check | 87/90 · 0/45, pass | 87/90 · 0/45, pass |
+| Third-style test | 102/120 · 2/55, pass | 103/120 · 2/55, pass |
+| Handoff 90-chat | 27/36 · 5/36, fail | 26/36 · 4/36, fail |
+| Handoff 60-chat | 17/24 · 2/12, fail | 24/24 · 3/12, fail by one |
+
+- **Models trained only on invented chats do poorly on real ones.** v3 and v4 catch 3 of 10 real grooming testing chats and flag about a third of real ordinary windows.
+- **Adding real grooming chats alone is harmful.** v5 and v6 flag over 80% of real ordinary windows.
+- **v7 is the only model that catches most real grooming chats and stays quiet on real ordinary ones.** It is worse than v4 on the handoff 60-chat set (17/24 against 24/24).
+- **Derek chose v7 as the shipped model on 19 November 2026.** v3 and v4 files are kept.
+
+Limits: 10 real grooming chats per split, from overlapping conversations and one language; the ordinary chats are adult conversations; the real testing splits were used to compare v5, v6 and v7, so they are not a fresh test; the third-style and handoff sets were reused again; one training run each; v7 was not run on the sealed set. The d1 head edit refitted with the real grooming chats flags 9 of 10 real grooming testing chats but also 36 of 36 benign chats in the handoff 90-chat set, so it was dropped.

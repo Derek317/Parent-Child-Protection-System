@@ -37,7 +37,7 @@
 
 **對話的另一方。** 每個對話的另一方，其訊息會存入並分析於子女手機，其帳戶標籤會傳送至父母。他們未被邀請同意；父母或子女的同意不代表他們。
 
-**模型的限制。** 模型只在虛構對話上測試過，從未評分真實對話。它可能漏報，也可能誤報。分數只是訊號，不是查證結果或結論。擷取並不完整，分數只涵蓋已擷取的內容。此模式下父母無法閱讀訊息，即使在緊急情況下亦然。本條款不保證偵測準確或任何安全結果。速度、耗電及發熱在真機上尚未量度。
+**模型的限制。** 模型主要在虛構對話上測試過，也在少量真實對話上測試過，並不保證能可靠偵測真實的誘騙行為。它可能漏報，也可能誤報。分數只是訊號，不是查證結果或結論。擷取並不完整，分數只涵蓋已擷取的內容。此模式下父母無法閱讀訊息，即使在緊急情況下亦然。本條款不保證偵測準確或任何安全結果。速度、耗電及發熱在真機上尚未量度。
 
 **與 Meta 的關係。** 此模式沿用現有擷取方式。IG Guard 獨立於 Meta，未獲 Meta 批准；未實作官方 Instagram API 及資料可攜整合。
 
@@ -101,7 +101,7 @@ This mode is optional and off by default. A parent switches it on in the parent 
 
 **The other person in each conversation.** Their messages are stored and analysed on the child's phone and their account label is sent to the parent. They have not been asked to agree, and the agreement of the parent or child does not speak for them.
 
-**Limits of the model.** The model has been tested only on invented conversations; no real conversation has been scored. It can miss concerning conversations and it can wrongly flag harmless ones. A score is a signal, not a finding or a conclusion. Capture is incomplete, so scores cover only what was captured. In this mode parents cannot read messages, even in an emergency. These Terms make no promise of accurate detection or of any safety outcome. Speed, battery use and heat on real phones have not been measured.
+**Limits of the model.** The model has been tested mostly on invented conversations and on a small number of real ones, and it is not shown to detect real grooming reliably. It can miss concerning conversations and it can wrongly flag harmless ones. A score is a signal, not a finding or a conclusion. Capture is incomplete, so scores cover only what was captured. In this mode parents cannot read messages, even in an emergency. These Terms make no promise of accurate detection or of any safety outcome. Speed, battery use and heat on real phones have not been measured.
 
 **Relationship with Meta.** This mode uses the existing capture. IG Guard is independent of Meta and has no Meta approval. Official Instagram API and portability integrations are not implemented.
 

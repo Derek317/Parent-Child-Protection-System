@@ -65,7 +65,7 @@ Derek picked the first in each table.
 
 ### Setup, once
 
-1. **Model on the child's phone.** During setup the parent copies the model file onto the child's phone and imports it in the child app. The app checks size 1,107,408,736 bytes and SHA-256 `833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314` and refuses anything else (the file named in the design was the v3 model; Derek chose the retrained v4 on 19 November 2026, and the app pins v4). The file is too large for the relay (512 packets per mailbox), so it is not sent between phones **(my call)**.
+1. **Model on the child's phone.** During setup the parent copies the model file onto the child's phone and imports it in the child app. The app checks size 1,107,408,736 bytes and SHA-256 `32c05d65e380072e01ab194021419ec5bb8026a07fdcea5290e773a0995dff60` and refuses anything else (the file named in the design was the v3 model; Derek confirmed the retrained v7 on 19 November 2026, and the app pins v7). The file is too large for the relay (512 packets per mailbox), so it is not sent between phones **(my call)**.
 2. **Parent switches on "Scores-only mode".** The switch is disabled until the child's phone has reported a valid model. It sends a signed, encrypted policy message, the same way the existing capture-scope policy is sent (`capture_policy` and `capture_ack` in `MainActivity.kt`).
 3. **The child agrees once.** The child's phone shows a plain-language page: what is analysed, that it happens on this phone, what the parent receives, and that it can be paused. Nothing is stored or scored until the child accepts. Acceptance is a separate receipt like the existing Terms receipt (`AppConsent.kt`) and is acknowledged to the parent.
 4. **If the child does not accept**, the parent sees "waiting for your child to agree". The parent cannot override it, and the app does not nag **(my call)**. The app's earlier mode keeps running until the child accepts, so declining does not switch protection off.
@@ -113,7 +113,7 @@ This section records the position; it is not legal advice.
 
 - **Phones.** The model needs a phone with about 8 GB of memory. On a phone below that the mode is unavailable and the app says so **(my call)**.
 - Android Views in code, no Compose; reuse `ui-res`. Traditional Chinese and English wording.
-- **Scoring contract.** Already fixed by the research and not changed here. The model is Qwen3 1.7B with the v3 add-on, 4-bit, run with llama.cpp build b12503. The prompt is `render("qwen3", messages)` in `research/train_lora.py`, with `research/prompts/instruction-v1.txt` and `user_prompt` in `research/igrisk/scorers.py`; speakers are `child` and `other`, both sides included, oldest first. The five answer tokens and the score formula are `_from_probs` in the same file. "Needs review" means the model's most likely answer is `U`.
+- **Scoring contract.** Already fixed by the research and not changed here. The model is Qwen3 1.7B with the v7 add-on (v3 in the original design), 4-bit, run with llama.cpp build b12503. The prompt is `render("qwen3", messages)` in `research/train_lora.py`, with `research/prompts/instruction-v1.txt` and `user_prompt` in `research/igrisk/scorers.py`; speakers are `child` and `other`, both sides included, oldest first. The five answer tokens and the score formula are `_from_probs` in the same file. "Needs review" means the model's most likely answer is `U`.
 
 ## Left to the builder
 
@@ -129,4 +129,4 @@ This section records the position; it is not legal advice.
 - **A child who pauses often** gives the parent a "paused" signal instead of scores. That is intended.
 - **Battery, heat and speed** on a real phone are unmeasured for this model.
 - **Capture is incomplete** by the app's own account, so scores cover only what was captured.
-- **The model was tested only on invented chats.** The score page must say so.
+- **The model was tested mostly on invented chats and on a small number of real ones.** The score page must say so. On the real testing chats it flagged 6 of 10 grooming chats and 0 of 37 ordinary chat windows; those chats were also used to choose the model, so this is not a fresh test. It fails the handoff 90-chat set (27/36 risk chats flagged, 5/36 harmless chats flagged). The design does not claim it reliably detects real grooming.
