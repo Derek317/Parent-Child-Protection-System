@@ -98,6 +98,8 @@ internal object ShotSupport {
         val c = Robolectric.buildActivity(MainActivity::class.java).setup()
         UiSupport.nav(c.get(), section)
         if (section == "scores") UiSupport.views(c.get(), "scores_loading")
+        // Let the screen-change animation finish so the new screen, not the old one, is drawn.
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
         return c
     }
 }
