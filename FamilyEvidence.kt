@@ -119,7 +119,11 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             riskSchema(db)
             // Before schema 9 a thread was keyed by account, label and kind and risk_unknown meant "counted, not stored".
             // From 9 a thread is keyed by its label alone and risk_unknown means "set aside as a group", so nothing carries over.
-            if(oldVersion in 7..8)for(table in riskChildTables)db.delete(table,null,null)
+            if(oldVersion in 7..8) {
+                for(table in riskChildTables)db.delete(table,null,null)
+                // Counts and results are gone: say so to the parent at the next heartbeat or start.
+                LocalVault.preferences(app).edit().remove("scores_last_scored").remove("scores_last_review").putBoolean("scores_report_due",true).commit()
+            }
         }
     }
     private fun retentionSchema(db:SQLiteDatabase) {
@@ -504,8 +508,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     /**
      * Child: stores one message of a one-to-one thread (caller's transaction) and enforces 60 messages per thread and 14 days.
      * [threadKey] is the normalised conversation label. The same message read through two routes is kept once, one to one:
-     * a screen row claims at most one unclaimed notification row with the same direction and text that is not newer than the
-     * capture (the notification row is dropped, the screen row's position is kept), and a notification arriving after the
+     * a screen row claims at most one notification row with the same direction and text that is not newer than the
+     * capture (the newest such row, so an older, distinct "ok" stays) (the notification row is dropped, the screen row's position is kept), and a notification arriving after the
      * screen read is dropped if an unclaimed screen row matches. So "ok","ok" stays two messages.
      */
     fun storeRiskMessage(scope:String,id:String,threadKey:String,label:String,direction:String,text:String,stamp:Long,sortStamp:Long,sortOrder:Long,now:Long,source:String=""):Boolean {
@@ -514,7 +518,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         val bodyHash=index(scope,"risk_body",text)
         var matched=0
         if(source=="visible_dm") {
-            val claim=db.rawQuery("SELECT seq FROM risk_store WHERE scope=? AND thread_index=? AND direction=? AND body_hash=? AND source='notification' AND stamp<=? ORDER BY stamp LIMIT 1",
+            val claim=db.rawQuery("SELECT seq FROM risk_store WHERE scope=? AND thread_index=? AND direction=? AND body_hash=? AND source='notification' AND stamp<=? ORDER BY stamp DESC LIMIT 1",
                 arrayOf(scope,thread,direction,bodyHash,stamp.toString())).use{if(it.moveToFirst())it.getLong(0) else null}
             if(claim!=null){db.delete("risk_store","seq=?",arrayOf(claim.toString()));matched=1}
         } else if(source=="notification") {

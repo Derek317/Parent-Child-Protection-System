@@ -214,6 +214,8 @@ internal object RiskLocal {
     private const val WIPE_PENDING = "scores_wipe_pending"
     private const val LAST_FAILURE = "scores_last_failure_ms"
     private const val CHANGE_NOTICE = "scores_change_notice"
+    private const val RECONSENT_WIPED = "scores_reconsent_wiped"
+    internal const val REPORT_DUE = "scores_report_due"
     private const val PARENT_POLICY_ID = "scores_parent_policy_id"
     private const val PARENT_POLICY_ENABLED = "scores_parent_policy_enabled"
     private const val PARENT_POLICY_AT = "scores_parent_policy_at_ms"
@@ -235,7 +237,7 @@ internal object RiskLocal {
     }
 
     /**
-     * none | accepted | withdrawn. A receipt, once written, outlives new policy ids: the child stays content-free
+     * none | accepted | withdrawn | reconsent. A receipt, once written, outlives new policy ids: the child stays content-free
      * (accepted or withdrawn) until a policy with enabled=false arrives and clears it. An unreadable receipt blocks
      * (reads as withdrawn), never as none.
      */
@@ -243,8 +245,8 @@ internal object RiskLocal {
         if (!receiptPrefs(ctx).contains("receipt")) return "none"
         val json = receipt(ctx) ?: return "withdrawn"
         if (json.optLong("withdrawn_at") > 0) return "withdrawn"
-        // Agreement to older wording does not count: ask again (pending), while alerts stay content-free in the meantime.
-        return if (json.optString("version") == WORDING_VERSION) "accepted" else "none"
+        // Agreement to older wording does not count ("reconsent"): ask again (pending), while alerts stay content-free in the meantime.
+        return if (json.optString("version") == WORDING_VERSION) "accepted" else "reconsent"
     }
 
     /** Any receipt, whatever its wording version, keeps the phone content-free until the parent switches the mode off. */
@@ -254,7 +256,19 @@ internal object RiskLocal {
         AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && GuardEngine.collectionAllowed(ctx) && GuardEngine.fullCaptureEnabled(ctx) &&
             policyEnabled(ctx) && consentState(ctx) == "accepted" && !paused(ctx) && RiskModelStore.state(ctx) == RiskModelState.INSTALLED
 
-    fun captureMode(ctx: Context): RiskCapture =
+    /** Old wording was agreed to: nothing may stay stored for it. Wipes the store once, at the first chance, not at daily maintenance. */
+    fun enforceWording(ctx: Context) {
+        if (consentState(ctx) != "reconsent" || prefs(ctx).getBoolean(RECONSENT_WIPED, false)) return
+        wipeStore(ctx)
+        prefs(ctx).edit().putBoolean(RECONSENT_WIPED, true).commit()
+        changed(ctx)
+    }
+
+    fun captureMode(ctx: Context): RiskCapture {
+        enforceWording(ctx)
+        return captureModeNow(ctx)
+    }
+    private fun captureModeNow(ctx: Context): RiskCapture =
         if (!contentFree(ctx)) RiskCapture.NORMAL else if (active(ctx)) RiskCapture.ACTIVE else RiskCapture.CONTENT_FREE
 
     /** Reasons whose alert text is message content; in content-free mode their text is dropped. */
@@ -268,14 +282,26 @@ internal object RiskLocal {
     /** Test hook: waits for report work started after an exclusion. */
     internal fun awaitBackground() { background.submit {}.get() }
 
+    /** Test hook: keeps the follow-up send from running so a test can look at the state between purge and resend. */
+    @Volatile internal var deferFollowUp = false
+
     /**
-     * After a thread was set aside as a group: delete any undelivered report that might name it and send a fresh one.
-     * Runs on its own thread, so it waits for the capture that triggered it (and its session lock) to finish.
+     * After a thread was set aside as a group: inside the capture's own transaction every queued, undelivered scores report is
+     * deleted (any of them may name the thread) and a "report due" flag is persisted, so a stale report cannot be sent even if the
+     * process dies; a fresh report follows on its own thread (it waits for the capture's lock) or at the next heartbeat or start.
      * A score already delivered to the parent stays there under the archive's normal deletion rules.
      */
-    private fun afterExclusion(ctx: Context) {
+    private fun afterExclusion(ctx: Context, db: FamilyEvidence) {
         val app = ctx.applicationContext
-        background.execute { try { RiskReporter.send(app) } catch (e: Exception) { Log.w("IGGuard", "Scores report failed: ${e.javaClass.simpleName}") } }
+        RiskReporter.purgeQueued(app, GuardEngine.getChannelTopic(app), db)
+        prefs(app).edit().putBoolean(REPORT_DUE, true).commit()
+        if (!deferFollowUp) background.execute { sendIfDue(app) }
+    }
+
+    /** Sends the report that an exclusion or upgrade made due (the flag clears when it was queued). */
+    fun sendIfDue(ctx: Context) {
+        if (!prefs(ctx).getBoolean(REPORT_DUE, false)) return
+        try { if (RiskReporter.send(ctx)) prefs(ctx).edit().remove(REPORT_DUE).commit() } catch (e: Exception) { Log.w("IGGuard", "Scores report failed: ${e.javaClass.simpleName}") }
     }
 
     /**
@@ -293,13 +319,18 @@ internal object RiskLocal {
             if (label.isEmpty()) return true
             val kind = r.optString("conversation_kind", "unknown")
             val direction = r.optString("direction")
-            if (kind == "group") { if (db.excludeRiskThread(scope, label, now)) afterExclusion(ctx); return true }
-            if (db.riskExcluded(scope, label, now)) { db.noteRiskUnknown(scope, label, now); return true }
+            if (kind == "group") {
+                // An untitled group is titled by its sender's name; that name must not set a one-to-one chat aside.
+                if (label != r.optString("author").trim().removePrefix("@").lowercase(Locale.ROOT) && db.excludeRiskThread(scope, label, now)) afterExclusion(ctx, db)
+                return true
+            }
+            // Only group and unknown records keep a marker alive; a direct record never does, so a wrong marker can lapse.
+            if (db.riskExcluded(scope, label, now)) { if (kind != "direct") db.noteRiskUnknown(scope, label, now); return true }
             if (kind == "unknown" && direction == "incoming") {
                 val author = r.optString("author").trim().removePrefix("@").lowercase(Locale.ROOT)
                 // The child's own handle is not "another person".
                 if (author.isNotEmpty() && !GuardEngine.isSelfSenderLabel(ctx, author) && db.noteRiskAuthor(scope, label, author, now) > 1) {
-                    if (db.excludeRiskThread(scope, label, now)) afterExclusion(ctx)
+                    if (db.excludeRiskThread(scope, label, now)) afterExclusion(ctx, db)
                     return true
                 }
             }
@@ -369,7 +400,7 @@ internal object RiskLocal {
     fun pendingPolicy(ctx: Context): Boolean {
         if (!AppConsent.hasAccepted(ctx) || !GuardEngine.isChildMode(ctx) || !policyEnabled(ctx)) return false
         return when (consentState(ctx)) {
-            "none" -> true
+            "none", "reconsent" -> true
             "withdrawn" -> receipt(ctx)?.let { it.optString("policy_id") != policyId(ctx) } ?: false
             else -> false
         }
@@ -439,7 +470,7 @@ internal object RiskLocal {
         // Only queued records that can carry message text go; tamper, unlock, pairing, heartbeat and control records stay.
         val token = GuardEngine.getOrCreateFamilyToken(ctx)
         FamilyEvidence(ctx).use { db -> db.discardPendingMatching(GuardEngine.getChannelTopic(ctx)) { wire -> carriesText(token, wire) } }
-        prefs(ctx).edit().putString(CHANGE_NOTICE, "on").commit()
+        prefs(ctx).edit().putString(CHANGE_NOTICE, "on").remove(RECONSENT_WIPED).commit()
         prefs(ctx).edit().remove(PAUSED_AT).putLong(BASELINE, now).commit()
         changed(ctx)
         true
@@ -447,7 +478,7 @@ internal object RiskLocal {
 
     /** Deletes the store and unsent scores and tells the parent. Alerts stay text-free until the parent switches the mode off. */
     fun withdraw(ctx: Context): Boolean = GuardEngine.withSessionLock {
-        if (consentState(ctx) != "accepted") return@withSessionLock false
+        if (consentState(ctx) != "accepted" && consentState(ctx) != "reconsent") return@withSessionLock false
         val sealed = receiptPrefs(ctx).getString("receipt", null) ?: return@withSessionLock false
         val receipt = JSONObject(LocalVault.open(ctx, RECEIPT_PURPOSE, sealed)).put("withdrawn_at", System.currentTimeMillis())
         if (!receiptPrefs(ctx).edit().putString("receipt", LocalVault.seal(ctx, RECEIPT_PURPOSE, receipt.toString())).commit()) return@withSessionLock false
@@ -506,7 +537,9 @@ internal object RiskLocal {
 
     /** Called from the child's heartbeat: a state-only report at least once a day, which also keeps the parent's view fresh. */
     fun dailyReport(ctx: Context, now: Long = System.currentTimeMillis()) {
-        if (!GuardEngine.isChildMode(ctx) || now - prefs(ctx).getLong("scores_last_report_ms", 0L) < RiskReporter.FULL_RESEND_MS) return
+        if (!GuardEngine.isChildMode(ctx)) return
+        if (prefs(ctx).getBoolean(REPORT_DUE, false)) { sendIfDue(ctx); return }
+        if (now - prefs(ctx).getLong("scores_last_report_ms", 0L) < RiskReporter.FULL_RESEND_MS) return
         // State only, whatever the mode, once a model file is present or a policy has ever been received.
         if (!RiskModelStore.file(ctx).isFile && policyId(ctx).isEmpty()) return
         try { RiskReporter.send(ctx, now) } catch (e: Exception) { Log.w("IGGuard", "Scores report failed: ${e.javaClass.simpleName}") }
@@ -587,13 +620,14 @@ internal object RiskReporter {
     } catch (_: Exception) { emptyList() }
 
     /** Deletes scores reports that are still waiting in the outbox. True if any was found. */
-    fun purgeQueued(ctx: Context, scope: String): Boolean {
+    fun purgeQueued(ctx: Context, scope: String, within: FamilyEvidence? = null): Boolean {
         val entries = tracked(ctx)
         if (entries.isEmpty()) return false
         var found = false
-        FamilyEvidence(ctx).use { db ->
+        fun purge(db: FamilyEvidence) {
             for ((entryScope, id) in entries) if (db.hasQueuedEvent(entryScope, "control:$id")) { db.acknowledgeEvent(entryScope, "control:$id"); found = true }
         }
+        if (within != null) purge(within) else FamilyEvidence(ctx).use { purge(it) }
         prefs(ctx).edit().remove(IDS).commit()
         return found
     }
@@ -613,7 +647,7 @@ internal object RiskReporter {
         val app = ctx.applicationContext
         if (!GuardEngine.transferAllowed(app) || !GuardEngine.isChildMode(app)) return@withSessionLock false
         val scope = GuardEngine.getChannelTopic(app)
-        val discarded = purgeQueued(app, scope)
+        val discarded = purgeQueued(app, scope) || prefs(app).getBoolean(RiskLocal.REPORT_DUE, false)
         FamilyEvidence(app).use { db ->
             if (discarded) db.resetRiskSent(scope)
             val merged = if (RiskLocal.consentState(app) == "accepted") merge(db.riskReportRows(scope, now)).filter { it.changed } else emptyList()
@@ -643,7 +677,9 @@ internal data class ParsedScoresReport(val commandId: String, val sentAt: Long, 
 
 internal object ScoresReportCodec {
     private val models = setOf("valid", "missing", "mismatch", "unsupported_device", "engine_unavailable")
-    private val consents = setOf("none", "accepted", "withdrawn")
+    // "reconsent": the child agreed to older wording and is asked again. A parent that does not know a value drops the whole
+    // report (nothing is stored, nothing crashes) and keeps showing its last state until it goes stale after 72 hours.
+    private val consents = setOf("none", "accepted", "withdrawn", "reconsent")
     private val reasons = setOf("insufficient_context", "context_too_long")
 
     private fun keys(o: JSONObject) = o.keys().asSequence().toSet()
@@ -815,6 +851,8 @@ internal object RiskScoringSchedule {
     fun sync(ctx: Context) {
         val app = ctx.applicationContext
         RiskModelStore.cleanStale(app)
+        RiskLocal.enforceWording(app)
+        RiskLocal.sendIfDue(app)
         val scheduler = scheduler(app) ?: return
         if (!RiskLocal.active(app)) { scheduler.cancel(PRIMARY_ID); scheduler.cancel(FALLBACK_ID); return }
         val component = ComponentName(app, RiskScoringJob::class.java)

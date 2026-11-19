@@ -15,7 +15,7 @@ import java.util.Locale
  */
 
 /** What the parent's score page shows. The stale banner is not a page: it is a flag that can sit on any page with a child state. */
-internal enum class ScoresPage { OFF, WAITING, MODEL_MISSING, MODEL_WRONG, MODEL_UNSUPPORTED, ENGINE_UNAVAILABLE, PAUSED, WITHDRAWN, NOT_RUNNING, EMPTY, LIST, ERROR }
+internal enum class ScoresPage { OFF, WAITING, RECONSENT, MODEL_MISSING, MODEL_WRONG, MODEL_UNSUPPORTED, ENGINE_UNAVAILABLE, PAUSED, WITHDRAWN, NOT_RUNNING, EMPTY, LIST, ERROR }
 
 internal data class ScoresPageModel(
     val page: ScoresPage, val rows: List<RiskScoreRow>, val needAttention: Int, val needReview: Int,
@@ -86,6 +86,7 @@ internal object ScoresUi {
         if (state == null || state.policyId != policy.policyId) return model(ScoresPage.WAITING, noReport = true, resend = now - policy.sentAt > RESEND_AFTER_MS)
         return when {
             state.consent == "none" -> model(ScoresPage.WAITING)
+            state.consent == "reconsent" -> model(ScoresPage.RECONSENT)
             state.consent == "withdrawn" -> model(ScoresPage.WITHDRAWN)
             state.paused -> model(ScoresPage.PAUSED, also = state.model.takeIf { it != "valid" })
             state.model == "unsupported_device" -> model(ScoresPage.MODEL_UNSUPPORTED)
@@ -115,6 +116,7 @@ internal object ScoresUi {
         val base = when (m.page) {
             ScoresPage.OFF -> "僅分數模式未開啟"
             ScoresPage.WAITING -> "等待子女同意"
+            ScoresPage.RECONSENT -> "子女需要再次同意"
             ScoresPage.PAUSED -> "子女已暫停分析"
             ScoresPage.WITHDRAWN -> "子女已撤回同意"
             ScoresPage.NOT_RUNNING -> "子女已同意，但分析沒有在運行"
@@ -187,6 +189,9 @@ internal object ScoresUi {
             if (m.noReportYet) "已送出設定，但還沒有收到子女手機的回覆。子女需要在自己的手機閱讀說明並同意，分析才會開始。你不能代替子女同意。"
             else "子女需要在自己的手機閱讀說明並同意，分析才會開始。你不能代替子女同意，在子女同意之前，子女手機維持原有的運作方式。",
             "下一步：請向孩子說明這個功能，並請孩子打開 IG Guard 查看。")
+        ScoresPage.RECONSENT -> StateCopy("子女需要再次同意",
+            "說明文字已更新，子女需要在自己的手機上再次同意。在子女再次同意之前，子女手機不會儲存或分析任何內容，也不會把訊息文字傳給你，只會傳送不含文字的提醒。你不能代替子女同意。",
+            "下一步：請向孩子說明，並請孩子打開 IG Guard 查看。")
         ScoresPage.MODEL_MISSING -> StateCopy("子女手機尚未安裝模型",
             "分析需要一個模型檔（$MODEL_FILE），要在子女手機手動匯入。在安裝之前不會有新的分數，而在這個模式下你也不會收到訊息內容。",
             "下一步：在子女手機的「權限」頁匯入模型檔。")
@@ -223,6 +228,7 @@ internal object ScoresUi {
         return when (m.page) {
             ScoresPage.OFF -> "未開啟"
             ScoresPage.WAITING -> "已開啟 · 等待子女同意"
+            ScoresPage.RECONSENT -> "已開啟 · 子女需要再次同意"
             ScoresPage.WITHDRAWN -> "已開啟 · 子女已撤回同意"
             ScoresPage.PAUSED -> "已開啟 · 子女已暫停"
             ScoresPage.MODEL_MISSING, ScoresPage.MODEL_WRONG, ScoresPage.MODEL_UNSUPPORTED, ScoresPage.ENGINE_UNAVAILABLE -> "已開啟 · 子女手機的模型或分析功能有問題"
@@ -263,7 +269,7 @@ internal object ScoresChildCopy {
     const val TITLE = "AI 風險分析 / AI risk analysis"
     const val CONSENT_TITLE = "先了解，再決定\nAI risk analysis: read first, then decide"
     val CONSENT_POINTS = listOf(
-        "分析什麼 / What is analysed" to "只分析一對一對話。從畫面讀取的對話無法與群組聊天區分，所以在這部手機上打開的群組聊天也可能被分析；已知是群組的對話不會被分析。每個對話只保留最新 60 則訊息，存放在這部手機上，最長 14 天。\nOne-to-one chats are analysed. Chats read from the screen cannot be told apart from group chats, so a group chat that is opened on this phone may be analysed too. A chat known to be a group is not analysed. The latest 60 messages per conversation are kept on this phone for at most 14 days.",
+        "分析什麼 / What is analysed" to "只分析本 App 已經讀取的 Instagram 一對一對話。從畫面讀取的對話無法與群組聊天區分，所以在這部手機上打開的群組聊天也可能被分析；已知是群組的對話不會被分析。每個對話只保留最新 60 則訊息，存放在這部手機上，最長 14 天。\nOne-to-one Instagram chats that this app already reads are analysed. Chats read from the screen cannot be told apart from group chats, so a group chat that is opened on this phone may be analysed too. A chat known to be a group is not analysed. The latest 60 messages per conversation are kept on this phone for at most 14 days.",
         "在哪裡、何時 / Where and when" to "分析在這部手機上進行，只在充電時運行。訊息不會為了分析而傳出這部手機。\nAnalysis runs on this phone, only while it is charging. Messages are not sent anywhere for analysis.",
         "家長會收到 / What your parent receives" to "你聊天對象的帳戶名稱、一個風險分數（或「需要檢視」）及時間；不含訊息文字的提醒；以及分析是開啟、暫停還是已撤回。\nThe account name of who you chat with, a risk score (or \"needs review\") and the time; alerts without message text; and whether analysis is on, paused or withdrawn.",
         "家長不會收到 / What your parent does not receive" to "家長不會收到你的訊息。在這個模式下，新訊息不再傳給家長。\nYour parent does not receive your messages. In this mode new messages are no longer sent to them.",
@@ -271,6 +277,11 @@ internal object ScoresChildCopy {
         "你的控制 / Your controls" to "你可以隨時暫停，家長會被告知。你也可以撤回同意：這部手機上儲存的訊息會被刪除，家長會被告知；已經傳給家長的分數仍留在家長手機。\nYou can pause at any time and your parent is told. You can withdraw: the messages stored on this phone are deleted and your parent is told. Scores already sent stay on your parent's phone.",
         "重要 / Please note" to "本功能未獲 Meta 批准，也不代表已通過法律審核。選擇「暫時不要」不會儲存或分析任何內容，原有的運作方式繼續。\nNot approved by Meta and not legally cleared. Choosing \"Not now\" stores and analyses nothing, and the earlier behaviour continues."
     )
+    /** On the page for a child who agreed to older wording, "Not now" must not promise the earlier mode: nothing is sent as text either way. */
+    fun consentPoints(reconsent: Boolean): List<Pair<String, String>> = if (!reconsent) CONSENT_POINTS else CONSENT_POINTS.dropLast(1) + (
+        "重要 / Please note" to "本功能未獲 Meta 批准，也不代表已通過法律審核。選擇「暫時不要」不會儲存或分析任何內容，也不會傳送你的訊息文字給家長；不含文字的提醒仍會傳給家長。\nNot approved by Meta and not legally cleared. Choosing \"Not now\" stores and analyses nothing, and no message text is sent to your parent; alerts without text still go to your parent.")
+    const val RECONSENT_CARD_TITLE = "請再次決定 / Please decide again"
+    const val RECONSENT_CARD_BODY = "說明文字已更新。你同意之前，不會儲存或分析任何內容，也不會傳送你的訊息文字給家長。\nThe explanation was updated. Until you agree, nothing is stored or analysed and no message text is sent to your parent."
     const val AGREE = "我同意 / I agree"
     const val NOT_NOW = "暫時不要 / Not now"
     const val CARD_TITLE = "需要你的決定 / Your decision is needed"
@@ -281,7 +292,7 @@ internal object ScoresChildCopy {
     const val STATUS_PARENT_SEES = "家長會看到你和誰聊天及風險分數，看不到你的訊息。\nYour parent sees who you chat with and a risk score. They do not see your messages."
 
     enum class StatusState(val label: String, val icon: String) {
-        ON("開啟 / ON", "check-circle"), PAUSED("已暫停 / PAUSED", "clock"), WAITING("等待同意 / WAITING", "info"),
+        ON("開啟 / ON", "check-circle"), PAUSED("已暫停 / PAUSED", "clock"), WAITING("等待同意 / WAITING", "info"), RECONSENT("需要再次同意 / AGREE AGAIN", "info"),
         WITHDRAWN("已撤回 / WITHDRAWN", "x"), MODEL_MISSING("缺少模型 / MODEL MISSING", "shield-warning"),
         NOT_AVAILABLE("此手機不適用 / NOT AVAILABLE", "lock-key"), ENGINE_UNAVAILABLE("分析功能未能啟動 / ENGINE UNAVAILABLE", "shield-warning"),
         NOT_RUNNING("未運作 / NOT RUNNING", "info")
@@ -291,18 +302,21 @@ internal object ScoresChildCopy {
         s.modelState == "engine_unavailable" -> StatusState.ENGINE_UNAVAILABLE
         s.consent == "withdrawn" -> StatusState.WITHDRAWN
         s.consent == "none" -> StatusState.WAITING
+        s.consent == "reconsent" -> StatusState.RECONSENT
         s.paused -> StatusState.PAUSED
         s.modelState != "valid" -> StatusState.MODEL_MISSING
         s.active -> StatusState.ON
         else -> StatusState.NOT_RUNNING
     }
+    const val UNTIL_AGREE_AGAIN = "說明文字已更新，需要你再次同意。你同意之前，不會儲存或分析任何內容，也不會把你的訊息文字傳給家長。你也可以撤回同意。\nThe explanation was updated, so we need you to agree again. Until you do, nothing is stored or analysed and no message text is sent to your parent. You can also withdraw."
     const val UNTIL_AGREE = "你同意之前，不會儲存或分析任何內容，原有的運作方式繼續：你的家長仍會像以往一樣收到訊息。\nUntil you agree, nothing is stored or analysed and the earlier mode continues, so your parent still receives messages as before."
     private const val PARENT_GETS_NO_TEXT = "家長不會收到你的訊息文字，只會收到不含文字的提醒。\nYour parent does not receive your message text, only alerts without text."
     /** What is and is not happening in each state. Never says the parent does not see messages unless that is true. */
     fun statusLines(st: StatusState, consent: String): List<String> = when (st) {
         StatusState.ON -> listOf(STATUS_RUNS, STATUS_PARENT_SEES)
         StatusState.WAITING -> listOf(UNTIL_AGREE)
-        StatusState.PAUSED -> listOf("暫停期間不會儲存或分析任何內容，家長已被告知你暫停了。不含文字的提醒仍會傳給家長，家長不會收到你的訊息文字。\nWhile paused nothing is stored or analysed, and your parent is told you paused. Alerts without text still go to your parent, who does not receive your message text.")
+        StatusState.RECONSENT -> listOf(UNTIL_AGREE_AGAIN, PARENT_GETS_NO_TEXT)
+        StatusState.PAUSED -> listOf("暫停期間不會儲存或分析任何訊息，家長已被告知你暫停了。不含文字的提醒仍會傳給家長，家長不會收到你的訊息文字。\nWhile paused no messages are stored or analysed, and your parent is told you paused. Alerts without text still go to your parent, who does not receive your message text.")
         StatusState.WITHDRAWN -> listOf("你已撤回同意：分析已停止，這部手機上儲存的訊息已刪除，家長已被告知。在家長關閉僅分數模式之前，家長不會收到訊息文字，只會收到不含文字的提醒。\nYou withdrew: analysis stopped, the messages stored on this phone were deleted and your parent is told. Until your parent turns the mode off, they do not receive message text, only alerts without text.")
         StatusState.MODEL_MISSING -> listOf("這部手機沒有有效的模型檔，所以不會儲存或分析任何內容。請到「權限」頁匯入模型檔。\nThere is no valid model file on this phone, so nothing is stored or analysed. Import it in Permissions.", PARENT_GETS_NO_TEXT)
         StatusState.NOT_AVAILABLE -> listOf("這部手機的記憶體不足或處理器不支援，不能使用這個功能，所以不會儲存或分析任何內容。\nThis phone does not have enough memory or the right processor, so nothing is stored or analysed.") + noteForConsent(consent)

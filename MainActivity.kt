@@ -3634,8 +3634,9 @@ class MainActivity : Activity() {
         }
         if (s.pendingPolicy) {
             val card = noticeCard(t, true, "scores_consent_card")
-            card.addView(label(ScoresChildCopy.CARD_TITLE, 17f, t.textPrimary, true, bottomPad = 8))
-            card.addView(label(ScoresChildCopy.CARD_BODY, 14f, t.textSecondary, bottomPad = 8))
+            val again = s.consent == "reconsent"
+            card.addView(label(if (again) ScoresChildCopy.RECONSENT_CARD_TITLE else ScoresChildCopy.CARD_TITLE, 17f, t.textPrimary, true, bottomPad = 8))
+            card.addView(label(if (again) ScoresChildCopy.RECONSENT_CARD_BODY else ScoresChildCopy.CARD_BODY, 14f, t.textSecondary, bottomPad = 8))
             card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") }.apply { tag = "scores_consent_open" })
             rootContainer.addView(card)
         }
@@ -3645,7 +3646,7 @@ class MainActivity : Activity() {
         val st = ScoresChildCopy.statusState(s)
         val card = noticeCard(t, false, "scores_status_block")
         card.addView(label(ScoresChildCopy.TITLE, 16f, t.textPrimary, true, bottomPad = 4))
-        card.addView(iconLine(st.icon, if (st == ScoresChildCopy.StatusState.ON) t.accentSeafoam else if (st == ScoresChildCopy.StatusState.PAUSED || st == ScoresChildCopy.StatusState.WAITING) t.warmHoney else t.warmCoral, st.label, t, 15f, "scores_state_label"))
+        card.addView(iconLine(st.icon, if (st == ScoresChildCopy.StatusState.ON) t.accentSeafoam else if (st == ScoresChildCopy.StatusState.PAUSED || st == ScoresChildCopy.StatusState.WAITING || st == ScoresChildCopy.StatusState.RECONSENT) t.warmHoney else t.warmCoral, st.label, t, 15f, "scores_state_label"))
         // Each state says only what is true in that state; the "parent does not see your messages" line is for ON alone.
         for ((i, line) in ScoresChildCopy.statusLines(st, s.consent).withIndex()) card.addView(label(line, 13f, if (i == 0 && st != ScoresChildCopy.StatusState.ON) t.textPrimary else t.textSecondary, i == 0 && st != ScoresChildCopy.StatusState.ON, bottomPad = 8).apply { tag = "scores_status_line" })
         if (s.consent != "none") {
@@ -3662,9 +3663,9 @@ class MainActivity : Activity() {
                 renderUi()
             }.apply { tag = "scores_pause" })
         }
-        if (s.consent == "none" && s.pendingPolicy) card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") })
+        if ((s.consent == "none" || s.consent == "reconsent") && s.pendingPolicy) card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") })
         card.addView(actionButton(ScoresChildCopy.WHAT, t.btnSecondaryBg, t.btnSecondaryText) { scoresReadOnly = true; navigateTo("scores_consent") }.apply { tag = "scores_what" })
-        if (s.consent == "accepted") card.addView(actionButton(ScoresChildCopy.WITHDRAW, t.warningButtonBg, t.warningButtonText) {
+        if (s.consent == "accepted" || s.consent == "reconsent") card.addView(actionButton(ScoresChildCopy.WITHDRAW, t.warningButtonBg, t.warningButtonText) {
             alert().setTitle(ScoresChildCopy.WITHDRAW_TITLE).setMessage(ScoresChildCopy.WITHDRAW_BODY)
                 .setNegativeButton(ScoresChildCopy.CANCEL, null).setPositiveButton(ScoresChildCopy.WITHDRAW_CONFIRM) { _, _ ->
                     if (!ScoresEngineBridge.withdraw(this)) Toast.makeText(this, ScoresChildCopy.WITHDRAW_FAILED, Toast.LENGTH_LONG).show()
@@ -3677,7 +3678,7 @@ class MainActivity : Activity() {
         val decide = !scoresReadOnly && RiskLocal.pendingPolicy(this)
         rootContainer.addView(textAction("返回 / Back") { navigateTo("overview") })
         heading(ScoresChildCopy.CONSENT_TITLE, "", t)
-        for ((title, body) in ScoresChildCopy.CONSENT_POINTS) {
+        for ((title, body) in ScoresChildCopy.consentPoints(RiskLocal.consentState(this) == "reconsent")) {
             rootContainer.addView(label(title, 16f, t.textPrimary, true, topPad = 14, bottomPad = 6))
             rootContainer.addView(label(body, 14f, t.textSecondary))
         }
@@ -3753,7 +3754,7 @@ class MainActivity : Activity() {
         try {
             modelPickAuthorized = true   // only reached after the parent's password was accepted
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), modelPickRequest)
-        } catch (_: Exception) { Toast.makeText(this, "找不到檔案選擇器。\nNo file picker is available.", Toast.LENGTH_LONG).show() }
+        } catch (_: Exception) { modelPickAuthorized = false; Toast.makeText(this, "找不到檔案選擇器。\nNo file picker is available.", Toast.LENGTH_LONG).show() }
     }
     private fun startModelImport(uri: Uri) {
         if (!GuardEngine.isChildMode(this) || !RiskModelStore.supported(this)) return
@@ -3780,7 +3781,7 @@ class MainActivity : Activity() {
     }
 
     private fun scoresStateIcon(p: ScoresPage) = when (p) {
-        ScoresPage.OFF -> "info"; ScoresPage.WAITING, ScoresPage.PAUSED -> "clock"
+        ScoresPage.OFF -> "info"; ScoresPage.WAITING, ScoresPage.RECONSENT, ScoresPage.PAUSED -> "clock"
         ScoresPage.MODEL_UNSUPPORTED -> "lock-key"; ScoresPage.WITHDRAWN -> "x"; ScoresPage.EMPTY -> "pulse"; ScoresPage.NOT_RUNNING -> "info"
         ScoresPage.MODEL_MISSING, ScoresPage.MODEL_WRONG, ScoresPage.ENGINE_UNAVAILABLE, ScoresPage.ERROR -> "shield-warning"; ScoresPage.LIST -> "check-circle"
     }
