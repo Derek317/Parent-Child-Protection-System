@@ -708,6 +708,17 @@ object GuardEngine {
     }
 
     fun getRole(ctx: Context): String = prefs(ctx).getString("role", "unconfigured") ?: "unconfigured"
+    /**
+     * Explicit, authenticated departure from the parent role: the master password and the signing identity are removed
+     * here (and nowhere as a side effect of pairing). Stored family records stay on the phone.
+     */
+    fun leaveParentRole(ctx: Context) = synchronized(pollLock) {
+        check(getRole(ctx) == "parent")
+        setRole(ctx, "unconfigured")
+        check(prefs(ctx).edit().remove("parent_master_password").remove("parent_share_verifier")
+            .remove("parent_signing_public").remove("parent_signing_private").commit())
+        FamilySecurity.deleteParentIdentity(ctx)
+    }
     fun setRole(ctx: Context, role: String) {
         require(role in setOf("child", "parent", "unconfigured"))
         synchronized(pollLock) {
@@ -2411,6 +2422,7 @@ class MainActivity : Activity() {
     private val parentAccess = ParentAccessSession()
     private var parentAuthSession: Triple<String,String,Int>? = null
     private var parentAuthPending = false
+    private var parentAuthFresh = false
     private var parentAuthAction: (() -> Unit)? = null
     private var parentAuthSignal: android.os.CancellationSignal? = null
     private var deferredParentIntent: Intent? = null
@@ -2431,35 +2443,46 @@ class MainActivity : Activity() {
         }})
         setContentView(box)
     }
-    private fun requestParentAuthentication(action: (() -> Unit)? = null) {
+    /** Secrets and destructive actions need a device authentication performed right now, not just an open session. */
+    private fun requireFreshParentAuth(action: () -> Unit) {
+        if(!GuardEngine.isParentMode(this)){action();return}
+        requestParentAuthentication(action,fresh=true)
+    }
+    private fun requestParentAuthentication(action: (() -> Unit)? = null, fresh: Boolean = false) {
         if(!GuardEngine.isParentMode(this) || parentAuthPending)return
         val keyguard=getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
         if(keyguard?.isDeviceSecure != true){Toast.makeText(this,"請先設定 Android 螢幕鎖。",Toast.LENGTH_LONG).show();renderParentLock();return}
-        parentAuthSession=GuardEngine.captureRelaySession(this);parentAuthAction=action;parentAuthPending=true
+        parentAuthSession=GuardEngine.captureRelaySession(this);parentAuthAction=action;parentAuthPending=true;parentAuthFresh=fresh
         try {
             if(Build.VERSION.SDK_INT>=30) {
                 val signal=android.os.CancellationSignal();parentAuthSignal=signal
-                android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle("開啟 IG Guard 家長資料")
+                android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle(if(fresh)"再次驗證以繼續" else "開啟 IG Guard 家長資料")
                     .setAllowedAuthenticators(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
                     .build().authenticate(signal,mainExecutor,object:android.hardware.biometrics.BiometricPrompt.AuthenticationCallback(){
                         override fun onAuthenticationSucceeded(result:android.hardware.biometrics.BiometricPrompt.AuthenticationResult){completeParentAuthentication(true)}
                         override fun onAuthenticationError(code:Int,message:CharSequence){completeParentAuthentication(false)}
                     })
             } else {
-                val request=keyguard.createConfirmDeviceCredentialIntent("IG Guard 家長資料","驗證後查看家庭記錄及配對設定。")
+                val request=keyguard.createConfirmDeviceCredentialIntent(if(fresh)"再次驗證以繼續" else "IG Guard 家長資料",if(fresh)"驗證後才會執行此操作。" else "驗證後查看家庭記錄及配對設定。")
                     ?: throw SecurityException("Device authentication is unavailable")
                 startActivityForResult(request,parentAuthRequest)
             }
         } catch(_:Exception){completeParentAuthentication(false)}
     }
     private fun completeParentAuthentication(success:Boolean) {
-        val expected=parentAuthSession;val action=parentAuthAction
-        parentAuthPending=false;parentAuthSession=null;parentAuthAction=null;parentAuthSignal=null
+        val expected=parentAuthSession;val action=parentAuthAction;val fresh=parentAuthFresh
+        parentAuthPending=false;parentAuthSession=null;parentAuthAction=null;parentAuthSignal=null;parentAuthFresh=false
         if(isDestroyed)return
         if(!success || expected==null || expected!=GuardEngine.captureRelaySession(this) || !GuardEngine.isParentMode(this)){
+            // A cancelled re-check only cancels the action; the already authenticated session stays as it was.
+            if(fresh && expected!=null && expected==GuardEngine.captureRelaySession(this) && GuardEngine.isParentMode(this) && parentAccess.isUnlocked(expected)){
+                Toast.makeText(this,"驗證未完成，操作已取消。",Toast.LENGTH_SHORT).show();return
+            }
             parentAccess.lock();renderUi();return
         }
-        parentAccess.authenticated(expected);renderUi()
+        parentAccess.authenticated(expected)
+        if(fresh){action?.invoke();return}
+        renderUi()
         val incoming=deferredParentIntent;deferredParentIntent=null
         if(incoming!=null)handleDeepLinkIntent(incoming)
         openPendingEvidence();action?.invoke()
@@ -2861,12 +2884,21 @@ class MainActivity : Activity() {
         if (selectedEntryRole !in setOf("parent", "child")) return
         val current = GuardEngine.getRole(this)
         if (current == selectedEntryRole) { navigateTo("overview"); return }
+        val next = selectedEntryRole
         val proceed = {
-            if (current != "unconfigured") { GuardEngine.setRole(this, "unconfigured"); syncRoleServices() }
-            section = if (selectedEntryRole == "parent") "parent_setup" else "child_setup"
+            if (current == "parent") GuardEngine.leaveParentRole(this)
+            else if (current != "unconfigured") GuardEngine.setRole(this, "unconfigured")
+            if (current != "unconfigured") syncRoleServices()
+            section = if (next == "parent") "parent_setup" else "child_setup"
             renderUi(animate = true)
         }
-        if (current == "child") verifyParentForRoleChange(proceed) else proceed()
+        when (current) {
+            "child" -> verifyParentForRoleChange(proceed)
+            "parent" -> alert().setTitle("離開家長身份？")
+                .setMessage("離開後，此手機會刪除家長主密碼與簽署金鑰，之後無法再管理已配對的子女手機。已保存的家庭記錄會留在本機。")
+                .setNegativeButton("取消", null).setPositiveButton("離開家庭") { _, _ -> requireFreshParentAuth(proceed) }.show()
+            else -> proceed()
+        }
     }
     private fun verifyParentForRoleChange(onSuccess: () -> Unit) {
         val t = currentTheme()
@@ -3766,7 +3798,7 @@ class MainActivity : Activity() {
         if (GuardEngine.isParentMode(this)) rootContainer.addView(row("key", "家長主密碼與金鑰", "密碼查看、金鑰更新及遠端救援", t) {
             showSheet("家長主密碼與金鑰") { dialog ->
                 addView(actionButton("查看家長主密碼", t.btnSecondaryBg, t.btnSecondaryText) {
-                    alert().setTitle("家長主密碼").setMessage(GuardEngine.getPin(this@MainActivity)).setPositiveButton("關閉", null).show()
+                    requireFreshParentAuth { alert().setTitle("家長主密碼").setMessage(GuardEngine.getPin(this@MainActivity)).setPositiveButton("關閉", null).show() }
                 })
                 addView(actionButton("秘密可能外洩：重新安全配對",t.warningButtonBg,t.warningButtonText){dialog.dismiss();showCompromiseRecovery(t)})
                 addView(actionButton("例行更新金鑰（不能修復秘密外洩）", t.btnSecondaryBg, t.btnSecondaryText) {
@@ -3798,21 +3830,21 @@ class MainActivity : Activity() {
                     dialog.dismiss();syncRoleServices();renderUi();showPairingInvite(currentTheme())
                 } catch(_:Exception){Toast.makeText(this@MainActivity,"未能完成；原有資料已保留。請重試或聯絡支援。",Toast.LENGTH_LONG).show()}
             }
-            addView(actionButton("先刪除舊中繼房間，再建立新配對",t.warningButtonBg,t.warningButtonText){
+            addView(actionButton("先刪除舊中繼房間，再建立新配對",t.warningButtonBg,t.warningButtonText){requireFreshParentAuth {
                 val expected=GuardEngine.captureRelaySession(this@MainActivity)
                 CloudRelay.retireRoom(this@MainActivity){ok,message->runOnUiThread{
                     if(isDestroyed || !parentUnlocked() || GuardEngine.captureRelaySession(this@MainActivity)!=expected)return@runOnUiThread
                     if(ok)fresh() else Toast.makeText(this@MainActivity,message,Toast.LENGTH_LONG).show()
                 }}
-            })
+            }})
             addView(actionButton("無法連線：只建立新配對",t.btnSecondaryBg,t.btnSecondaryText){
                 alert().setTitle("未確認中繼刪除，仍要繼續？").setMessage("新秘密不會經舊通道傳送，但舊密文可能仍留在中繼直到到期。子女手機需離線停止舊擷取，然後在安全裝置重新配對；已送達或被複製資料不會刪除。")
-                    .setNegativeButton("取消",null).setPositiveButton("了解並建立新配對"){_,_->fresh()}.show()
+                    .setNegativeButton("取消",null).setPositiveButton("了解並建立新配對"){_,_->requireFreshParentAuth{fresh()}}.show()
             })
         }
     }
 
-    private fun sendParentCommand(resetChild: Boolean) {
+    private fun sendParentCommand(resetChild: Boolean) = requireFreshParentAuth {
         Toast.makeText(this, "正在傳送已簽署的家長指令。", Toast.LENGTH_SHORT).show()
         GuardEngine.rotateKeyAndNotifyChild(this, resetChild) { success ->
             uiHandler.post {

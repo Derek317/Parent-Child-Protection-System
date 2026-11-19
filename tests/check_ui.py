@@ -17,6 +17,14 @@ class Checks(unittest.TestCase):
   self.assertIn('flagReportViewIds',flags,'Toolbar and message identifiers must be available on actual devices')
  def test_settings_never_unlock(self):
   self.assertNotIn('grantTemporaryUnlock',S.split('private fun openDirectNotificationToggle()',1)[1].split('private fun syncRoleServices()',1)[0])
+ def test_clipboard_is_only_written_through_the_sensitive_helper(self):
+  root=Path(__file__).resolve().parents[1]
+  for source in root.glob('*.kt'):
+   if source.name!='SecurityControls.kt':
+    self.assertNotIn('setPrimaryClip',source.read_text(),source.name+' must copy through SensitiveClipboard')
+ def test_pairing_does_not_depend_on_temporary_unlock(self):
+  body=S.split('fun applyPairing(',1)[1].split('private fun announceRepair(',1)[0]
+  self.assertNotIn('isTemporarilyUnlocked',body)
  def test_monitoring_is_declared(self):
   workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/build-apk.yml').read_text()
   self.assertTrue('android:name="isMonitoringTool" android:value="child_monitoring"' in workflow, "Missing parental-monitoring declaration")
