@@ -202,7 +202,10 @@ object GuardEngine {
         p.edit().putLong("withdraw_notice_rt", now).putString("withdraw_notice_boot", boot).apply()
         return true
     }
+    /** Test hook: simulates a failure while applying the stop. */
+    @Volatile internal var withdrawFault: (() -> Unit)? = null
     private fun withdrawNow(ctx: Context, discardPending: Boolean) = synchronized(pollLock) {
+        withdrawFault?.invoke()
         check(isChildMode(ctx))
         check(prefs(ctx).edit().putBoolean("collection_withdrawn", true).remove("capture_local_ack_id").commit())
         relayGeneration++; CloudRelay.disconnect()
@@ -731,6 +734,7 @@ object GuardEngine {
         val command = if(queued)JSONObject(oldCommand.toString()) else JSONObject().put("type", if (resetChildToUnconfigured) "remote_reset_child" else "key_rotated")
             .put("new_token", newToken).put("new_pin", parentPasswordVerifier(ctx))
             .put("command_id",UUID.randomUUID().toString()).put("ts_ms", System.currentTimeMillis()).put("time", nowDateTimeStr())
+        if (resetChildToUnconfigured) lastResetEvent = getChannelTopicForToken(oldToken) to "control:" + command.getString("command_id")
         if (!resetChildToUnconfigured) check(prefs(ctx).edit().putString("pending_rotation_json",
             JSONObject().put("old_token", oldToken).put("new_token", newToken).put("command",command).toString()).commit())
         postEncryptedToChannel(ctx, getChannelTopicForToken(oldToken), oldToken, command.toString(),onComplete={ success, _ ->
@@ -787,6 +791,8 @@ object GuardEngine {
      * Queues a signed remote_reset_child for the paired child and waits up to [waitMs] (background thread) for the relay to
      * accept it. True means the relay took it; the child itself cannot confirm, because it becomes unconfigured on receipt.
      */
+    /** Outbox scope and event id of the most recent signed reset, so a reset reported as not sent can really be withdrawn. */
+    @Volatile private var lastResetEvent: Pair<String, String>? = null
     enum class ReleaseOutcome { SENT, SENT_UNSURE, NOT_SENT }
     /** Test hook replacing the relay round trip of [releaseChildBeforeLeaving]. */
     @Volatile internal var releaseOverride: ((Context, Long) -> ReleaseOutcome)? = null
@@ -804,7 +810,13 @@ object GuardEngine {
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
             try { done.await(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
-        return classifyRelease(ctx, accepted)
+        val outcome = classifyRelease(ctx, accepted)
+        if (outcome == ReleaseOutcome.NOT_SENT) {
+            // "Not sent" must be true: the signed reset would otherwise keep retrying and could unprotect the child later.
+            lastResetEvent?.let { (scope, event) -> try { FamilyEvidence(ctx).use { it.acknowledgeEvent(scope, event) } } catch (_: Exception) { } }
+            lastResetEvent = null
+        }
+        return outcome
     }
     fun leaveParentRole(ctx: Context): Boolean = synchronized(pollLock) {
         check(getRole(ctx) == "parent")
@@ -3007,14 +3019,18 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
         parentAccess.lock()
-        // Android 11+: the BiometricPrompt belongs to this screen, so backgrounding cancels it. Android 8-10: the credential
-        // check is a separate activity that covers this one, so onPause always precedes its result; keep that request
-        // until onActivityResult (or, if no result ever comes, onResume) decides it.
-        parentAuthSignal?.let { parentAuthTicket++; it.cancel(); clearParentAuthRequest() }
+        // The pending authentication request survives onPause: on Android 8-10 the credential check is a separate activity
+        // that covers this one (onPause always precedes its result), and on 11+ an OEM prompt may pause the screen. onStop
+        // cancels a BiometricPrompt; onResume drops a credential-activity request that never returned.
         if(storageReady && !consentVisible && GuardEngine.isParentMode(this)) {
             dismissUiDialogs();inputDrafts.clear();displayed15MinCode="";renderParentLock()
         }
         try { unregisterReceiver(refreshReceiver) } catch (_: Exception) {}
+    }
+    /** Android 11+: cancel the BiometricPrompt only when the screen is really stopped; an OEM prompt or its PIN fallback may merely pause it. */
+    override fun onStop() {
+        super.onStop()
+        parentAuthSignal?.let { parentAuthTicket++; it.cancel(); clearParentAuthRequest() }
     }
     override fun onDestroy() { parentAuthSignal?.cancel();parentAccess.lock(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null); dismissUiDialogs(); super.onDestroy() }
 
@@ -3738,8 +3754,13 @@ class MainActivity : Activity() {
     private fun withdrawWithNotice(discard: Boolean, dialog: Dialog) {
         Toast.makeText(this, "正在通知家長手機，然後停止…", Toast.LENGTH_SHORT).show()
         thread {
-            GuardEngine.withdrawCollection(applicationContext, discard, noticeWaitMs = 6_000L)
-            runOnUiThread { if (!isDestroyed) { dialog.dismiss(); renderUi() } }
+            val failed = try { GuardEngine.withdrawCollection(applicationContext, discard, noticeWaitMs = 6_000L); false } catch (_: Exception) { true }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (failed) Toast.makeText(this, "未能完成停止擷取；目前的設定保持不變，請重試。", Toast.LENGTH_LONG).show()
+                else dialog.dismiss()
+                renderUi()
+            }
         }
     }
     private fun showCapturePrivacy(t: ThemeColors) {

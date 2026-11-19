@@ -33,7 +33,7 @@ class ChildNoticeTest {
         prefs.edit().remove("parent_master_password").remove("parent_share_verifier").remove("parent_signing_public").commit()
         assertTrue(GuardEngine.applyPairing(ctx,invite))
     }
-    @After fun clear(){GuardEngine.beforeFamilySwitch=null}
+    @After fun clear(){GuardEngine.beforeFamilySwitch=null;GuardEngine.withdrawFault=null}
     private fun all(v:View):List<View> = listOf(v)+if(v is ViewGroup)(0 until v.childCount).flatMap{all(v.getChildAt(it))}else emptyList()
     private fun idle()=shadowOf(Looper.getMainLooper()).idle()
     private fun waitFor(what:String,cond:()->Boolean){repeat(150){idle();if(cond())return;Thread.sleep(100)};fail("timed out: $what")}
@@ -103,5 +103,22 @@ class ChildNoticeTest {
         GuardEngine.withdrawCollection(ctx,true,noticeWaitMs=1_000L)
         assertFalse("withdrawal always takes effect",GuardEngine.collectionAllowed(ctx))
         assertFalse(GuardEngine.transferAllowed(ctx))
+    }
+
+    @Test fun aFailureInsideTheBackgroundStopNeverCrashesTheAppAndSaysSo() {
+        val crashes=java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+        val previous=Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler{_,e->crashes.add(e)}
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            call(a,"showCapturePrivacy",MainActivity::class.java.getDeclaredMethod("currentTheme").apply{isAccessible=true}.invoke(a))
+            val button=all(ShadowDialog.getLatestDialog().window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="停止擷取及傳送，並捨棄待傳內容"}
+            GuardEngine.withdrawFault={throw IllegalStateException("simulated failure while applying the stop")}
+            button.performClick()
+            waitFor("failure message"){org.robolectric.shadows.ShadowToast.shownToastCount()>=2}
+            Thread.sleep(300)
+            assertTrue("no uncaught exception: $crashes",crashes.isEmpty())
+            assertTrue(org.robolectric.shadows.ShadowToast.getTextOfLatestToast().contains("未能完成"))
+        } finally {Thread.setDefaultUncaughtExceptionHandler(previous);c.pause().stop().destroy()}
     }
 }

@@ -60,7 +60,10 @@ class ChildReleaseTest {
     }
     private fun foreign()=FamilySecurity.Invite(UUID.randomUUID().toString(),FamilySecurity.passwordVerifier("OtherParent928!"),FamilySecurity.newSigningIdentity().publicKey)
 
+    /** The relay is unreachable in tests, which would (correctly) withdraw the queued reset; pretend it accepted the real command. */
+    private fun relayAcceptsTheReset(){GuardEngine.releaseOverride={c,_->GuardEngine.rotateKeyAndNotifyChild(c,true);GuardEngine.ReleaseOutcome.SENT}}
     @Test fun leavingTheParentRoleSendsAResetShowsThePasswordAndFreesTheChild() {
+        relayAcceptsTheReset()
         val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
         val oldTopic=GuardEngine.getChannelTopic(ctx)
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
@@ -99,6 +102,7 @@ class ChildReleaseTest {
         } finally {c.pause().stop().destroy()}
     }
     @Test fun compromiseRecoveryAlsoReleasesTheChildBeforeDeletingThePassword() {
+        relayAcceptsTheReset()
         val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
         val oldTopic=GuardEngine.getChannelTopic(ctx)
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
@@ -183,5 +187,16 @@ class ChildReleaseTest {
             assertTrue("the parent is told the child may already be released and what to do",shown.any{it.contains("可能已收到解除指令")&&it.contains("重試")})
             assertEquals("the family was not replaced",GuardEngine.getOrCreateFamilyToken(ctx),GuardEngine.getOrCreateFamilyToken(ctx))
         } finally {c.pause().stop().destroy()}
+    }
+
+    // ---- third review: "not sent" must be true ----
+    @Test fun aResetThatWasNotAcceptedIsNotLeftQueuedToUnprotectTheChildLater() {
+        val topic=GuardEngine.getChannelTopic(ctx)
+        val outcome=GuardEngine.releaseChildBeforeLeaving(ctx,200)   // relay unreachable in tests
+        assertEquals(GuardEngine.ReleaseOutcome.NOT_SENT,outcome)
+        assertEquals("nothing may remain queued for a reset reported as not sent",0,FamilyEvidence(ctx).use{it.pendingCount(topic)})
+        GuardEngine.retryPendingAlerts(ctx,true)   // a later reconnect has nothing to deliver
+        assertTrue(pendingWires(topic).isEmpty())
+        assertEquals(0,FamilyEvidence(ctx).use{it.pendingCount(topic)})
     }
 }
