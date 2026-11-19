@@ -2303,12 +2303,13 @@ class ParentAlertService : Service() {
         val scope = GuardEngine.getChannelTopic(this)
         val eventId = alert.optString("_id").ifEmpty { alert.optString("event_id") }
         val conversation=alert.optString("conversation_key")
-        val tag=if(alert.optString("type")=="captured_message" && conversation.isNotEmpty())"$scope:conversation:$conversation" else "$scope:$eventId"
+        val tag=if(reason=="scores_threshold")"$scope:scores" else if(alert.optString("type")=="captured_message" && conversation.isNotEmpty())"$scope:conversation:$conversation" else "$scope:$eventId"
         val previous=nm.activeNotifications.firstOrNull{it.tag==tag}?.notification
         val priority=ConversationCapture.priority(alert)
         val elevate=previous==null || priority>previous.extras.getInt("ig_review_priority",0)
-        val open = Intent(this, MainActivity::class.java).setAction("app.family.igguard.OPEN_EVIDENCE")
-            .setData(Uri.Builder().scheme("igguard").authority("evidence").appendPath(scope).appendPath(eventId).build())
+        val open = if (reason == "scores_threshold") ScoresLink.intent(this, scope)
+            else Intent(this, MainActivity::class.java).setAction("app.family.igguard.OPEN_EVIDENCE")
+                .setData(Uri.Builder().scheme("igguard").authority("evidence").appendPath(scope).appendPath(eventId).build())
         val openIntent = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val generic = when(reason) {
             "test_alert" -> "已收到子女手機的加密測試。可在裝置與傳送查看記錄。"
@@ -2399,6 +2400,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
         super.onActivityResult(requestCode,resultCode,data)
         if(requestCode==parentAuthRequest && parentAuthPending)completeParentAuthentication(resultCode==RESULT_OK)
+        if(requestCode==modelPickRequest && resultCode==RESULT_OK)data?.data?.let{startModelImport(it)}
     }
     private lateinit var scrollView: ScrollView
     private lateinit var rootContainer: LinearLayout
@@ -2544,7 +2546,7 @@ class MainActivity : Activity() {
                 val changed = renderedSession != GuardEngine.captureRelaySession(this@MainActivity)
                 if (changed) syncRoleServices()
                 updateStatus()
-                if (changed || (currentFocus !is EditText && section in setOf("overview", "alerts"))) renderUi()
+                if (changed || (currentFocus !is EditText && section in setOf("overview", "alerts", "scores"))) renderUi()
                 maybeShowSafetyAdvice()
                 maybeShowCaptureNotice()
             },200)
@@ -2669,6 +2671,7 @@ class MainActivity : Activity() {
             renderParentLock();return
         }
         if (incoming?.action == "app.family.igguard.OPEN_EVIDENCE") { handleEvidenceNotification(incoming); return }
+        if (incoming?.action == ScoresUi.OPEN_SCORES_ACTION) { handleScoresNotification(incoming); return }
         val data = incoming?.data ?: return
         setIntent(Intent(incoming).apply { this.data = null })
         if (incoming.action != Intent.ACTION_VIEW || !data.scheme.equals("igguard", true) || !data.host.equals("pair", true)) return
@@ -2733,8 +2736,8 @@ class MainActivity : Activity() {
 
     private fun navigateTo(destination: String) {
         val role = GuardEngine.getRole(this)
-        val permitted = if (role == "parent") setOf("role", "overview", "alerts", "family", "settings")
-            else if (role == "child") setOf("role", "overview", "permissions", "unlock", "settings")
+        val permitted = if (role == "parent") setOf("role", "overview", "alerts", "family", "settings", "scores")
+            else if (role == "child") setOf("role", "overview", "permissions", "unlock", "settings", "scores_consent", "scores_change")
             else setOf("role", "parent_setup", "child_setup", "settings")
         if (destination !in permitted) return
         section = destination
@@ -2821,8 +2824,8 @@ class MainActivity : Activity() {
             section == "parent_setup" && role == "unconfigured" -> renderParentSetup(t)
             section == "child_setup" && role == "unconfigured" -> renderChildSetup(t)
             section == "settings" -> renderSettings(t)
-            role == "parent" -> when(section) { "alerts" -> renderParentAlerts(t); "family" -> renderParentFamily(t); else -> renderParentOverview(t) }
-            role == "child" -> when(section) { "permissions" -> renderChildPermissions(t); "unlock" -> renderChildUnlock(t); else -> renderChildOverview(t) }
+            role == "parent" -> when(section) { "alerts" -> renderParentAlerts(t); "family" -> renderParentFamily(t); "scores" -> renderParentScores(t); else -> renderParentOverview(t) }
+            role == "child" -> when(section) { "permissions" -> renderChildPermissions(t); "unlock" -> renderChildUnlock(t); "scores_consent" -> renderScoresConsent(t); "scores_change" -> renderScoresChange(t); else -> renderChildOverview(t) }
             else -> renderRoleChoice(t)
         }
         if (sameSection && focusHint != null) {
@@ -2866,7 +2869,7 @@ class MainActivity : Activity() {
         val destinations = if (role == "parent") listOf(Triple("overview", "house", "總覽"), Triple("alerts", "bell-simple", "提醒"), Triple("family", "users-three", "家庭"), Triple("settings", "gear-six", "設定"))
             else listOf(Triple("overview", "house", "總覽"), Triple("permissions", "shield", "權限"), Triple("unlock", "key", "解鎖"), Triple("settings", "gear-six", "設定"))
         for ((destination, glyph, title) in destinations) {
-            val selected = section == destination
+            val selected = section == destination || (destination == "overview" && section in setOf("scores", "scores_consent", "scores_change"))
             val tab = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; minimumHeight = dp(56)
                 background = ripple(if (selected) t.bgChip else t.bgCard, 8)
@@ -2981,6 +2984,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
             rootContainer.addView(textAction("尚未授權系統通知 · 前往設定") { navigateTo("settings") })
         }
+        rootContainer.addView(scoresOverviewRow(t))
         renderWeeklyCharts(t)
         GuardEngine.prepareParentArchive(this)
         val latest = FamilyEvidence(this).use{it.messages(GuardEngine.getChannelTopic(this),EvidenceQuery(),limit=1).firstOrNull()}
@@ -3075,6 +3079,7 @@ class MainActivity : Activity() {
                 addView(actionButton("複製解鎖碼", t.btnPrimaryBg, t.btnPrimaryText) { copyText("IGGuardUnlock", displayed15MinCode); dialog.dismiss() })
             }
         })
+        renderScoresSwitch(t)
         sectionTitle("信任好友", t)
         val current = GuardEngine.getTrustedHandles(this)
         if (current.isEmpty()) rootContainer.addView(label("尚未加入信任好友。請確認對方身份後，再加入名單。", 14f, t.textSecondary, bottomPad = 16))
@@ -3139,9 +3144,12 @@ class MainActivity : Activity() {
         return when(message.optString("direction","unknown")) {
             "incoming"->"對方 · $author"
             "outgoing"->"子女 · ${message.optString("author").ifBlank{"子女"}}"
-            else->"方向未能判斷 · $author"
+            else->if(message.optString("type")!="captured_message")"帳戶 · $author" else "方向未能判斷 · $author"
         }
     }
+    private val NO_TEXT_NOTE="此提醒不含訊息文字：僅分數模式不分享訊息內容。"
+    private fun evidenceBody(message:JSONObject):String =
+        message.optString("text").ifBlank{if(message.optString("type")!="captured_message")NO_TEXT_NOTE else ""}
     private fun evidenceSource(message:JSONObject):String=when(message.optString("source_context")) {
         "notification"->if(message.optString("conversation_kind")=="group")"群組通知擷取" else "通知擷取"
         "visible_dm"->"畫面擷取 · 方向按介面資訊及版面辨識"
@@ -3244,7 +3252,7 @@ class MainActivity : Activity() {
                     if(!inConversation && query.section!="device") {
                         for(contact in contacts.take(30)) {
                             val category=contact.categories.map{reviewCategory(it)}.distinct().joinToString(" / ").ifEmpty{"一般對話"}
-                            val caption=(if(contact.kind=="group")"群組 · " else "")+"${contact.account.ifBlank{"帳號未確認"}} · 最近記錄 ${evidenceTime(contact.latest)}\n${contact.count} 則記錄 · ${contact.unreviewed} 則需查看 · $category\n${shortEvidence(contact.preview)}"
+                            val caption=(if(contact.kind=="group")"群組 · " else "")+"${contact.account.ifBlank{"帳號未確認"}} · 最近記錄 ${evidenceTime(contact.latest)}\n${contact.count} 則記錄 · ${contact.unreviewed} 則需查看 · $category\n${shortEvidence(contact.preview.ifBlank{NO_TEXT_NOTE})}"
                             val display=ConversationCapture.displayLabel(contact.label,contact.unidentified)
                             results.addView(row("chat-circle",display,caption,t){openConversation(contact.key,display)}.apply{
                                 tag="conversation_${contact.key}";getChildAt(0).tag="evidence_contact_${contact.label.trim().removePrefix("@").lowercase(Locale.ROOT)}"
@@ -3263,7 +3271,7 @@ class MainActivity : Activity() {
                             val date=(if(message.optLong("message_time_ms")>0)"訊息日期 " else "擷取日期 ")+evidenceTime(stamp).substringBefore(" ")
                             if(date!=day){day=date;results.addView(label(day,12f,t.textMuted,topPad=18,bottomPad=8))}
                             if(inConversation)results.addView(conversationBubble(message,t))
-                            else results.addView(row("info",alertTitle(message.optString("reason")),"${evidenceClock(message)}\n${shortEvidence(message.optString("text"))}",t){showAlertDetails(message,t)})
+                            else results.addView(row("info",alertTitle(message.optString("reason")),"${evidenceClock(message)}\n${shortEvidence(evidenceBody(message))}",t){showAlertDetails(message,t)})
                         }
                         if(shown.isEmpty())results.addView(label("沒有符合條件的訊息。",15f,t.textSecondary,topPad=24,bottomPad=20))
                     }
@@ -3297,12 +3305,12 @@ class MainActivity : Activity() {
         bubble.addView(label((if(message.optBoolean("_saved"))"已儲存 · " else "")+evidenceSpeaker(message),13f,t.textPrimary,true,bottomPad=6))
         if(ConversationCapture.actionable(message))bubble.addView(label(alertTitle(message.optString("reason"))+" · "+when(message.optString("_review_state")){"reviewed"->"已查看";"follow_up"->"待跟進";else->"新記錄"},12f,t.warmCoral,bottomPad=6))
         if(signalLabels(message).isNotEmpty())bubble.addView(label(signalLabels(message),12f,t.warmHoney,bottomPad=6))
-        bubble.addView(label(shortEvidence(message.optString("text")),15f,t.textPrimary,bottomPad=8).apply{maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END})
+        bubble.addView(label(shortEvidence(evidenceBody(message)),15f,t.textPrimary,bottomPad=8).apply{maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END})
         bubble.addView(label("${evidenceClock(message)}\n${evidenceSource(message)}"+(if(message.optBoolean("possible_duplicate"))" · 可能重複" else ""),10.5f,t.textMuted))
         val details=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(10),0,0)}
         details.addView(label("查看完整記錄",12f,t.accentSeafoam,true),LinearLayout.LayoutParams(0,-2,1f))
         details.addView(icon("caret-right",t.accentSeafoam,16));bubble.addView(details)
-        bubble.contentDescription="${evidenceSpeaker(message)}。${shortEvidence(message.optString("text"))}。${evidenceClock(message)}。點按查看完整內容"
+        bubble.contentDescription="${evidenceSpeaker(message)}。${shortEvidence(evidenceBody(message))}。${evidenceClock(message)}。點按查看完整內容"
         val gap=Space(this)
         if(outgoing)holder.addView(gap,LinearLayout.LayoutParams(0,1,.1f))
         holder.addView(bubble,LinearLayout.LayoutParams(0,-2,.9f))
@@ -3320,7 +3328,7 @@ class MainActivity : Activity() {
             addView(label("${evidenceSpeaker(stored)}\n${evidenceClock(stored)}\n${evidenceSource(stored)}",13f,t.textSecondary,bottomPad=16))
             if(unidentified)addView(label("舊版曾把導覽按鈕當作對話名稱，這些內容可能來自不同對話。原文保留，無法可靠還原對象，請勿據此判定發訊人。",13f,t.warmHoney,bottomPad=14))
             addView(label(if(reason=="archive_recovery")"原始舊資料未能自動解析，完整原始內容保留於此，可複製後尋求復原協助。" else if(stored.optBoolean("_legacy_partial"))"舊版本記錄，內容可能已截短，無法復原未保留的部分。" else "保留 App 實際擷取的文字，未必涵蓋 Instagram 原始對話的全部內容。",12f,t.textMuted,bottomPad=14))
-            addView(label(stored.optString("text"),16f,t.textPrimary,bottomPad=20).apply{setTextIsSelectable(true)})
+            addView(label(evidenceBody(stored),16f,t.textPrimary,bottomPad=20).apply{setTextIsSelectable(true)})
             if(reason=="sexual_or_grooming_content")addView(actionButton("尋求協助建議",t.btnSecondaryBg,t.btnSecondaryText) { dialog.dismiss();showSafetyAdvice(stored,t) })
             fun actions(vararg buttons:Button) {
                 val vertical=resources.configuration.fontScale>1.3f
@@ -3379,21 +3387,21 @@ class MainActivity : Activity() {
         val alert = FamilyEvidence(this).use{it.nextAdvice(GuardEngine.getChannelTopic(this))} ?: return
         showSafetyAdvice(alert,currentTheme())
     }
-    private fun showSafetyAdvice(alert: JSONObject,t: ThemeColors) {
+    private fun showSafetyAdvice(alert: JSONObject?,t: ThemeColors) {
         if(!GuardEngine.isParentMode(this))return
         val scope = GuardEngine.getChannelTopic(this)
         showSheet("先了解，再尋求合適協助。") { dialog ->
-            addView(label("偵測到需留意的關鍵字，不代表已確認誘導或侵害。請先冷靜了解情況，避免責備孩子。",15f,t.textPrimary,bottomPad=18))
+            addView(label(if(alert==null)"分數只是一個參考訊號，不代表已確認任何事情。請先冷靜了解情況，避免責備孩子。" else "偵測到需留意的關鍵字，不代表已確認誘導或侵害。請先冷靜了解情況，避免責備孩子。",15f,t.textPrimary,bottomPad=18))
             addView(label("保留相關記錄，與孩子確認是否感到不安、被威脅或被要求保密。若有疑慮，請向學校社工、合資格兒童保障或心理專業人士尋求協助。",14f,t.textSecondary,bottomPad=18))
             addView(label("如在香港遇到即時人身危險，請致電 999；其他地區請使用當地緊急求助號碼。App 不能代替專業評估或緊急支援。",14f,t.warmCoral,bottomPad=18))
-            addView(actionButton("查看相關記錄",t.btnSecondaryBg,t.btnSecondaryText) {
+            if(alert!=null)addView(actionButton("查看相關記錄",t.btnSecondaryBg,t.btnSecondaryText) {
                 dialog.dismiss();section="alerts";evidenceSearch="";openConversation(alert.optString("_conversation_key").takeIf{it.isNotEmpty()},alert.optString("_conversation_label").ifBlank{alert.optString("sender")})
                 showAlertDetails(alert,t)
             })
             addView(actionButton("我明白",t.btnPrimaryBg,t.btnPrimaryText){dialog.dismiss()})
         }
         // One sheet covers the current burst; individual records keep an advice action for later review.
-        FamilyEvidence(this).use{it.acknowledgeAdvice(scope)}
+        if(alert!=null)FamilyEvidence(this).use{it.acknowledgeAdvice(scope)}
     }
     private fun handleEvidenceNotification(incoming: Intent) {
         if(!GuardEngine.isParentMode(this))return
@@ -3453,6 +3461,7 @@ class MainActivity : Activity() {
         card.addView(label(if (notification && screen) "你的保護已準備好" else "完成設定，讓保護正常運作。", 17f, t.textPrimary, true, bottomPad = 8))
         card.addView(label(if (notification && screen) "通知及畫面保護已連接。" else "通知讀取保護背景訊息；畫面保護處理對話、留言回覆及防靜音。", 14f, t.textSecondary))
         rootContainer.addView(card)
+        renderScoresChildBlocks(t)
         rootContainer.addView(label("僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整；警報會加密轉傳至配對家長。可在「擷取範圍與停止」停止擷取及待傳送；Android 權限可另行關閉，已送達副本需另行刪除。",13f,t.textSecondary,bottomPad=14))
         rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)})
         rootContainer.addView(row("shield-check","擷取範圍與停止",if(GuardEngine.collectionAllowed(this))"選擇範圍、停止新擷取與待傳送。" else "擷取及待傳送已停止。",t){showCapturePrivacy(t)})
@@ -3521,6 +3530,7 @@ class MainActivity : Activity() {
         heading("每個設定，都說清楚。", "了解每項權限的用途，再前往 Android 設定確認。", t)
         rootContainer.addView(label("僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整；警報會加密轉傳至配對家長。可在「擷取範圍與停止」停止擷取及待傳送；Android 權限可另行關閉，已送達副本需另行刪除。",13f,t.textSecondary,bottomPad=14))
         rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)}.apply{getChildAt(0).tag="full_capture_setup"})
+        renderModelImport(t)
         if (!GuardEngine.hasSecureParentCommands(this)) rootContainer.addView(label("需要更新家庭配對：現有監察仍會運作。新版家長指令與臨時碼需要家長傳送新邀請；請先更新兩部手機，並以新主密碼重新建立家庭。", 14f, t.warmHoney, bottomPad = 20))
         val notification = GuardEngine.isNotificationListenerEnabledStatic(this)
         val screen = GuardEngine.isAccessibilityEnabledStatic(this)
@@ -3542,6 +3552,302 @@ class MainActivity : Activity() {
         })
         rootContainer.addView(label("通知已連接代表 Instagram 讀取服務已就緒，並非家長已收妥。\n最新傳送：${GuardEngine.cpLastHttpStatus}",13f,t.textSecondary,topPad=10))
     }
+    // ================= Scores-only family mode: shared helpers =================
+    private fun bandColor(token: String, t: ThemeColors): String = when (token) {
+        "accentSeafoam" -> t.accentSeafoam; "warmHoney" -> t.warmHoney; "warmCoral" -> t.warmCoral; else -> t.textSecondary
+    }
+    private fun iconLine(glyph: String, tint: String, text: String, t: ThemeColors, sizeSp: Float = 15f, tag: String? = null): LinearLayout =
+        LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(4), 0, dp(8))
+            addView(icon(glyph, tint, 24))
+            addView(label(text, sizeSp, t.textPrimary, true).apply { setPadding(dp(10), 0, 0, 0); if (tag != null) this.tag = tag }, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+    private fun noticeCard(t: ThemeColors, hero: Boolean = false, cardTag: String? = null): LinearLayout = makeCard(t, hero).apply { if (cardTag != null) tag = cardTag }
+
+    // ================= Scores-only family mode: child's phone =================
+    private val modelPickRequest = 9032
+    private var scoresReadOnly = false
+
+    private fun renderScoresChildBlocks(t: ThemeColors) {
+        val s = RiskLocal.status(this)
+        ScoresNotices.pending(this)?.let {
+            val card = noticeCard(t, true, "scores_change_card")
+            card.addView(label(ScoresChildCopy.CHANGE_CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 6))
+            card.addView(textAction(ScoresChildCopy.CHANGE_CARD_ACTION) { navigateTo("scores_change") })
+            rootContainer.addView(card)
+        }
+        if (s.pendingPolicy) {
+            val card = noticeCard(t, true, "scores_consent_card")
+            card.addView(label(ScoresChildCopy.CARD_TITLE, 17f, t.textPrimary, true, bottomPad = 8))
+            card.addView(label(ScoresChildCopy.CARD_BODY, 14f, t.textSecondary, bottomPad = 8))
+            card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") }.apply { tag = "scores_consent_open" })
+            rootContainer.addView(card)
+        }
+        if (s.policyEnabled || s.consent != "none") renderScoresStatus(s, t)
+    }
+    private fun renderScoresStatus(s: RiskChildStatus, t: ThemeColors) {
+        val st = ScoresChildCopy.statusState(s)
+        val card = noticeCard(t, false, "scores_status_block")
+        card.addView(label(ScoresChildCopy.TITLE, 16f, t.textPrimary, true, bottomPad = 4))
+        card.addView(iconLine(st.icon, if (st == ScoresChildCopy.StatusState.ON) t.accentSeafoam else if (st == ScoresChildCopy.StatusState.PAUSED || st == ScoresChildCopy.StatusState.WAITING) t.warmHoney else t.warmCoral, st.label, t, 15f, "scores_state_label"))
+        card.addView(label(ScoresChildCopy.STATUS_RUNS, 13f, t.textSecondary, bottomPad = 8))
+        card.addView(label(ScoresChildCopy.STATUS_PARENT_SEES, 13f, t.textSecondary, bottomPad = 8))
+        ScoresChildCopy.stateNote(st)?.let { card.addView(label(it, 13f, t.textPrimary, true, bottomPad = 8)) }
+        card.addView(label(ScoresChildCopy.lastRun(s), 13f, t.textSecondary, bottomPad = 8).apply { tag = "scores_last_run" })
+        card.addView(label(ScoresChildCopy.unknown(s.unknownThreads), 13f, t.textSecondary, bottomPad = 8))
+        if (s.consent == "accepted") {
+            if (s.paused) card.addView(actionButton(ScoresChildCopy.RESUME, t.btnPrimaryBg, t.btnPrimaryText) { RiskLocal.resume(this); renderUi() }.apply { tag = "scores_resume" })
+            else card.addView(actionButton(ScoresChildCopy.PAUSE, t.btnSecondaryBg, t.btnSecondaryText) { RiskLocal.pause(this); renderUi() }.apply { tag = "scores_pause" })
+        }
+        if (s.consent == "none" && s.pendingPolicy) card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") })
+        card.addView(actionButton(ScoresChildCopy.WHAT, t.btnSecondaryBg, t.btnSecondaryText) { scoresReadOnly = true; navigateTo("scores_consent") }.apply { tag = "scores_what" })
+        if (s.consent == "accepted") card.addView(actionButton(ScoresChildCopy.WITHDRAW, t.warningButtonBg, t.warningButtonText) {
+            alert().setTitle(ScoresChildCopy.WITHDRAW_TITLE).setMessage(ScoresChildCopy.WITHDRAW_BODY)
+                .setNegativeButton(ScoresChildCopy.CANCEL, null).setPositiveButton(ScoresChildCopy.WITHDRAW_CONFIRM) { _, _ -> RiskLocal.withdraw(this); renderUi() }.show()
+        }.apply { tag = "scores_withdraw" })
+        rootContainer.addView(card)
+    }
+    private fun renderScoresConsent(t: ThemeColors) {
+        val decide = !scoresReadOnly && RiskLocal.pendingPolicy(this)
+        rootContainer.addView(textAction("返回 / Back") { navigateTo("overview") })
+        heading(ScoresChildCopy.CONSENT_TITLE, "", t)
+        for ((title, body) in ScoresChildCopy.CONSENT_POINTS) {
+            rootContainer.addView(label(title, 16f, t.textPrimary, true, topPad = 14, bottomPad = 6))
+            rootContainer.addView(label(body, 14f, t.textSecondary))
+        }
+        if (decide) {
+            // No pre-ticked box: the agree button is the only thing that accepts.
+            rootContainer.addView(label("", 12f, t.textMuted, bottomPad = 8))
+            rootContainer.addView(actionButton(ScoresChildCopy.AGREE, t.btnPrimaryBg, t.btnPrimaryText) {
+                if (RiskLocal.accept(this)) navigateTo(if (ScoresNotices.pending(this) == "on") "scores_change" else "overview")
+                else Toast.makeText(this, "未能儲存你的同意，沒有開始分析。請重試。\nCould not save your choice. Nothing was started.", Toast.LENGTH_LONG).show()
+            }.apply { tag = "scores_agree" })
+            rootContainer.addView(actionButton(ScoresChildCopy.NOT_NOW, t.btnSecondaryBg, t.btnSecondaryText) { navigateTo("overview") }.apply { tag = "scores_not_now" })
+        } else rootContainer.addView(actionButton("返回 / Back", t.btnPrimaryBg, t.btnPrimaryText) { navigateTo("overview") }.apply { tag = "scores_back" })
+    }
+    private fun renderScoresChange(t: ThemeColors) {
+        val kind = ScoresNotices.pending(this)
+        heading(if (kind == "off") ScoresChildCopy.CHANGE_OFF_TITLE else ScoresChildCopy.CHANGE_ON_TITLE, "", t)
+        rootContainer.addView(label(if (kind == "off") ScoresChildCopy.CHANGE_OFF_BODY else if (kind == "on") ScoresChildCopy.CHANGE_ON_BODY else "目前沒有新的改變。\nNothing has changed.", 15f, t.textSecondary, bottomPad = 18))
+        rootContainer.addView(actionButton(ScoresChildCopy.CHANGE_DONE, t.btnPrimaryBg, t.btnPrimaryText) {
+            if (kind != null) ScoresNotices.markSeen(this, kind)
+            navigateTo("overview")
+        }.apply { tag = "scores_change_done" })
+    }
+
+    private fun renderModelImport(t: ThemeColors) {
+        sectionTitle(ScoresChildCopy.IMPORT_TITLE, t)
+        if (!RiskModelStore.supported(this)) {
+            val card = noticeCard(t, false, "scores_model_unsupported")
+            card.addView(iconLine("lock-key", t.warmHoney, ScoresChildCopy.UNSUPPORTED_TITLE, t))
+            card.addView(label(ScoresChildCopy.UNSUPPORTED_BODY, 14f, t.textSecondary))
+            rootContainer.addView(card); return
+        }
+        val job = ModelImportJob
+        val outcome = ScoresChildCopy.result(job.result, job.wasCancelled)
+        if (outcome != null && !job.running) {
+            val card = noticeCard(t, false, "scores_import_result")
+            card.addView(iconLine(if (job.result == RiskImportResult.OK) "check-circle" else "shield-warning", if (job.result == RiskImportResult.OK) t.accentSeafoam else t.warmCoral, outcome.first, t))
+            card.addView(label(outcome.second, 14f, t.textSecondary, bottomPad = 6))
+            card.addView(actionButton(ScoresChildCopy.OK_DISMISS, t.btnSecondaryBg, t.btnSecondaryText) { ModelImportJob.dismissResult(); renderUi() })
+            rootContainer.addView(card)
+        }
+        if (job.running) {
+            val card = noticeCard(t, false, "scores_import_progress")
+            card.addView(label("正在匯入模型檔…\nImporting the model file…", 15f, t.textPrimary, true, bottomPad = 8))
+            val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000; progress = (job.copied * 1000L / RiskModelSpec.FILE_BYTES).toInt().coerceIn(0, 1000)
+                contentDescription = "匯入進度 ${progress / 10}%"; tag = "scores_import_bar"
+            }
+            card.addView(bar, LinearLayout.LayoutParams(-1, dp(12)))
+            card.addView(label(ScoresChildCopy.progress(job.copied), 13f, t.textSecondary, topPad = 8, bottomPad = 6).apply { tag = "scores_import_text" })
+            card.addView(actionButton(ScoresChildCopy.IMPORT_CANCEL, t.btnSecondaryBg, t.btnSecondaryText) { ModelImportJob.requestCancel(); Toast.makeText(this, "正在取消…\nCancelling…", Toast.LENGTH_SHORT).show() }.apply { tag = "scores_import_cancel" })
+            rootContainer.addView(card); return
+        }
+        when (RiskModelStore.state(this)) {
+            RiskModelState.INSTALLED -> rootContainer.addView(label(ScoresChildCopy.INSTALLED, 14f, t.textPrimary, true, bottomPad = 8).apply { tag = "scores_model_state" })
+            RiskModelState.MISMATCH -> rootContainer.addView(label(ScoresChildCopy.MISMATCH, 14f, t.warmCoral, true, bottomPad = 8).apply { tag = "scores_model_state" })
+            else -> {}
+        }
+        if (RiskModelStore.state(this) != RiskModelState.INSTALLED)
+            rootContainer.addView(row("plus", ScoresChildCopy.IMPORT_ROW, ScoresChildCopy.IMPORT_ROW_DESC, t) { pickModelFile() }.apply { getChildAt(0).tag = "model_import_row" })
+        if (RiskModelStore.file(this).isFile) rootContainer.addView(actionButton(ScoresChildCopy.REMOVE, t.btnSecondaryBg, t.btnSecondaryText) {
+            alert().setTitle(ScoresChildCopy.REMOVE_TITLE).setMessage(ScoresChildCopy.REMOVE_BODY).setNegativeButton(ScoresChildCopy.CANCEL, null)
+                .setPositiveButton(ScoresChildCopy.REMOVE) { _, _ -> RiskLocal.removeModel(this); ModelImportJob.dismissResult(); renderUi() }.show()
+        }.apply { tag = "scores_model_remove" })
+    }
+    private fun pickModelFile() {
+        try {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), modelPickRequest)
+        } catch (_: Exception) { Toast.makeText(this, "找不到檔案選擇器。\nNo file picker is available.", Toast.LENGTH_LONG).show() }
+    }
+    private fun startModelImport(uri: Uri) {
+        if (!GuardEngine.isChildMode(this) || !RiskModelStore.supported(this)) return
+        ModelImportJob.start(this, uri) { uiHandler.post { if (!isDestroyed && activityVisible && section == "permissions") renderUi() } }
+        renderUi()
+    }
+
+    // ================= Scores-only family mode: parent's phone =================
+    private fun readScoresModel(): ScoresPageModel = FamilyEvidence(applicationContext).use { db ->
+        val scope = GuardEngine.getChannelTopic(applicationContext)
+        ScoresUi.classify(GuardEngine.scoresModePolicy(applicationContext), db.scoresModeState(scope), db.riskScores(scope))
+    }
+    private fun scoresOverviewRow(t: ThemeColors): View {
+        val description = try {
+            val m = readScoresModel()
+            when (m.page) {
+                ScoresPage.OFF -> "僅分數模式未開啟"
+                ScoresPage.LIST, ScoresPage.STALE, ScoresPage.PAUSED, ScoresPage.WITHDRAWN ->
+                    if (m.rows.isEmpty()) ScoresUi.copy(m).title else "${m.needAttention} 個對話需要留意 · ${m.needReview} 個需要檢視"
+                else -> ScoresUi.copy(m).title
+            }
+        } catch (_: Exception) { "未能讀取分數" }
+        return row("shield-check", "對話風險分數", description, t) { navigateTo("scores") }.apply { getChildAt(0).tag = "scores_overview_row" }
+    }
+    private fun handleScoresNotification(incoming: Intent) {
+        if (!GuardEngine.isParentMode(this)) return
+        setIntent(Intent(incoming).apply { action = Intent.ACTION_MAIN; data = null })
+        if (!ScoresLink.isScoresLink(incoming, GuardEngine.getChannelTopic(this))) return
+        section = "scores"
+        if (activityVisible) renderUi()
+    }
+
+    private fun scoresStateIcon(p: ScoresPage) = when (p) {
+        ScoresPage.OFF -> "info"; ScoresPage.WAITING, ScoresPage.PAUSED, ScoresPage.STALE -> "clock"
+        ScoresPage.MODEL_UNSUPPORTED -> "lock-key"; ScoresPage.WITHDRAWN -> "x"; ScoresPage.EMPTY -> "pulse"
+        ScoresPage.MODEL_MISSING, ScoresPage.MODEL_WRONG, ScoresPage.ERROR -> "shield-warning"; ScoresPage.LIST -> "check-circle"
+    }
+    private fun renderParentScores(t: ThemeColors) {
+        heading("對話風險分數", "分數只是一個參考訊號，不是結論。", t)
+        rootContainer.addView(textAction("返回總覽") { navigateTo("overview") })
+        val session = GuardEngine.captureRelaySession(this); val container = rootContainer
+        val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }; container.addView(results)
+        results.addView(label("正在讀取分數…", 13f, t.textMuted).apply { tag = "scores_loading" })
+        thread {
+            val model = try { readScoresModel() } catch (_: Exception) { null }
+            uiHandler.post {
+                if (isDestroyed || rootContainer !== container || GuardEngine.captureRelaySession(this) != session) return@post
+                results.removeAllViews()
+                showScoresModel(results, model ?: ScoresPageModel(ScoresPage.ERROR, emptyList(), 0, 0, null), t)
+            }
+        }
+    }
+    private fun showScoresModel(out: LinearLayout, m: ScoresPageModel, t: ThemeColors) {
+        val c = ScoresUi.copy(m)
+        fun host(view: View) = out.addView(view)
+        if (m.page == ScoresPage.LIST || m.page == ScoresPage.STALE) {
+            val lead = noticeCard(t, true, "scores_lead_card")
+            lead.addView(label(c.title, 14f, t.textSecondary, true, bottomPad = 6))
+            lead.addView(label(c.body, 18f, t.textPrimary, true).apply { tag = "scores_lead" })
+            host(lead)
+            if (m.page == ScoresPage.STALE) {
+                val banner = noticeCard(t, false, "scores_stale_banner")
+                banner.addView(iconLine("clock", t.warmHoney, "分數可能已過時", t, 15f, "scores_state_title"))
+                banner.addView(label(ScoresUi.staleBanner(m.state?.receivedAt ?: 0L), 14f, t.textSecondary))
+                host(banner)
+            }
+        } else {
+            val card = noticeCard(t, true, "scores_state_card")
+            card.addView(iconLine(scoresStateIcon(m.page), if (m.page == ScoresPage.LIST) t.accentSeafoam else t.warmHoney, c.title, t, 20f, "scores_state_title"))
+            card.addView(label(c.body, 15f, t.textSecondary, bottomPad = 10))
+            card.addView(label(c.next, 15f, t.textPrimary, true).apply { tag = "scores_next_step" })
+            when (m.page) {
+                ScoresPage.OFF, ScoresPage.WITHDRAWN -> card.addView(actionButton("前往「家庭」", t.btnPrimaryBg, t.btnPrimaryText) { navigateTo("family") }.apply { tag = "scores_go_family" })
+                ScoresPage.ERROR -> card.addView(actionButton("重試", t.btnPrimaryBg, t.btnPrimaryText) { renderUi() }.apply { tag = "scores_retry" })
+                else -> {}
+            }
+            host(card)
+        }
+        val notice = noticeCard(t, false, "scores_notice")
+        notice.addView(label(ScoresUi.LIMITS_NOTICE, 14f, t.textPrimary, bottomPad = 8))
+        notice.addView(label(ScoresUi.NEXT_STEPS, 14f, t.textSecondary, bottomPad = 8))
+        m.state?.let { notice.addView(label(ScoresUi.unknownText(it.unknownThreads), 14f, t.textSecondary, bottomPad = 8).apply { tag = "scores_unknown" }) }
+        notice.addView(label(ScoresUi.NO_MESSAGES, 14f, t.textSecondary, bottomPad = 4))
+        notice.addView(textAction("查看協助建議") { showSafetyAdvice(null, t) }.apply { tag = "scores_safety_advice" })
+        host(notice)
+        val listed = m.rows.isNotEmpty() && m.page in setOf(ScoresPage.LIST, ScoresPage.STALE, ScoresPage.PAUSED, ScoresPage.WITHDRAWN)
+        if (listed) {
+            out.addView(label(when (m.page) { ScoresPage.WITHDRAWN -> "以下分數已不再更新（子女已撤回同意）"; ScoresPage.PAUSED -> "以下是暫停前收到的分數"; else -> "對話（分數由高至低）" }, 16f, t.textPrimary, true, topPad = 16, bottomPad = 10).apply { tag = "scores_list_title" })
+            for (row in m.rows) out.addView(scoreRow(row, t))
+        }
+    }
+    private fun scoreRow(row: RiskScoreRow, t: ThemeColors): View {
+        val band = ScoresUi.band(row)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(72)
+            setPadding(dp(14), dp(12), dp(14), dp(12)); tag = "score_row"
+            background = background(t.bgCard, 12, t.borderSubtle)
+            isFocusable = true; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            contentDescription = ScoresUi.rowDescription(row)
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(8)) }
+            addView(icon(ScoresUi.bandIcon(band), bandColor(ScoresUi.bandToken(band), t), 28))
+            val words = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
+            words.addView(label(ScoresUi.bandTitle(band), 15f, t.textPrimary, true, bottomPad = 4))
+            words.addView(label(ScoresUi.scoreText(row), if (row.score != null) 20f else 14f, t.textPrimary, row.score != null, bottomPad = 4))
+            words.addView(label("${row.accountLabel} · ${ScoresUi.day(row.scoredAt)}", 13f, t.textSecondary))
+            addView(words, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+    }
+
+    private fun renderScoresSwitch(t: ThemeColors) {
+        sectionTitle("僅分數模式 / Scores-only mode", t)
+        val (policy, state, rows) = try {
+            val scope = GuardEngine.getChannelTopic(this)
+            FamilyEvidence(this).use { Triple(GuardEngine.scoresModePolicy(this), it.scoresModeState(scope), it.riskScores(scope)) }
+        } catch (_: Exception) { Triple(null, null, emptyList()) }
+        val on = policy?.enabled == true
+        val can = ScoresUi.canEnable(state)
+        val usable = on || can
+        val status = if (on) ScoresUi.switchStatus(policy, state, rows) else if (can) "未開啟 · 子女手機的模型檔已核對，可以開啟" else "未開啟 · 暫時不能開啟"
+        val why = if (!on && !can) ScoresUi.enableBlockedWhy(state) else ""
+        val line = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(74); setPadding(dp(14), dp(14), dp(14), dp(14)); tag = "scores_mode_switch"
+            background = background(t.bgCard, 12, t.borderSubtle); isEnabled = usable; isFocusable = true
+            contentDescription = "僅分數模式。${if (on) "已開啟" else "未開啟"}。$status。$why"
+            accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = "android.widget.Switch"; info.isCheckable = true; info.isChecked = on; info.isEnabled = usable
+                }
+            }
+            if (usable) {
+                isClickable = true
+                setOnClickListener(sessionClick { if (on) confirmScoresOff() else showScoresOnPage(t) })
+            }
+        }
+        val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, dp(10), 0) }
+        words.addView(label("僅分數模式 / Scores-only mode", 15f, t.textPrimary, true, bottomPad = 5))
+        words.addView(label(status, 13f, t.textSecondary, bottomPad = if (why.isEmpty()) 0 else 5).apply { tag = "scores_mode_status" })
+        if (why.isNotEmpty()) words.addView(label(why, 13f, t.textPrimary).apply { tag = "scores_mode_why" })
+        line.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
+        line.addView(android.widget.Switch(this).apply {
+            isChecked = on; isEnabled = usable; isClickable = false; isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO; tag = "scores_mode_switch_view"
+        })
+        rootContainer.addView(line, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(8)) })
+        rootContainer.addView(textAction("查看對話風險分數") { navigateTo("scores") })
+    }
+    private fun showScoresOnPage(t: ThemeColors) {
+        showSheet(ScoresUi.PARENT_ON_TITLE) { dialog ->
+            for (point in ScoresUi.PARENT_ON_POINTS) addView(label(point, 14f, t.textSecondary, bottomPad = 12))
+            addView(actionButton("確認並開啟 / Confirm and turn on", t.btnPrimaryBg, t.btnPrimaryText) {
+                dialog.dismiss()
+                if (GuardEngine.sendScoresModePolicy(this@MainActivity, true)) {
+                    Toast.makeText(this@MainActivity, "已送出。子女同意後才會開始。", Toast.LENGTH_LONG).show()
+                } else Toast.makeText(this@MainActivity, ScoresUi.SEND_FAILED, Toast.LENGTH_LONG).show()
+                renderUi()
+            }.apply { tag = "scores_on_confirm" })
+            addView(actionButton("取消 / Cancel", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() }.apply { tag = "scores_on_cancel" })
+        }
+    }
+    private fun confirmScoresOff() {
+        alert().setTitle(ScoresUi.PARENT_OFF_TITLE).setMessage(ScoresUi.PARENT_OFF_BODY).setNegativeButton("取消 / Cancel", null)
+            .setPositiveButton("確認關閉 / Turn off") { _, _ ->
+                if (!GuardEngine.sendScoresModePolicy(this, false)) Toast.makeText(this, ScoresUi.SEND_FAILED, Toast.LENGTH_LONG).show()
+                renderUi()
+            }.show()
+    }
+
     private fun renderChildUnlock(t: ThemeColors) {
         heading("需要一點，自己的時間。", "輸入家長提供的 6 位臨時碼，可解鎖 15 分鐘。家長主密碼可解鎖 3 分鐘。", t)
         val input = inputBox(t, "臨時解鎖碼 或 家長主密碼", "", true); rootContainer.addView(input)
