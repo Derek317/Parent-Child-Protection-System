@@ -25,7 +25,7 @@ import java.util.zip.ZipInputStream
  * The file is hostile input. It is read as a stream, never written to disk, never rendered or executed, and bounded by [ExportLimits].
  * Message text and names are never logged. Any failure stores nothing from the file.
  */
-internal enum class ImportResult { OK, NOTHING_FOUND, NOT_ALLOWED, TOO_LARGE, TOO_MANY_ENTRIES, UNSAFE_ENTRY, MALFORMED, TEEN_UNKNOWN, IO_ERROR }
+internal enum class ImportResult { OK, NOTHING_FOUND, NOT_ALLOWED, TOO_LARGE, TOO_MANY_ENTRIES, UNSAFE_ENTRY, MALFORMED, TEEN_UNKNOWN, TIME_UNREADABLE, IO_ERROR }
 
 /** What an import did. [messages] counts rows newly stored (a repeat import stores none); [groups] counts conversations skipped as groups. */
 internal data class ImportSummary(val result: ImportResult, val conversations: Int = 0, val groups: Int = 0, val messages: Int = 0)
@@ -198,7 +198,7 @@ internal object InstagramExport {
     private const val H2 = "<h2 class=\"_3-95 _2pim _a6-h _a6-i\">"
     private const val BODY = "<div class=\"_3-95 _a6-p\">"
     private const val TIME = "<div class=\"_3-94 _a6-o\">"
-    private val TIMES = listOf("MMM dd, yyyy, h:mm a", "MMM d, yyyy, h:mm a", "MMM d, yyyy 'at' h:mm a", "MMM dd, yyyy 'at' h:mm a", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm")
+    private val TIMES = listOf("MMM dd, yyyy, h:mm a", "MMM d, yyyy, h:mm a", "MMM dd, yyyy h:mm a", "MMM d, yyyy h:mm a", "MMM d, yyyy 'at' h:mm a", "MMM dd, yyyy 'at' h:mm a", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm")
     private val TAG = Regex("<[^>]*>")
     private val BR = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
 
@@ -358,7 +358,7 @@ internal object InstagramImport {
         if (parsed.result != ImportResult.OK) return ImportSummary(parsed.result)
         // A time that cannot be read cannot be held to the 14-day limit: such messages are dropped, and a file with nothing but those is not a good export.
         val all = parsed.conversations.flatMap { it.messages }
-        if (all.isNotEmpty() && all.all { it.ts == null }) return ImportSummary(ImportResult.MALFORMED)
+        if (all.isNotEmpty() && all.all { it.ts == null }) return ImportSummary(ImportResult.TIME_UNREADABLE)
         return try {
             val scope = GuardEngine.getChannelTopic(app)
             val cutoff = now - RiskLimits.DAYS * 86_400_000L

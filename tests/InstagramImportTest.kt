@@ -223,7 +223,7 @@ class InstagramImportTest {
     @Test fun messagesWithoutAReadableTimeAreNeverStoredAndAnAllUndatedFileIsNotReportedAsOk() {
         activate(ScoresMethod.UPLOAD); GuardEngine.setChildSelfHandle(ctx, teen)
         val undated = "<html><body>" + chat.joinToString("") { block(it.sender, it.text, "yesterday-ish") } + "</body></html>"
-        assertEquals(ImportResult.MALFORMED, import(undated.toByteArray(), "message_1.html").result); assertEquals(0, count("risk_store"))
+        assertEquals(ImportResult.TIME_UNREADABLE, import(undated.toByteArray(), "message_1.html").result); assertEquals(0, count("risk_store"))
         // Mixed: only the message with a time that reads is kept (and it is dated by that time, not by the import).
         val mixed = "<html><body>" + block(friend, "see you tomorrow", time(System.currentTimeMillis() - hour)) + block(teen, "ancient undated words", "someday") + "</body></html>"
         val r = import(mixed.toByteArray(), "message_1.html")
