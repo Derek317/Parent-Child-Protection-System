@@ -295,8 +295,10 @@ internal object InstagramExport {
             val ordered = if (reversed.all { it.ts != null }) reversed.sortedBy { it.ts } else reversed   // sortedBy is stable
             Conversation(people, listed.map(::key), sorted.any { it.json }, ordered)
         }
-        // The teen is the one participant every conversation has in common.
-        val common = if (conversations.size < 2) emptySet() else conversations.map<Conversation, Set<String>> { it.people.keys }.reduce { a, b -> a intersect b }
+        // The teen is the one participant every conversation has in common. A thread with one person (the teen never answered) must not empty that,
+        // so the two-person threads are tried first; only if they settle nothing do all threads count, as before (a lone thread may be the teen's own).
+        fun commonOf(list: List<Conversation>): Set<String> = if (list.size < 2) emptySet() else list.map<Conversation, Set<String>> { it.people.keys }.reduce { a, b -> a intersect b }
+        val common = commonOf(conversations.filter { it.people.size >= 2 }).ifEmpty { commonOf(conversations) }
         val global = common.singleOrNull()
         val child = childName?.let(::key)?.takeIf { it.isNotEmpty() }
         val groupKeys = ArrayList<String>()
@@ -305,7 +307,7 @@ internal object InstagramExport {
             if (c.people.size != 2) { groupKeys.add("group:" + c.people.keys.sorted().joinToString("|")); continue }
             val teen = when {
                 global != null && global in c.people -> global
-                child != null -> child.takeIf { it in c.people } ?: throw Failure(ImportResult.TEEN_UNKNOWN)
+                child != null && child in c.people -> child   // a stored handle may differ from the export's display name: then the JSON list below decides
                 c.json && c.listed.size == 2 && c.listed.all { it in c.people } -> c.listed[1]   // the first-listed participant is the other person
                 else -> throw Failure(ImportResult.TEEN_UNKNOWN)
             }

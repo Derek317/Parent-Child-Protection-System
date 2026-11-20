@@ -160,8 +160,9 @@ class InstagramExportTest {
         assertEquals(true, parse(htmlOf(chat), "message_1.html", child = "@ALEX TEEN").conversations.single().messages.first().outgoing)
         assertEquals(friend, parse(htmlOf(chat), "message_1.html", child = " alex teen ").conversations.single().label)
         assertEquals("the stored name decides who is who", teen, parse(htmlOf(chat), "message_1.html", child = friend).conversations.single().label)
-        // A stored name that names nobody in the file is not a guess to fall back from.
-        assertEquals(ImportResult.TEEN_UNKNOWN, parse(jsonOf(chat), "message_1.json", child = "someone.else").result)
+        // A stored name that names nobody in the file (a handle is not the display name) is no guess: HTML has nothing else to go on, JSON falls back to its participant list.
+        assertEquals(ImportResult.TEEN_UNKNOWN, parse(htmlOf(chat), "message_1.html", child = "someone.else").result)
+        assertEquals(friend, parse(jsonOf(chat), "message_1.json", child = "someone.else").conversations.single().label)
         // JSON with no stored name: the first-listed participant is the other person.
         assertEquals(friend, parse(jsonOf(chat, listOf(friend, teen)), "message_1.json").conversations.single().label)
         assertEquals(teen, parse(jsonOf(chat, listOf(teen, friend)), "message_1.json").conversations.single().label)
