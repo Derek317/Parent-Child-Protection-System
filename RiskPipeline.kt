@@ -334,7 +334,10 @@ internal object RiskLocal {
         else if (active(ctx)) RiskCapture.ACTIVE else RiskCapture.CONTENT_FREE
 
     /** The child agreed to manual upload and the mode is on: the notification listener and the screen service read nothing. */
-    fun uploadOnly(ctx: Context): Boolean = captureHeld(ctx) || (contentFree(ctx) && readsNothing(ctx))
+    fun uploadOnly(ctx: Context): Boolean = captureHeld(ctx) || uploadMethodOn(ctx)
+
+    /** The policy is on and reads nothing from Instagram (agreed upload, or an unreadable receipt). Only then is Notification access off no tampering; a mere hold is not. */
+    fun uploadMethodOn(ctx: Context): Boolean = contentFree(ctx) && readsNothing(ctx)
 
     /** Capture is held off (behaves as the upload method) until the child agrees on the card; survives restarts, cleared by [resetFamily] and by a normal consent in [accept]. */
     fun captureHeld(ctx: Context): Boolean = prefs(ctx).getBoolean(CAPTURE_HELD, false)

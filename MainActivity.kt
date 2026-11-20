@@ -390,9 +390,9 @@ object GuardEngine {
         val notifOn = isNotificationListenerEnabledStatic(ctx)
         val accOn = isAccessibilityEnabledStatic(ctx)
 
-        val statusSummary = "裝置 ${Build.MODEL} IG Guard 運作中 (通知讀取: ${if (notifOn) "ON ✅" else "OFF ❌"} | 畫面保護: ${if (accOn) "ON ✅" else "選用"}) • 下次隨機回報約 ${nextMins} 分鐘後"
-        // Under manual upload the teen may switch notification access off, which is then no tampering.
-        val reason = if (notifOn || RiskLocal.uploadOnly(ctx)) "heartbeat_ok" else "tamper_attempt"
+        val statusSummary = "裝置 ${Build.MODEL} IG Guard 運作中 (通知讀取: ${if (notifOn) "ON ✅" else "OFF ❌"} | 畫面保護: ${if (accOn) "ON ✅" else "選用"}) • 下次隨機回報約 ${nextMins} 分鐘後" + if (RiskLocal.captureHeld(ctx)) CAPTURE_HELD_MARK else ""
+        // Under manual upload the teen may switch notification access off, which is then no tampering. A held capture is not that: access is expected to stay on.
+        val reason = if (notifOn || RiskLocal.uploadMethodOn(ctx)) "heartbeat_ok" else "tamper_attempt"
 
         sendAlertFromChild(
             ctx,
@@ -414,10 +414,16 @@ object GuardEngine {
             .putBoolean("parent_hb_missing_alerted", false).apply()
     }
 
+    /** Ends the child's heartbeat summary while its capture is held (content-free). An older parent just shows it as text. */
+    const val CAPTURE_HELD_MARK = " | 擷取已暫停 (capture held)"
+
     fun getLastChildHeartbeatInfo(ctx: Context): String {
         val txt = prefs(ctx).getString("parent_last_child_hb_text", null)
-        return txt ?: "等待子女手機首次回報 (每 30–95 分鐘隨機發送一次心跳)"
+        return txt?.removeSuffix(CAPTURE_HELD_MARK) ?: "等待子女手機首次回報 (每 30–95 分鐘隨機發送一次心跳)"
     }
+
+    /** The child's latest report carried the exact marker at its end; anywhere else it counts for nothing. */
+    fun isChildCaptureHeld(ctx: Context): Boolean = prefs(ctx).getString("parent_last_child_hb_text", null)?.endsWith(CAPTURE_HELD_MARK) == true
 
     fun hasChildHeartbeat(ctx: Context): Boolean = prefs(ctx).getLong("parent_last_child_hb_ms", 0L) > 0L
 
@@ -3454,6 +3460,7 @@ class MainActivity : Activity() {
         val handle = GuardEngine.getChildSelfHandle(this)
         card.addView(label(if (handle.isEmpty()) "子女手機" else "@$handle", 16f, t.textPrimary, true, bottomPad = 8))
         card.addView(label(if (connected) GuardEngine.getLastChildHeartbeatInfo(this) else "等待子女手機回報", 13f, t.textSecondary))
+        if (connected && GuardEngine.isChildCaptureHeld(this)) card.addView(label(ScoresUi.PARENT_CAPTURE_HELD, 13f, t.textPrimary, true, topPad = 6))
         if (!connected) card.addView(textAction("邀請子女配對") { showPairingInvite(t) })
         rootContainer.addView(card)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
@@ -4483,7 +4490,7 @@ class MainActivity : Activity() {
         draw()
     }
     private fun confirmScoresOff() {
-        alert().setTitle(ScoresUi.PARENT_OFF_TITLE).setMessage(ScoresUi.PARENT_OFF_BODY).setNegativeButton("取消 / Cancel", null)
+        alert().setTitle(ScoresUi.PARENT_OFF_TITLE).setMessage(ScoresUi.parentOffBody(GuardEngine.scoresModePolicy(this)?.method ?: ScoresMethod.CAPTURE)).setNegativeButton("取消 / Cancel", null)
             .setPositiveButton("確認關閉 / Turn off") { _, _ ->
                 requireFreshParentAuth {
                     if (!ScoresEngineBridge.sendPolicy(this, false, GuardEngine.scoresModePolicy(this)?.method ?: ScoresMethod.CAPTURE)) Toast.makeText(this, ScoresUi.OFF_FAILED, Toast.LENGTH_LONG).show()

@@ -256,7 +256,11 @@ internal object ScoresUi {
     )
     const val PARENT_OFF_TITLE = "關閉「僅分數模式」？ / Turn off scores-only mode?"
     const val PARENT_OFF_BODY = "關閉後，子女手機會停止分析並刪除為分析儲存的訊息，原有的運作方式再次適用：新訊息會再傳到你的手機。已收到的分數仍保留。子女會看到這個改變。\nThe child's phone stops analysing and deletes the messages stored for it. The earlier mode applies again, so new messages reach your phone. Scores already received stay. Your child is told."
-    const val SEND_FAILED = "未能開啟。子女手機需要先回報模型有效，也請確認這部手機的儲存空間正常，然後重試。"
+    /** The child's phone agreed to upload, so after a switch-off capture stays off until the child allows it: the earlier mode does not simply apply again. */
+    private const val PARENT_OFF_BODY_UPLOAD = "關閉後，子女手機會停止分析並刪除為分析儲存的訊息。因為子女之前選擇了手動上載，擷取會保持關閉，直到子女在自己的手機上再次允許；在此之前你不會收到新訊息。已收到的分數仍保留。子女會看到這個改變。\nThe child's phone stops analysing and deletes the messages stored for it. Because your child had chosen manual upload, capture will stay off until your child allows it again on their phone, so no new messages reach you until then. Scores already received stay. Your child is told."
+    fun parentOffBody(method: String) = if (method == ScoresMethod.UPLOAD) PARENT_OFF_BODY_UPLOAD else PARENT_OFF_BODY
+    const val PARENT_CAPTURE_HELD = "子女手機的擷取已暫停，要等子女再次允許。\nCapture is paused until your child allows it again."
+    const val SEND_FAILED ="未能開啟。子女手機需要先回報模型有效，也請確認這部手機的儲存空間正常，然後重試。"
     const val OFF_FAILED = "未能關閉僅分數模式，設定沒有改變。請稍後重試。"
     const val RESEND_FAILED = "未能再次送出設定，請稍後重試。"
     const val RESEND = "再次送出設定"
