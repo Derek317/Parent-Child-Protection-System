@@ -34,14 +34,14 @@ test('valid parent retirement also revokes an empty room before its first regist
   } finally { await mf.dispose(); }
 });
 
-test('relay ciphertext has a 72-hour nonrenewing deadline', async () => {
+test('relay ciphertext has a seven-day nonrenewing deadline', async () => {
   const mf = runtime();
   try {
     const f = family(), p = await connection(mf, f); p.close();
     const c = await connection(mf, f, 'child'), now = Date.now();
     await publish(c, 'ttl:0');
     const first = (await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires;
-    assert.ok(first >= now + 3 * day && first <= Date.now() + 3 * day);
+    assert.ok(first >= now + 7 * day && first <= Date.now() + 7 * day);
     await publish(c, 'ttl:0');
     assert.equal((await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires, first);
     c.close();
@@ -112,7 +112,7 @@ test('forwarded and consumed packets retain their original deadline on later res
   } finally { await mf.dispose(); }
 });
 
-test('legacy registration gets an idle grace period while seven-day packets keep their first enqueue time', async () => {
+test('legacy registration gets an idle grace period while existing packets keep their own deadline', async () => {
   const mf = runtime();
   try {
     const f = family(), p = await connection(mf, f); p.close();
@@ -123,31 +123,16 @@ test('legacy registration gets an idle grace period while seven-day packets keep
     const originalDeadline = Date.now() + 6 * day;
     await sql(mf, f.room, 'UPDATE parent_inbox SET expires=?', originalDeadline);
     const parent = await connection(mf, f); await parent.next(m => m.type === 'ready');
-    assert.equal((await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires, originalDeadline - 4 * day);
+    assert.equal((await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires, originalDeadline);
     assert.ok((await owner(mf, f)).last_active >= Date.now() - 5000);
     parent.close();
     const again = await connection(mf, f);
-    assert.equal((await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires, originalDeadline - 4 * day);
+    assert.equal((await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires, originalDeadline);
     again.close();
   } finally { await mf.dispose(); }
 });
 
-test('legacy packets already older than 72 hours are purged and cannot be resubmitted', async () => {
-  const mf = runtime();
-  try {
-    const f = family(), p = await connection(mf, f); p.close();
-    const c = await connection(mf, f, 'child'); await publish(c, 'legacy-expired'); c.close();
-    await sql(mf, f.room, 'DELETE FROM packet_lifetimes');
-    await sql(mf, f.room, 'UPDATE parent_inbox SET expires=?', Date.now() + 3 * day);
-    const parent = await connection(mf, f); await parent.next(m => m.type === 'ready');
-    assert.equal((await sql(mf, f.room, 'SELECT COUNT(*) AS n FROM parent_inbox'))[0].n, 0);
-    const child = await connection(mf, f, 'child');
-    assert.equal((await publish(child, 'legacy-expired')).code, 'expired');
-    parent.close(); child.close();
-  } finally { await mf.dispose(); }
-});
-
-test('legacy deadline conversion rolls back when lifetime storage fails', async () => {
+test('legacy lifetime backfill leaves packets untouched when lifetime storage fails', async () => {
   const mf = runtime();
   try {
     const f = family(), p = await connection(mf, f); p.close();
@@ -160,7 +145,7 @@ test('legacy deadline conversion rolls back when lifetime storage fails', async 
     assert.equal((await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires, original);
     await sql(mf, f.room, 'DROP TRIGGER refuse_lifetime');
     const parent = await connection(mf, f); await parent.next(m => m.type === 'ready');
-    assert.equal((await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires, original - 4 * day);
+    assert.equal((await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires, original);
     parent.close();
   } finally { await mf.dispose(); }
 });

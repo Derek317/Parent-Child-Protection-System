@@ -1,7 +1,7 @@
 import { parseAuthorization, verifyParentAuthorization, capabilityHash, sameHash, digest } from './protocol.js';
 import { DurableObject } from 'cloudflare:workers';
 
-const TTL = 3 * 24 * 60 * 60 * 1000;
+const TTL = 7 * 24 * 60 * 60 * 1000;
 const REGISTRATION_TTL = 90 * 24 * 60 * 60 * 1000;
 const MAX_QUEUE = 512;
 const WINDOW = 8;
@@ -320,10 +320,9 @@ export class FamilyRoom extends DurableObject {
     if (!this.hasSchema()) return;
     this.cleanupRegistration();
     this.ctx.storage.transactionSync(() => {
-      // Backfill existing queues from their original deadline; never renew on first reconnect.
+      // Backfill existing queues with their own deadline; never renew on first reconnect.
       for (const inbox of ['parent_inbox','child_inbox']) {
-        // A missing lifetime identifies a legacy seven-day packet: retain its enqueue time.
-        this.sql.exec(`UPDATE ${inbox} SET expires=expires-? WHERE NOT EXISTS (SELECT 1 FROM packet_lifetimes WHERE id=substr(${inbox}.id,1,1)||substr(${inbox}.id,3))`, 4 * 24 * 60 * 60 * 1000);
+        // A packet stored before lifetimes existed keeps the deadline it was given.
         this.sql.exec(`INSERT OR IGNORE INTO packet_lifetimes(id,digest,kind,expires) SELECT substr(id,1,1)||substr(id,3),digest,kind,expires FROM ${inbox}`);
       }
       for (const inbox of ['parent_inbox','child_inbox']) this.sql.exec(`DELETE FROM ${inbox} WHERE expires<=?`, Date.now());
