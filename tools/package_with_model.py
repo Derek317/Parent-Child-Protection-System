@@ -37,7 +37,8 @@ CHUNK = 1 << 20
 ASSET_DIR = "assets/risk"
 # Old v1 signature files. v2/v3 signatures live in the APK Signing Block, which is not a zip entry and is rebuilt by apksigner.
 SIGNATURE_ENTRY = re.compile(r"^META-INF/[^/]+\.(SF|RSA|DSA|EC)$|^META-INF/MANIFEST\.MF$", re.IGNORECASE)
-CERT_LINE = re.compile(r"^Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$", re.MULTILINE)
+# Newer apksigner versions may name the signer by its SDK range: "Signer (minSdkVersion=24, maxSdkVersion=32) certificate ...".
+CERT_LINE = re.compile(r"^Signer (?:#1|\([^)]*\)) certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$", re.MULTILINE)
 DEFAULT_KS_PASS_ENV = "IG_GUARD_KEYSTORE_PASSWORD"
 DEFAULT_KEY_PASS_ENV = "IG_GUARD_KEY_PASSWORD"
 # The child names the secrets are passed under to the signing tool; the command line only ever holds "env:<name>".
@@ -358,7 +359,7 @@ def verify_signed(tools: Tools, apk: Path, runner: Runner) -> tuple[str, str]:
         raise _fail("apksigner verify", r)
     digest = parse_cert_digest(r.stdout)
     if not digest:
-        raise PackagingError("apksigner verified the APK but printed no certificate digest.")
+        raise PackagingError("apksigner verified the APK but printed no certificate digest. It printed:\n" + ((r.stdout or "") + (r.stderr or ""))[:800])
     for scheme in ("v2", "v3"):
         if not re.search(rf"Verified using {scheme} scheme[^\n]*: true", r.stdout):
             raise PackagingError(f"The signed APK is not verified with the {scheme} scheme.")
