@@ -148,7 +148,7 @@ internal object InstagramExport {
         val text = try {
             Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
         } catch (_: CharacterCodingException) { throw Failure(ImportResult.MALFORMED) }
-        val body = text.removePrefix("﻿").trimStart()
+        val body = text.removePrefix("\uFEFF").trimStart()
         return when {
             body.startsWith("{") -> parseJson(body, number, limits)
             body.startsWith("<") -> parseHtml(body, number, limits)
