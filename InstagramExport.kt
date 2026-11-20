@@ -354,6 +354,9 @@ internal object InstagramImport {
         if (!allowed(app)) return ImportSummary(ImportResult.NOT_ALLOWED)
         val parsed = InstagramExport.parse(input, fileName, GuardEngine.getChildSelfHandle(app).ifBlank { null }, limits)
         if (parsed.result != ImportResult.OK) return ImportSummary(parsed.result)
+        // A time that cannot be read cannot be held to the 14-day limit: such messages are dropped, and a file with nothing but those is not a good export.
+        val all = parsed.conversations.flatMap { it.messages }
+        if (all.isNotEmpty() && all.all { it.ts == null }) return ImportSummary(ImportResult.MALFORMED)
         return try {
             val scope = GuardEngine.getChannelTopic(app)
             val cutoff = now - RiskLimits.DAYS * 86_400_000L
@@ -366,7 +369,7 @@ internal object InstagramImport {
                 sql.beginTransaction()
                 try {
                     for (c in parsed.conversations) {
-                        val recent = c.messages.filter { it.ts == null || it.ts >= cutoff }.takeLast(RiskLimits.MESSAGES)
+                        val recent = c.messages.filter { it.ts != null && it.ts >= cutoff }.takeLast(RiskLimits.MESSAGES)
                         if (recent.isEmpty()) continue
                         conversations++
                         val seen = HashMap<String, Int>()
@@ -375,7 +378,7 @@ internal object InstagramImport {
                             val basis = "${c.key}|${m.timeKey}|$direction|${m.text}"
                             val occurrence = seen.merge(basis, 1, Int::plus)!!
                             val id = "import:" + MessageDigest.getInstance("SHA-256").digest("$basis|$occurrence".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }.take(40)
-                            val stamp = minOf(m.ts ?: now, now)
+                            val stamp = minOf(m.ts!!, now)   // undated messages were dropped above
                             if (db.storeRiskMessage(scope, id, c.key, c.label, direction, m.text, stamp, stamp, i.toLong(), now)) stored++
                         }
                     }

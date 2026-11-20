@@ -218,6 +218,18 @@ class InstagramImportTest {
         assertTrue(RiskLocal.withdraw(ctx)); assertEquals(ImportResult.NOT_ALLOWED, import(bytes).result); assertEquals(0, count("risk_store"))
         assertEquals(0, count("risk_store"))
     }
+    private fun block(sender: String, text: String, time: String) =
+        "<div class=\"pam\"><h2 class=\"_3-95 _2pim _a6-h _a6-i\">$sender</h2><div class=\"_3-95 _a6-p\"><div><div></div><div>$text</div><div></div></div></div><div class=\"_3-94 _a6-o\">$time</div></div>"
+    @Test fun messagesWithoutAReadableTimeAreNeverStoredAndAnAllUndatedFileIsNotReportedAsOk() {
+        activate(ScoresMethod.UPLOAD); GuardEngine.setChildSelfHandle(ctx, teen)
+        val undated = "<html><body>" + chat.joinToString("") { block(it.sender, it.text, "yesterday-ish") } + "</body></html>"
+        assertEquals(ImportResult.MALFORMED, import(undated.toByteArray(), "message_1.html").result); assertEquals(0, count("risk_store"))
+        // Mixed: only the message with a time that reads is kept (and it is dated by that time, not by the import).
+        val mixed = "<html><body>" + block(friend, "see you tomorrow", time(System.currentTimeMillis() - hour)) + block(teen, "ancient undated words", "someday") + "</body></html>"
+        val r = import(mixed.toByteArray(), "message_1.html")
+        assertEquals(ImportResult.OK, r.result); assertEquals(1, r.messages); assertEquals(1, count("risk_store"))
+        assertTrue(stored().single().endsWith("see you tomorrow"))
+    }
     @Test fun anImportThatLosesPermissionWhileParsingStoresNothing() {
         val bytes = json(chat).toByteArray()
         val changes = listOf<Pair<String, () -> Unit>>("withdrawn" to { assertTrue(RiskLocal.withdraw(ctx)) }, "paused" to { assertTrue(RiskLocal.pause(ctx)) },
