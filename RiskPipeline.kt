@@ -384,18 +384,26 @@ internal object RiskLocal {
      */
     fun wipeData(ctx: Context) {
         prefs(ctx).edit().putBoolean(WIPE_PENDING, true).commit()
-        try {
-            RiskReporter.purgeQueued(ctx, GuardEngine.getChannelTopic(ctx))
-            wipeStore(ctx)
-        } catch (e: Exception) { Log.w("IGGuard", "Scoring store wipe failed: ${e.javaClass.simpleName}") }
+        // The chat text goes first and must not wait on anything else: a queued score report holds no message text,
+        // so failing to delete one must never leave the messages behind.
+        wipeStore(ctx)
+        retrying("report") { RiskReporter.purgeQueued(ctx, GuardEngine.getChannelTopic(ctx)) }
+    }
+
+    /** Another thread can hold the database for a moment: wait briefly on a lock before leaving it to the daily retry. */
+    private fun retrying(what: String, step: () -> Unit) {
+        for (attempt in 1..8) {
+            try { step(); return }
+            catch (e: android.database.sqlite.SQLiteDatabaseLockedException) {
+                if (attempt == 8) Log.w("IGGuard", "Scoring $what wipe failed: database stayed locked") else Thread.sleep(40L * attempt)
+            } catch (e: Exception) { Log.w("IGGuard", "Scoring $what wipe failed: ${e.javaClass.simpleName}"); return }
+        }
     }
 
     /** Store and results only: queued reports (such as the "model is valid" state) are left alone. */
-    private fun wipeStore(ctx: Context) {
-        try {
-            FamilyEvidence(ctx).use { it.wipeRisk() }
-            prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(WIPE_PENDING).commit()
-        } catch (e: Exception) { Log.w("IGGuard", "Scoring store wipe failed: ${e.javaClass.simpleName}") }
+    private fun wipeStore(ctx: Context) = retrying("store") {
+        FamilyEvidence(ctx).use { it.wipeRisk() }
+        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(WIPE_PENDING).commit()
     }
 
     /** Leaving the child role, a new family, or a remote reset: data plus all mode state and the consent receipt. */

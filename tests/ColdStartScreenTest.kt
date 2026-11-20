@@ -24,8 +24,10 @@ class ColdStartScreenTest {
         shadowOf(ctx.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).setIsDeviceSecure(true)
     }
     private fun coldSection():String {
-        val a=Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        return MainActivity::class.java.getDeclaredField("section").apply{isAccessible=true}.get(a) as String
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
+        // A resumed activity keeps a repeating UI timer and its relay session: leaving it alive disturbs whichever test runs next.
+        try { return MainActivity::class.java.getDeclaredField("section").apply{isAccessible=true}.get(c.get()) as String }
+        finally { c.pause().stop().destroy() }
     }
     @Test fun configuredParentColdStartOpensOnOverview(){GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!");assertEquals("overview",coldSection())}
     @Test fun configuredChildColdStartDoesNotOpenOnRolePage(){GuardEngine.setRole(ctx,"child");assertEquals("overview",coldSection())}
