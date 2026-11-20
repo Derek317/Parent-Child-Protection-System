@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "tensor": "head.scorer.3.weight",
+  "fit_file": "weight-fit.jsonl",
+  "selection_file": "weight-selection.jsonl",
+  "binary_threshold": 0.5,
+  "overall_min_recall": 0.8,
+  "overall_max_false_positive_rate": 0.2,
+  "language_min_recall": 0.7,
+  "language_max_false_positive_rate": 0.3,
+  "margin_target": 2.0,
+  "ridge_fractions": [0.003, 0.03, 0.3, 3.0],
+  "contrast_weights": [0.0, 1.0],
+  "edit_scales": [0.5, 1.0, 1.5],
+  "threads": 4,
+  "batch_size": 6
+}

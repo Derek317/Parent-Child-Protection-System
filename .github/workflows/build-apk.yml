@@ -137,7 +137,7 @@ jobs:
 
       - name: Install Android SDK 34
         run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
@@ -156,6 +156,26 @@ jobs:
           mkdir -p app/src/main/assets
           cp docs/ig-guard-terms-of-service.md app/src/main/assets/ig-guard-terms-of-service.md
           python3 scripts/relay-config.py --output app/relay-config.json
+
+          # Native scoring library (llama.cpp b12503 via native/risk). IG_GUARD_SKIP_NATIVE=1 leaves it out
+          # of the generated project (tests/run_android.sh does this for unit tests, which never load it).
+          if [ "${IG_GUARD_SKIP_NATIVE:-0}" != 1 ]; then
+            LLAMA_PIN=4577932fab595eaa8b27ad71734d5de1f3c07d8c
+            LLAMA_DIR="${IG_GUARD_LLAMA_DIR:-${RUNNER_TEMP:-$(dirname "$PWD")}/llama.cpp-b12503}"
+            if [ ! -d "$LLAMA_DIR/.git" ]; then
+              mkdir -p "$LLAMA_DIR"
+              git -C "$LLAMA_DIR" init -q
+              git -C "$LLAMA_DIR" remote add origin https://github.com/ggml-org/llama.cpp.git
+              git -C "$LLAMA_DIR" fetch -q --depth 1 origin "$LLAMA_PIN"
+              git -C "$LLAMA_DIR" checkout -q FETCH_HEAD
+            fi
+            if [ "$(git -C "$LLAMA_DIR" rev-parse HEAD)" != "$LLAMA_PIN" ]; then
+              echo "ERROR: llama.cpp at $LLAMA_DIR is not commit $LLAMA_PIN (tag b12503)." >&2
+              exit 1
+            fi
+            mkdir -p app/src/main/cpp/risk
+            cp native/risk/CMakeLists.txt native/risk/risk_core.h native/risk/risk_core.cpp native/risk/risk_jni.cpp native/risk/host_check.cpp app/src/main/cpp/risk/
+          fi
 
           if [ -f MainActivity.kt ] && grep -q "object GuardEngine" MainActivity.kt; then
             sed "s/^package .*/package app.family.igguard/" MainActivity.kt > app/src/main/java/app/family/igguard/MainActivity.kt
@@ -255,6 +275,23 @@ jobs:
           dependencies { implementation 'com.squareup.okhttp3:okhttp:4.12.0' }
           EOF
 
+          if [ "${IG_GUARD_SKIP_NATIVE:-0}" != 1 ]; then
+            cat >> app/build.gradle <<EOF
+          android {
+              ndkVersion '27.2.12479018'
+              defaultConfig {
+                  ndk { abiFilters 'arm64-v8a' }
+                  externalNativeBuild {
+                      cmake { arguments '-DLLAMA_CPP_DIR=$LLAMA_DIR', '-DANDROID_STL=c++_static' }
+                  }
+              }
+              externalNativeBuild {
+                  cmake { path 'src/main/cpp/risk/CMakeLists.txt'; version '3.22.1' }
+              }
+          }
+          EOF
+          fi
+
           cat > app/src/main/res/values/strings.xml <<'EOF'
           <resources>
               <string name="app_name">IG Guard</string>
@@ -310,6 +347,10 @@ jobs:
                   </activity>
 
                   <service android:name=".ArchiveMaintenanceJob"
+                      android:permission="android.permission.BIND_JOB_SERVICE"
+                      android:exported="false" />
+
+                  <service android:name=".RiskScoringJob"
                       android:permission="android.permission.BIND_JOB_SERVICE"
                       android:exported="false" />
 

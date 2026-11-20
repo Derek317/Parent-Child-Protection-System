@@ -1,0 +1,405 @@
+{
+  "meta": {
+    "name": "d1-3b-q4",
+    "kind": "d1",
+    "set": "blind90",
+    "model": "research/models/d1-3B-Q4_K_M.gguf"
+  },
+  "groups": {
+    "all": {
+      "risk": {
+        "k": 2,
+        "n": 36,
+        "rate": 0.05555555555555555,
+        "range": [
+          0.0,
+          0.1388888888888889
+        ]
+      },
+      "benign": {
+        "k": 1,
+        "n": 36,
+        "rate": 0.027777777777777776,
+        "range": [
+          0.0,
+          0.08333333333333333
+        ]
+      },
+      "potential": {
+        "k": 0,
+        "n": 0,
+        "rate": null,
+        "range": null
+      },
+      "unresolved": {
+        "k": 1,
+        "n": 18,
+        "rate": 0.05555555555555555,
+        "range": [
+          0.0,
+          0.18518518518518517
+        ]
+      },
+      "auroc": 0.5941358024691358,
+      "auroc_range": [
+        0.5547748960695389,
+        0.6666666666666666
+      ]
+    },
+    "en": {
+      "risk": {
+        "k": 2,
+        "n": 12,
+        "rate": 0.16666666666666666,
+        "range": [
+          0.0,
+          0.4166666666666667
+        ]
+      },
+      "benign": {
+        "k": 1,
+        "n": 12,
+        "rate": 0.08333333333333333,
+        "range": [
+          0.0,
+          0.25
+        ]
+      },
+      "potential": {
+        "k": 0,
+        "n": 0,
+        "rate": null,
+        "range": null
+      },
+      "unresolved": {
+        "k": 1,
+        "n": 6,
+        "rate": 0.16666666666666666,
+        "range": [
+          0.0,
+          0.5555555555555556
+        ]
+      },
+      "auroc": 0.5972222222222222,
+      "auroc_range": [
+        0.5416666666666666,
+        0.7220279720279725
+      ]
+    },
+    "zh-Hant-yue": {
+      "risk": {
+        "k": 0,
+        "n": 12,
+        "rate": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "benign": {
+        "k": 0,
+        "n": 12,
+        "rate": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "potential": {
+        "k": 0,
+        "n": 0,
+        "rate": null,
+        "range": null
+      },
+      "unresolved": {
+        "k": 0,
+        "n": 6,
+        "rate": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "auroc": 0.6458333333333334,
+      "auroc_range": [
+        0.5763282790927021,
+        0.78
+      ]
+    },
+    "mixed": {
+      "risk": {
+        "k": 0,
+        "n": 12,
+        "rate": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "benign": {
+        "k": 0,
+        "n": 12,
+        "rate": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "potential": {
+        "k": 0,
+        "n": 0,
+        "rate": null,
+        "range": null
+      },
+      "unresolved": {
+        "k": 0,
+        "n": 6,
+        "rate": 0.0,
+        "range": [
+          0.0,
+          0.0
+        ]
+      },
+      "auroc": 0.5902777777777778,
+      "auroc_range": [
+        0.49382716049382713,
+        0.7159781576448243
+      ]
+    }
+  },
+  "pass_mark": {
+    "pass": false,
+    "failed": [
+      "all risk 0.056 (needs >= 0.8)",
+      "en risk 0.167 (needs >= 0.7)",
+      "zh-Hant-yue risk 0.000 (needs >= 0.7)",
+      "mixed risk 0.000 (needs >= 0.7)"
+    ]
+  },
+  "info": {
+    "exact_match": {
+      "k": 0,
+      "n": 0,
+      "rate": null
+    },
+    "unresolved_answered_U": {
+      "k": 0,
+      "n": 0,
+      "rate": null
+    }
+  },
+  "bootstrap": {
+    "replicates": 2000,
+    "seed": 20261119,
+    "unit": "family"
+  },
+  "variants": {
+    "excluding_potential6": {
+      "groups": {
+        "all": {
+          "risk": {
+            "k": 2,
+            "n": 30,
+            "rate": 0.06666666666666667,
+            "range": [
+              0.0,
+              0.16666666666666666
+            ]
+          },
+          "benign": {
+            "k": 1,
+            "n": 36,
+            "rate": 0.027777777777777776,
+            "range": [
+              0.0,
+              0.08333333333333333
+            ]
+          },
+          "potential": {
+            "k": 0,
+            "n": 0,
+            "rate": null,
+            "range": null
+          },
+          "unresolved": {
+            "k": 1,
+            "n": 18,
+            "rate": 0.05555555555555555,
+            "range": [
+              0.0,
+              0.18518518518518517
+            ]
+          },
+          "auroc": 0.5546296296296296,
+          "auroc_range": [
+            0.4749953703703704,
+            0.6397324897324898
+          ]
+        },
+        "en": {
+          "risk": {
+            "k": 2,
+            "n": 10,
+            "rate": 0.2,
+            "range": [
+              0.0,
+              0.5
+            ]
+          },
+          "benign": {
+            "k": 1,
+            "n": 12,
+            "rate": 0.08333333333333333,
+            "range": [
+              0.0,
+              0.25
+            ]
+          },
+          "potential": {
+            "k": 0,
+            "n": 0,
+            "rate": null,
+            "range": null
+          },
+          "unresolved": {
+            "k": 1,
+            "n": 6,
+            "rate": 0.16666666666666666,
+            "range": [
+              0.0,
+              0.5555555555555556
+            ]
+          },
+          "auroc": 0.55,
+          "auroc_range": [
+            0.45454545454545453,
+            0.6853292540792542
+          ]
+        },
+        "zh-Hant-yue": {
+          "risk": {
+            "k": 0,
+            "n": 10,
+            "rate": 0.0,
+            "range": [
+              0.0,
+              0.0
+            ]
+          },
+          "benign": {
+            "k": 0,
+            "n": 12,
+            "rate": 0.0,
+            "range": [
+              0.0,
+              0.0
+            ]
+          },
+          "potential": {
+            "k": 0,
+            "n": 0,
+            "rate": null,
+            "range": null
+          },
+          "unresolved": {
+            "k": 0,
+            "n": 6,
+            "rate": 0.0,
+            "range": [
+              0.0,
+              0.0
+            ]
+          },
+          "auroc": 0.6166666666666667,
+          "auroc_range": [
+            0.5298611111111111,
+            0.7639243197278912
+          ]
+        },
+        "mixed": {
+          "risk": {
+            "k": 0,
+            "n": 10,
+            "rate": 0.0,
+            "range": [
+              0.0,
+              0.0
+            ]
+          },
+          "benign": {
+            "k": 0,
+            "n": 12,
+            "rate": 0.0,
+            "range": [
+              0.0,
+              0.0
+            ]
+          },
+          "potential": {
+            "k": 0,
+            "n": 0,
+            "rate": null,
+            "range": null
+          },
+          "unresolved": {
+            "k": 0,
+            "n": 6,
+            "rate": 0.0,
+            "range": [
+              0.0,
+              0.0
+            ]
+          },
+          "auroc": 0.5333333333333333,
+          "auroc_range": [
+            0.3717857142857143,
+            0.6825595238095239
+          ]
+        }
+      },
+      "pass_mark": {
+        "pass": false,
+        "failed": [
+          "all risk 0.067 (needs >= 0.8)",
+          "en risk 0.200 (needs >= 0.7)",
+          "zh-Hant-yue risk 0.000 (needs >= 0.7)",
+          "mixed risk 0.000 (needs >= 0.7)"
+        ]
+      },
+      "info": {
+        "exact_match": {
+          "k": 0,
+          "n": 0,
+          "rate": null
+        },
+        "unresolved_answered_U": {
+          "k": 0,
+          "n": 0,
+          "rate": null
+        }
+      },
+      "bootstrap": {
+        "replicates": 2000,
+        "seed": 20261119,
+        "unit": "family"
+      }
+    }
+  },
+  "harness_check": {
+    "risk_flagged": 2,
+    "benign_flagged": 1,
+    "expected": {
+      "risk": [
+        30,
+        34
+      ],
+      "benign": [
+        28,
+        32
+      ]
+    },
+    "in_range": false,
+    "abs_diff_vs_handoff_max": 0.8374982247170031,
+    "abs_diff_vs_handoff_mean": 0.565856630654051
+  }
+}

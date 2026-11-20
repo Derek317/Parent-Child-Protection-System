@@ -149,6 +149,19 @@ class PairingGuardTest {
         assertNotEquals("The deleted room's secret must not survive on the child",token,GuardEngine.getOrCreateFamilyToken(ctx))
         assertTrue(GuardEngine.applyPairing(ctx,foreignInvite()))
     }
+    @Test fun aSignedRoomDeletionResetAlsoEmptiesTheScoringStore() {
+        val first=pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx);val scope=GuardEngine.getChannelTopicForToken(token)
+        fun riskRows()=FamilyEvidence(ctx).use{it.readableDatabase.rawQuery("SELECT COUNT(*) FROM risk_store",null).use{c->c.moveToFirst();c.getInt(0)}}
+        fun seed(){
+            val now=System.currentTimeMillis()
+            FamilyEvidence(ctx).use{assertTrue(it.storeRiskMessage(scope,"m1","thread-1","label","incoming","scored text",now,now,1L,now))}
+            assertEquals(1,riskRows())
+        }
+        // purgeChildFamily on its own, with the child role still set, must wipe the store.
+        seed()
+        GuardEngine::class.java.getDeclaredMethod("purgeChildFamily",android.content.Context::class.java,String::class.java).apply{isAccessible=true}.invoke(GuardEngine,ctx,token)
+        assertEquals("the purge itself must empty the scoring store",0,riskRows())
+    }
     @Test fun anOrdinarySignedResetKeepsUnsentRecordsAndTheFamilySecret() {
         val first=pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx);val scope=GuardEngine.getChannelTopicForToken(token)
         FamilyEvidence(ctx).use{it.enqueue(scope,"unsent:0","cipher")}

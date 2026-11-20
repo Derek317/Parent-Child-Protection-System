@@ -32,6 +32,10 @@ The last three commands prompt for values. For protection against branch pushers
 
 **Signing happens only on `main` and on release tags** (`4.9`, `4.9.1`, `4.9-beta.N`, `4.8-hotfix.N`). On every other branch or tag the signing secrets are not passed to any step, and the build uploads **`ig-guard-unsigned-apk`** for seven days; it cannot update an installed IG Guard. On `main` or a release tag without secrets the artifact is also unsigned and requires private signing before installation. With all four secrets configured on those refs, the artifact is **`ig-guard-signed-apk`**. This restriction is only a boundary once the secrets are moved into protected environments; until then a branch push that edits the workflow can still read repository secrets. A new key normally requires reinstalling existing installations; arrange records/backups or a signing-lineage migration before replacing an installed production APK.
 
+## Packaging with the local model
+
+`tools/package_with_model.py` re-signs the release APK on the owner's PC after adding the model, using this same keystore (the `.jks` file, alias `igguard`) and the same passwords. Use the keystore that signed the GitHub release: a different certificate cannot update an installed IG Guard, and the app's data would be lost on reinstall. The script reads the passwords from the environment variables `IG_GUARD_KEYSTORE_PASSWORD` and `IG_GUARD_KEY_PASSWORD` or asks for them with a hidden prompt, never from the command line, and prints the new certificate digest next to the one the APK had and the one pinned in `.github/workflows/build-apk.yml`. The keystore stays outside the repository. See [local-model-package.md](local-model-package.md). The packaged APK is never uploaded.
+
 ## Diagnose signing failures
 
 The packaging step verifies the decoded keystore, alias and private-key password before compiling the APK. It reports only validation results; private keys, passwords, file hashes and certificate details are not printed.

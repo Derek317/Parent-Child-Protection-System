@@ -1,0 +1,1358 @@
+{
+  "schema": "igguard-d1-risk-v1",
+  "model": "igguard/qwen3-1.7b-lora-v4-Q4_K_M",
+  "revision": "833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314",
+  "source": "local_research",
+  "conversations": [
+    {
+      "conversation": "C001",
+      "score": 99.99440487873105,
+      "review_reason": null
+    },
+    {
+      "conversation": "C002",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C003",
+      "score": 99.98296470443582,
+      "review_reason": null
+    },
+    {
+      "conversation": "C004",
+      "score": 0.025419516144538953,
+      "review_reason": null
+    },
+    {
+      "conversation": "C005",
+      "score": 0.007345782243821905,
+      "review_reason": null
+    },
+    {
+      "conversation": "C006",
+      "score": 0.010156576298203022,
+      "review_reason": null
+    },
+    {
+      "conversation": "C007",
+      "score": 66.66602612179733,
+      "review_reason": null
+    },
+    {
+      "conversation": "C008",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C009",
+      "score": 33.333160664782525,
+      "review_reason": null
+    },
+    {
+      "conversation": "C010",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C011",
+      "score": 0.02054104552183703,
+      "review_reason": null
+    },
+    {
+      "conversation": "C012",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C013",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C014",
+      "score": 99.99858892312767,
+      "review_reason": null
+    },
+    {
+      "conversation": "C015",
+      "score": 99.99726236857296,
+      "review_reason": null
+    },
+    {
+      "conversation": "C016",
+      "score": 99.9965792225375,
+      "review_reason": null
+    },
+    {
+      "conversation": "C017",
+      "score": 0.007111715438102564,
+      "review_reason": null
+    },
+    {
+      "conversation": "C018",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C019",
+      "score": 66.66633521504303,
+      "review_reason": null
+    },
+    {
+      "conversation": "C020",
+      "score": 66.66351708434867,
+      "review_reason": null
+    },
+    {
+      "conversation": "C021",
+      "score": 66.66665715228298,
+      "review_reason": null
+    },
+    {
+      "conversation": "C022",
+      "score": 33.333593824839895,
+      "review_reason": null
+    },
+    {
+      "conversation": "C023",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C024",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C025",
+      "score": 99.99520059296236,
+      "review_reason": null
+    },
+    {
+      "conversation": "C026",
+      "score": 99.99939357275743,
+      "review_reason": null
+    },
+    {
+      "conversation": "C027",
+      "score": 99.99472644116496,
+      "review_reason": null
+    },
+    {
+      "conversation": "C028",
+      "score": 0.42001090118287837,
+      "review_reason": null
+    },
+    {
+      "conversation": "C029",
+      "score": 0.050196540363264985,
+      "review_reason": null
+    },
+    {
+      "conversation": "C030",
+      "score": 33.32903471816245,
+      "review_reason": null
+    },
+    {
+      "conversation": "C031",
+      "score": 66.67978336699353,
+      "review_reason": null
+    },
+    {
+      "conversation": "C032",
+      "score": 66.66350845512511,
+      "review_reason": null
+    },
+    {
+      "conversation": "C033",
+      "score": 34.31431676207575,
+      "review_reason": null
+    },
+    {
+      "conversation": "C034",
+      "score": 33.333504119935206,
+      "review_reason": null
+    },
+    {
+      "conversation": "C035",
+      "score": 0.04749737548940641,
+      "review_reason": null
+    },
+    {
+      "conversation": "C036",
+      "score": 0.2167840500416146,
+      "review_reason": null
+    },
+    {
+      "conversation": "C037",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C038",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C039",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C040",
+      "score": 99.99033131380133,
+      "review_reason": null
+    },
+    {
+      "conversation": "C041",
+      "score": 99.99854518137369,
+      "review_reason": null
+    },
+    {
+      "conversation": "C042",
+      "score": 99.99745150907505,
+      "review_reason": null
+    },
+    {
+      "conversation": "C043",
+      "score": 0.11646728643036933,
+      "review_reason": null
+    },
+    {
+      "conversation": "C044",
+      "score": 33.329039383778,
+      "review_reason": null
+    },
+    {
+      "conversation": "C045",
+      "score": 4.223112673608889,
+      "review_reason": null
+    },
+    {
+      "conversation": "C046",
+      "score": 66.66027441245667,
+      "review_reason": null
+    },
+    {
+      "conversation": "C047",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C048",
+      "score": 66.42516834176556,
+      "review_reason": null
+    },
+    {
+      "conversation": "C049",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C050",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C051",
+      "score": 0.0690004714965449,
+      "review_reason": null
+    },
+    {
+      "conversation": "C052",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C053",
+      "score": 0.3822784816399069,
+      "review_reason": null
+    },
+    {
+      "conversation": "C054",
+      "score": 99.98413802285631,
+      "review_reason": null
+    },
+    {
+      "conversation": "C055",
+      "score": 99.99865949997678,
+      "review_reason": null
+    },
+    {
+      "conversation": "C056",
+      "score": 99.99351554682609,
+      "review_reason": null
+    },
+    {
+      "conversation": "C057",
+      "score": 0.11054006424384016,
+      "review_reason": null
+    },
+    {
+      "conversation": "C058",
+      "score": 0.011746347952666077,
+      "review_reason": null
+    },
+    {
+      "conversation": "C059",
+      "score": 59.351298610142756,
+      "review_reason": null
+    },
+    {
+      "conversation": "C060",
+      "score": 66.65767238884858,
+      "review_reason": null
+    },
+    {
+      "conversation": "C061",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C062",
+      "score": 66.66376556986597,
+      "review_reason": null
+    },
+    {
+      "conversation": "C063",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C064",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C065",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C066",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C067",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C068",
+      "score": 99.99571894885175,
+      "review_reason": null
+    },
+    {
+      "conversation": "C069",
+      "score": 99.99500332311841,
+      "review_reason": null
+    },
+    {
+      "conversation": "C070",
+      "score": 99.99659057680458,
+      "review_reason": null
+    },
+    {
+      "conversation": "C071",
+      "score": 0.009256219704465185,
+      "review_reason": null
+    },
+    {
+      "conversation": "C072",
+      "score": 66.32533192854743,
+      "review_reason": null
+    },
+    {
+      "conversation": "C073",
+      "score": 0.005076297798223277,
+      "review_reason": null
+    },
+    {
+      "conversation": "C074",
+      "score": 66.66499113985131,
+      "review_reason": null
+    },
+    {
+      "conversation": "C075",
+      "score": 99.54303553457594,
+      "review_reason": null
+    },
+    {
+      "conversation": "C076",
+      "score": 66.66654468103988,
+      "review_reason": null
+    },
+    {
+      "conversation": "C077",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C078",
+      "score": 0.07027309519257412,
+      "review_reason": null
+    },
+    {
+      "conversation": "C079",
+      "score": 33.30340658434925,
+      "review_reason": null
+    },
+    {
+      "conversation": "C080",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C081",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C082",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C083",
+      "score": 99.99507006851015,
+      "review_reason": null
+    },
+    {
+      "conversation": "C084",
+      "score": 96.78967561175037,
+      "review_reason": null
+    },
+    {
+      "conversation": "C085",
+      "score": 99.92286901393386,
+      "review_reason": null
+    },
+    {
+      "conversation": "C086",
+      "score": 0.006330986144907167,
+      "review_reason": null
+    },
+    {
+      "conversation": "C087",
+      "score": 0.03400390345614007,
+      "review_reason": null
+    },
+    {
+      "conversation": "C088",
+      "score": 0.12129703405338109,
+      "review_reason": null
+    },
+    {
+      "conversation": "C089",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C090",
+      "score": 66.65906265742002,
+      "review_reason": null
+    },
+    {
+      "conversation": "C091",
+      "score": 66.6659851485473,
+      "review_reason": null
+    },
+    {
+      "conversation": "C092",
+      "score": 0.01668161543801661,
+      "review_reason": null
+    },
+    {
+      "conversation": "C093",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C094",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C095",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C096",
+      "score": 99.99643337463563,
+      "review_reason": null
+    },
+    {
+      "conversation": "C097",
+      "score": 99.99752595485968,
+      "review_reason": null
+    },
+    {
+      "conversation": "C098",
+      "score": 99.97322496244081,
+      "review_reason": null
+    },
+    {
+      "conversation": "C099",
+      "score": 33.386156098767806,
+      "review_reason": null
+    },
+    {
+      "conversation": "C100",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C101",
+      "score": 66.63544287835653,
+      "review_reason": null
+    },
+    {
+      "conversation": "C102",
+      "score": 66.74335290470066,
+      "review_reason": null
+    },
+    {
+      "conversation": "C103",
+      "score": 66.64977947488575,
+      "review_reason": null
+    },
+    {
+      "conversation": "C104",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C105",
+      "score": 0.0877668096847926,
+      "review_reason": null
+    },
+    {
+      "conversation": "C106",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C107",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C108",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C109",
+      "score": 99.98612637705561,
+      "review_reason": null
+    },
+    {
+      "conversation": "C110",
+      "score": 99.9873196486027,
+      "review_reason": null
+    },
+    {
+      "conversation": "C111",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C112",
+      "score": 0.00998576035253291,
+      "review_reason": null
+    },
+    {
+      "conversation": "C113",
+      "score": 33.32880463521221,
+      "review_reason": null
+    },
+    {
+      "conversation": "C114",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C115",
+      "score": 50.834458614640965,
+      "review_reason": null
+    },
+    {
+      "conversation": "C116",
+      "score": 66.59949730013261,
+      "review_reason": null
+    },
+    {
+      "conversation": "C117",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C118",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C119",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C120",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C121",
+      "score": 0.017531888649361706,
+      "review_reason": null
+    },
+    {
+      "conversation": "C122",
+      "score": 97.6073415943611,
+      "review_reason": null
+    },
+    {
+      "conversation": "C123",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C124",
+      "score": 95.14914801395372,
+      "review_reason": null
+    },
+    {
+      "conversation": "C125",
+      "score": 0.011585452367266021,
+      "review_reason": null
+    },
+    {
+      "conversation": "C126",
+      "score": 0.00715279794827667,
+      "review_reason": null
+    },
+    {
+      "conversation": "C127",
+      "score": 37.5812182512969,
+      "review_reason": null
+    },
+    {
+      "conversation": "C128",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C129",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C130",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C131",
+      "score": 0.029894824729269125,
+      "review_reason": null
+    },
+    {
+      "conversation": "C132",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C133",
+      "score": 0.01430901678671363,
+      "review_reason": null
+    },
+    {
+      "conversation": "C134",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C135",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C136",
+      "score": 64.60841721220172,
+      "review_reason": null
+    },
+    {
+      "conversation": "C137",
+      "score": 99.98860851680477,
+      "review_reason": null
+    },
+    {
+      "conversation": "C138",
+      "score": 99.99765542664294,
+      "review_reason": null
+    },
+    {
+      "conversation": "C139",
+      "score": 99.9739285137827,
+      "review_reason": null
+    },
+    {
+      "conversation": "C140",
+      "score": 0.059536126778524844,
+      "review_reason": null
+    },
+    {
+      "conversation": "C141",
+      "score": 0.284755968171003,
+      "review_reason": null
+    },
+    {
+      "conversation": "C142",
+      "score": 66.6667301645918,
+      "review_reason": null
+    },
+    {
+      "conversation": "C143",
+      "score": 66.6664823676739,
+      "review_reason": null
+    },
+    {
+      "conversation": "C144",
+      "score": 9.991271043355766,
+      "review_reason": null
+    },
+    {
+      "conversation": "C145",
+      "score": 0.04347848681828498,
+      "review_reason": null
+    },
+    {
+      "conversation": "C146",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C147",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C148",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C149",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C150",
+      "score": 99.98143907404626,
+      "review_reason": null
+    },
+    {
+      "conversation": "C151",
+      "score": 99.99158162753633,
+      "review_reason": null
+    },
+    {
+      "conversation": "C152",
+      "score": 99.99866820327806,
+      "review_reason": null
+    },
+    {
+      "conversation": "C153",
+      "score": 0.01540259884031288,
+      "review_reason": null
+    },
+    {
+      "conversation": "C154",
+      "score": 2.0699153884384924,
+      "review_reason": null
+    },
+    {
+      "conversation": "C155",
+      "score": 0.01735802377747691,
+      "review_reason": null
+    },
+    {
+      "conversation": "C156",
+      "score": 66.6596125366784,
+      "review_reason": null
+    },
+    {
+      "conversation": "C157",
+      "score": 66.69853721104523,
+      "review_reason": null
+    },
+    {
+      "conversation": "C158",
+      "score": 66.66492800068009,
+      "review_reason": null
+    },
+    {
+      "conversation": "C159",
+      "score": 33.33178193423603,
+      "review_reason": null
+    },
+    {
+      "conversation": "C160",
+      "score": 1.2706240547933645,
+      "review_reason": null
+    },
+    {
+      "conversation": "C161",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C162",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C163",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C164",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C165",
+      "score": 99.98290760717953,
+      "review_reason": null
+    },
+    {
+      "conversation": "C166",
+      "score": 99.99682893032124,
+      "review_reason": null
+    },
+    {
+      "conversation": "C167",
+      "score": 99.998881886236,
+      "review_reason": null
+    },
+    {
+      "conversation": "C168",
+      "score": 0.06464738062268902,
+      "review_reason": null
+    },
+    {
+      "conversation": "C169",
+      "score": 33.33379129382146,
+      "review_reason": null
+    },
+    {
+      "conversation": "C170",
+      "score": 33.42625834110229,
+      "review_reason": null
+    },
+    {
+      "conversation": "C171",
+      "score": 66.66535859739803,
+      "review_reason": null
+    },
+    {
+      "conversation": "C172",
+      "score": 66.66598873753787,
+      "review_reason": null
+    },
+    {
+      "conversation": "C173",
+      "score": 66.6661851930358,
+      "review_reason": null
+    },
+    {
+      "conversation": "C174",
+      "score": 33.33157228719756,
+      "review_reason": null
+    },
+    {
+      "conversation": "C175",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C176",
+      "score": 99.97936468268786,
+      "review_reason": null
+    },
+    {
+      "conversation": "C177",
+      "score": 99.99921538467109,
+      "review_reason": null
+    },
+    {
+      "conversation": "C178",
+      "score": 99.9988065744042,
+      "review_reason": null
+    },
+    {
+      "conversation": "C179",
+      "score": 0.009224924040882319,
+      "review_reason": null
+    },
+    {
+      "conversation": "C180",
+      "score": 0.003243776857103265,
+      "review_reason": null
+    },
+    {
+      "conversation": "C181",
+      "score": 0.01264846135667373,
+      "review_reason": null
+    },
+    {
+      "conversation": "C182",
+      "score": 66.66664290789707,
+      "review_reason": null
+    },
+    {
+      "conversation": "C183",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C184",
+      "score": 66.66247170127471,
+      "review_reason": null
+    },
+    {
+      "conversation": "C185",
+      "score": 33.330794977852086,
+      "review_reason": null
+    },
+    {
+      "conversation": "C186",
+      "score": 4.808030435691762,
+      "review_reason": null
+    },
+    {
+      "conversation": "C187",
+      "score": 33.33167423886716,
+      "review_reason": null
+    },
+    {
+      "conversation": "C188",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C189",
+      "score": 0.01758868348225777,
+      "review_reason": null
+    },
+    {
+      "conversation": "C190",
+      "score": 99.97640887128762,
+      "review_reason": null
+    },
+    {
+      "conversation": "C191",
+      "score": 99.99500980818154,
+      "review_reason": null
+    },
+    {
+      "conversation": "C192",
+      "score": 99.9914481944875,
+      "review_reason": null
+    },
+    {
+      "conversation": "C193",
+      "score": 0.02805165718059668,
+      "review_reason": null
+    },
+    {
+      "conversation": "C194",
+      "score": 0.9032688617704991,
+      "review_reason": null
+    },
+    {
+      "conversation": "C195",
+      "score": 66.6658323073105,
+      "review_reason": null
+    },
+    {
+      "conversation": "C196",
+      "score": 66.6662022859637,
+      "review_reason": null
+    },
+    {
+      "conversation": "C197",
+      "score": 66.66441296015091,
+      "review_reason": null
+    },
+    {
+      "conversation": "C198",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C199",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C200",
+      "score": 0.0186764336773576,
+      "review_reason": null
+    },
+    {
+      "conversation": "C201",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C202",
+      "score": 99.99011081882,
+      "review_reason": null
+    },
+    {
+      "conversation": "C203",
+      "score": 99.96418249242426,
+      "review_reason": null
+    },
+    {
+      "conversation": "C204",
+      "score": 99.99049212175488,
+      "review_reason": null
+    },
+    {
+      "conversation": "C205",
+      "score": 33.302267521613416,
+      "review_reason": null
+    },
+    {
+      "conversation": "C206",
+      "score": 2.2265939818818326,
+      "review_reason": null
+    },
+    {
+      "conversation": "C207",
+      "score": 0.06729670072564108,
+      "review_reason": null
+    },
+    {
+      "conversation": "C208",
+      "score": 66.37212952976834,
+      "review_reason": null
+    },
+    {
+      "conversation": "C209",
+      "score": 66.6676383434843,
+      "review_reason": null
+    },
+    {
+      "conversation": "C210",
+      "score": 67.24606217870283,
+      "review_reason": null
+    },
+    {
+      "conversation": "C211",
+      "score": 0.14775243331367116,
+      "review_reason": null
+    },
+    {
+      "conversation": "C212",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C213",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C214",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C215",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C216",
+      "score": 99.99345882360366,
+      "review_reason": null
+    },
+    {
+      "conversation": "C217",
+      "score": 99.99900370848562,
+      "review_reason": null
+    },
+    {
+      "conversation": "C218",
+      "score": 99.99721030516135,
+      "review_reason": null
+    },
+    {
+      "conversation": "C219",
+      "score": 0.015744639737205374,
+      "review_reason": null
+    },
+    {
+      "conversation": "C220",
+      "score": 0.00879182016567133,
+      "review_reason": null
+    },
+    {
+      "conversation": "C221",
+      "score": 0.13998613548299824,
+      "review_reason": null
+    },
+    {
+      "conversation": "C222",
+      "score": 66.66646637861965,
+      "review_reason": null
+    },
+    {
+      "conversation": "C223",
+      "score": 66.66524569533169,
+      "review_reason": null
+    },
+    {
+      "conversation": "C224",
+      "score": 66.66680285242182,
+      "review_reason": null
+    },
+    {
+      "conversation": "C225",
+      "score": 33.328607213272186,
+      "review_reason": null
+    },
+    {
+      "conversation": "C226",
+      "score": 33.327801068664265,
+      "review_reason": null
+    },
+    {
+      "conversation": "C227",
+      "score": 33.33046523945818,
+      "review_reason": null
+    },
+    {
+      "conversation": "C228",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C229",
+      "score": 99.97672901652335,
+      "review_reason": null
+    },
+    {
+      "conversation": "C230",
+      "score": 99.86778332586566,
+      "review_reason": null
+    },
+    {
+      "conversation": "C231",
+      "score": 99.98865194857467,
+      "review_reason": null
+    },
+    {
+      "conversation": "C232",
+      "score": 0.01481006253318953,
+      "review_reason": null
+    },
+    {
+      "conversation": "C233",
+      "score": 0.00947114008409842,
+      "review_reason": null
+    },
+    {
+      "conversation": "C234",
+      "score": 2.51687279151119,
+      "review_reason": null
+    },
+    {
+      "conversation": "C235",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C236",
+      "score": 66.6658035988313,
+      "review_reason": null
+    },
+    {
+      "conversation": "C237",
+      "score": 66.60152025162853,
+      "review_reason": null
+    },
+    {
+      "conversation": "C238",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C239",
+      "score": 10.263901999502352,
+      "review_reason": null
+    },
+    {
+      "conversation": "C240",
+      "score": 33.351840352414534,
+      "review_reason": null
+    },
+    {
+      "conversation": "C241",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C242",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C243",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C244",
+      "score": 99.99531373921063,
+      "review_reason": null
+    },
+    {
+      "conversation": "C245",
+      "score": 99.99867626766694,
+      "review_reason": null
+    },
+    {
+      "conversation": "C246",
+      "score": 99.99484135759353,
+      "review_reason": null
+    },
+    {
+      "conversation": "C247",
+      "score": 0.021723657647426096,
+      "review_reason": null
+    },
+    {
+      "conversation": "C248",
+      "score": 0.005033215772979133,
+      "review_reason": null
+    },
+    {
+      "conversation": "C249",
+      "score": 0.010880641331263399,
+      "review_reason": null
+    },
+    {
+      "conversation": "C250",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C251",
+      "score": 66.87197077185665,
+      "review_reason": null
+    },
+    {
+      "conversation": "C252",
+      "score": 66.652401818205,
+      "review_reason": null
+    },
+    {
+      "conversation": "C253",
+      "score": 0.12052209506523699,
+      "review_reason": null
+    },
+    {
+      "conversation": "C254",
+      "score": 0.002599634104091382,
+      "review_reason": null
+    },
+    {
+      "conversation": "C255",
+      "score": 0.009447803787193855,
+      "review_reason": null
+    },
+    {
+      "conversation": "C256",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C257",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C258",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C259",
+      "score": 99.80985376844573,
+      "review_reason": null
+    },
+    {
+      "conversation": "C260",
+      "score": 99.99613022724317,
+      "review_reason": null
+    },
+    {
+      "conversation": "C261",
+      "score": 99.99491854360826,
+      "review_reason": null
+    },
+    {
+      "conversation": "C262",
+      "score": 0.01640153149245784,
+      "review_reason": null
+    },
+    {
+      "conversation": "C263",
+      "score": 0.0034616514426587712,
+      "review_reason": null
+    },
+    {
+      "conversation": "C264",
+      "score": 0.010866147960172736,
+      "review_reason": null
+    },
+    {
+      "conversation": "C265",
+      "score": 66.66195834976685,
+      "review_reason": null
+    },
+    {
+      "conversation": "C266",
+      "score": 66.65846838997628,
+      "review_reason": null
+    },
+    {
+      "conversation": "C267",
+      "score": 66.66455732068363,
+      "review_reason": null
+    },
+    {
+      "conversation": "C268",
+      "score": 0.010136840175090487,
+      "review_reason": null
+    },
+    {
+      "conversation": "C269",
+      "score": null,
+      "review_reason": "insufficient_context"
+    },
+    {
+      "conversation": "C270",
+      "score": 33.31213033031525,
+      "review_reason": null
+    }
+  ]
+}

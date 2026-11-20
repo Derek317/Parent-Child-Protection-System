@@ -1,0 +1,478 @@
+{
+  "base_checkpoint_sha256": "0713bb05270c2685ad106522f4092bceeeb3a93cf79b401f399a712296c911e1",
+  "patch_sha256": "9adf0a4f340c3186a5a082ce4bc6c1afb11313a5dbeded2a31c278a2ff93dada",
+  "holdout_sha256": "1652ae95d68b9e7e33be50cf4474259fd57141f75aae0536093bee70f3a2230b",
+  "inputs_sha256": {
+    "questions.json": "f4097ca86b5a3f2638453ad2415e03097a51c89916d818dc48aec3976573e661",
+    "weight-fit.jsonl": "76592bc001dd1fdfd7dfb18d55741ee9b62668a9b84649897b7a02118e52a549",
+    "weight-protocol.json": "d5a9e652d7a06fdd97666cd6fc5d0671adc04bf06ba52dc00d52294aa8144c3a",
+    "weight-selection.jsonl": "6efe06ec6471a5b56efba4e7f1ee9c8c3eff7839ab373fd422e01d94faf20547"
+  },
+  "fit_rows": 108,
+  "selection_rows": 48,
+  "chosen": {
+    "choice": {
+      "variant": "joint",
+      "contrast": 1.0,
+      "ridge_fraction": 0.03,
+      "scale": 0.75
+    },
+    "selection": {
+      "all": {
+        "n": 48,
+        "tp": 17,
+        "fp": 7,
+        "tn": 17,
+        "fn": 7,
+        "precision": 0.7083333333333334,
+        "recall": 0.7083333333333334,
+        "false_positive_rate": 0.2916666666666667,
+        "false_negative_rate": 0.2916666666666667,
+        "auroc": 0.6684027777777778,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      },
+      "en": {
+        "n": 16,
+        "tp": 6,
+        "fp": 3,
+        "tn": 5,
+        "fn": 2,
+        "precision": 0.6666666666666666,
+        "recall": 0.75,
+        "false_positive_rate": 0.375,
+        "false_negative_rate": 0.25,
+        "auroc": 0.765625,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      },
+      "zh-Hant-yue": {
+        "n": 16,
+        "tp": 5,
+        "fp": 1,
+        "tn": 7,
+        "fn": 3,
+        "precision": 0.8333333333333334,
+        "recall": 0.625,
+        "false_positive_rate": 0.125,
+        "false_negative_rate": 0.375,
+        "auroc": 0.640625,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      },
+      "mixed": {
+        "n": 16,
+        "tp": 6,
+        "fp": 3,
+        "tn": 5,
+        "fn": 2,
+        "precision": 0.6666666666666666,
+        "recall": 0.75,
+        "false_positive_rate": 0.375,
+        "false_negative_rate": 0.25,
+        "auroc": 0.5625,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      }
+    },
+    "gate": {
+      "pass": false,
+      "groups": {
+        "all": false,
+        "en": false,
+        "zh-Hant-yue": false,
+        "mixed": false
+      }
+    },
+    "slots": [
+      594,
+      746
+    ]
+  },
+  "original": {
+    "all": {
+      "n": 48,
+      "tp": 24,
+      "fp": 22,
+      "tn": 2,
+      "fn": 0,
+      "precision": 0.5217391304347826,
+      "recall": 1.0,
+      "false_positive_rate": 0.9166666666666666,
+      "false_negative_rate": 0.0,
+      "auroc": 0.6024305555555556,
+      "gold_review_total": 0,
+      "gold_review_in_band": 0
+    },
+    "en": {
+      "n": 16,
+      "tp": 8,
+      "fp": 6,
+      "tn": 2,
+      "fn": 0,
+      "precision": 0.5714285714285714,
+      "recall": 1.0,
+      "false_positive_rate": 0.75,
+      "false_negative_rate": 0.0,
+      "auroc": 0.609375,
+      "gold_review_total": 0,
+      "gold_review_in_band": 0
+    },
+    "zh-Hant-yue": {
+      "n": 16,
+      "tp": 8,
+      "fp": 8,
+      "tn": 0,
+      "fn": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "false_positive_rate": 1.0,
+      "false_negative_rate": 0.0,
+      "auroc": 0.578125,
+      "gold_review_total": 0,
+      "gold_review_in_band": 0
+    },
+    "mixed": {
+      "n": 16,
+      "tp": 8,
+      "fp": 8,
+      "tn": 0,
+      "fn": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "false_positive_rate": 1.0,
+      "false_negative_rate": 0.0,
+      "auroc": 0.71875,
+      "gold_review_total": 0,
+      "gold_review_in_band": 0
+    }
+  },
+  "threshold_only": {
+    "threshold": 0.6311164498329163,
+    "groups": {
+      "all": {
+        "n": 48,
+        "tp": 20,
+        "fp": 13,
+        "tn": 11,
+        "fn": 4,
+        "precision": 0.6060606060606061,
+        "recall": 0.8333333333333334,
+        "false_positive_rate": 0.5416666666666666,
+        "false_negative_rate": 0.16666666666666666,
+        "auroc": 0.6024305555555556,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      },
+      "en": {
+        "n": 16,
+        "tp": 6,
+        "fp": 5,
+        "tn": 3,
+        "fn": 2,
+        "precision": 0.5454545454545454,
+        "recall": 0.75,
+        "false_positive_rate": 0.625,
+        "false_negative_rate": 0.25,
+        "auroc": 0.609375,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      },
+      "zh-Hant-yue": {
+        "n": 16,
+        "tp": 7,
+        "fp": 5,
+        "tn": 3,
+        "fn": 1,
+        "precision": 0.5833333333333334,
+        "recall": 0.875,
+        "false_positive_rate": 0.625,
+        "false_negative_rate": 0.125,
+        "auroc": 0.578125,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      },
+      "mixed": {
+        "n": 16,
+        "tp": 7,
+        "fp": 3,
+        "tn": 5,
+        "fn": 1,
+        "precision": 0.7,
+        "recall": 0.875,
+        "false_positive_rate": 0.375,
+        "false_negative_rate": 0.125,
+        "auroc": 0.71875,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      }
+    }
+  },
+  "development_attempts": {
+    "final_tensor_original_question": {
+      "contrast": 1.0,
+      "ridge_fraction": 0.003,
+      "scale": 1.0,
+      "l2_edit": 38.250370025634766,
+      "selection": {
+        "all": {
+          "n": 48,
+          "tp": 13,
+          "fp": 4,
+          "tn": 20,
+          "fn": 11,
+          "precision": 0.7647058823529411,
+          "recall": 0.5416666666666666,
+          "false_positive_rate": 0.16666666666666666,
+          "false_negative_rate": 0.4583333333333333,
+          "auroc": 0.6545138888888888,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        },
+        "en": {
+          "n": 16,
+          "tp": 5,
+          "fp": 2,
+          "tn": 6,
+          "fn": 3,
+          "precision": 0.7142857142857143,
+          "recall": 0.625,
+          "false_positive_rate": 0.25,
+          "false_negative_rate": 0.375,
+          "auroc": 0.703125,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        },
+        "zh-Hant-yue": {
+          "n": 16,
+          "tp": 4,
+          "fp": 0,
+          "tn": 8,
+          "fn": 4,
+          "precision": 1.0,
+          "recall": 0.5,
+          "false_positive_rate": 0.0,
+          "false_negative_rate": 0.5,
+          "auroc": 0.6875,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        },
+        "mixed": {
+          "n": 16,
+          "tp": 4,
+          "fp": 2,
+          "tn": 6,
+          "fn": 4,
+          "precision": 0.6666666666666666,
+          "recall": 0.5,
+          "false_positive_rate": 0.25,
+          "false_negative_rate": 0.5,
+          "auroc": 0.546875,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        }
+      }
+    },
+    "final_tensor_focused_question": {
+      "contrast": 0.0,
+      "ridge_fraction": 0.3,
+      "scale": 1.0,
+      "l2_edit": 0.24649369716644287,
+      "selection": {
+        "all": {
+          "n": 48,
+          "tp": 15,
+          "fp": 10,
+          "tn": 14,
+          "fn": 9,
+          "precision": 0.6,
+          "recall": 0.625,
+          "false_positive_rate": 0.4166666666666667,
+          "false_negative_rate": 0.375,
+          "auroc": 0.6006944444444444,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        },
+        "en": {
+          "n": 16,
+          "tp": 4,
+          "fp": 1,
+          "tn": 7,
+          "fn": 4,
+          "precision": 0.8,
+          "recall": 0.5,
+          "false_positive_rate": 0.125,
+          "false_negative_rate": 0.5,
+          "auroc": 0.8125,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        },
+        "zh-Hant-yue": {
+          "n": 16,
+          "tp": 6,
+          "fp": 5,
+          "tn": 3,
+          "fn": 2,
+          "precision": 0.5454545454545454,
+          "recall": 0.75,
+          "false_positive_rate": 0.625,
+          "false_negative_rate": 0.25,
+          "auroc": 0.578125,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        },
+        "mixed": {
+          "n": 16,
+          "tp": 5,
+          "fp": 4,
+          "tn": 4,
+          "fn": 3,
+          "precision": 0.5555555555555556,
+          "recall": 0.625,
+          "false_positive_rate": 0.5,
+          "false_negative_rate": 0.375,
+          "auroc": 0.4375,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        }
+      }
+    },
+    "focused_question_untuned": {
+      "all": {
+        "n": 48,
+        "tp": 0,
+        "fp": 0,
+        "tn": 24,
+        "fn": 24,
+        "precision": null,
+        "recall": 0.0,
+        "false_positive_rate": 0.0,
+        "false_negative_rate": 1.0,
+        "auroc": 0.5416666666666666,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      },
+      "en": {
+        "n": 16,
+        "tp": 0,
+        "fp": 0,
+        "tn": 8,
+        "fn": 8,
+        "precision": null,
+        "recall": 0.0,
+        "false_positive_rate": 0.0,
+        "false_negative_rate": 1.0,
+        "auroc": 0.78125,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      },
+      "zh-Hant-yue": {
+        "n": 16,
+        "tp": 0,
+        "fp": 0,
+        "tn": 8,
+        "fn": 8,
+        "precision": null,
+        "recall": 0.0,
+        "false_positive_rate": 0.0,
+        "false_negative_rate": 1.0,
+        "auroc": 0.40625,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      },
+      "mixed": {
+        "n": 16,
+        "tp": 0,
+        "fp": 0,
+        "tn": 8,
+        "fn": 8,
+        "precision": null,
+        "recall": 0.0,
+        "false_positive_rate": 0.0,
+        "false_negative_rate": 1.0,
+        "auroc": 0.546875,
+        "gold_review_total": 0,
+        "gold_review_in_band": 0
+      }
+    },
+    "two_neuron_matched_pair": {
+      "choice": {
+        "variant": "joint",
+        "contrast": 1.0,
+        "ridge_fraction": 0.03,
+        "scale": 0.75
+      },
+      "selection": {
+        "all": {
+          "n": 48,
+          "tp": 17,
+          "fp": 7,
+          "tn": 17,
+          "fn": 7,
+          "precision": 0.7083333333333334,
+          "recall": 0.7083333333333334,
+          "false_positive_rate": 0.2916666666666667,
+          "false_negative_rate": 0.2916666666666667,
+          "auroc": 0.6684027777777778,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        },
+        "en": {
+          "n": 16,
+          "tp": 6,
+          "fp": 3,
+          "tn": 5,
+          "fn": 2,
+          "precision": 0.6666666666666666,
+          "recall": 0.75,
+          "false_positive_rate": 0.375,
+          "false_negative_rate": 0.25,
+          "auroc": 0.765625,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        },
+        "zh-Hant-yue": {
+          "n": 16,
+          "tp": 5,
+          "fp": 1,
+          "tn": 7,
+          "fn": 3,
+          "precision": 0.8333333333333334,
+          "recall": 0.625,
+          "false_positive_rate": 0.125,
+          "false_negative_rate": 0.375,
+          "auroc": 0.640625,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        },
+        "mixed": {
+          "n": 16,
+          "tp": 6,
+          "fp": 3,
+          "tn": 5,
+          "fn": 2,
+          "precision": 0.6666666666666666,
+          "recall": 0.75,
+          "false_positive_rate": 0.375,
+          "false_negative_rate": 0.25,
+          "auroc": 0.5625,
+          "gold_review_total": 0,
+          "gold_review_in_band": 0
+        }
+      },
+      "gate": {
+        "pass": false,
+        "groups": {
+          "all": false,
+          "en": false,
+          "zh-Hant-yue": false,
+          "mixed": false
+        }
+      },
+      "slots": [
+        594,
+        746
+      ]
+    }
+  }
+}

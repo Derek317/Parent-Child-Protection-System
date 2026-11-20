@@ -1,0 +1,9 @@
+{
+  "source_revision": "71606689c58806818a98c234b8ac7d82ef5ecb36",
+  "source_path": "MainActivity.kt",
+  "source_sha256": "53996d1d46174d929255452c172e21a1a02b7b4c94425639957f80c0a5d31b11",
+  "captured_block_sha256": "07255982b41534891db6ea23f7c440074e5c06eb6f5442d5dc9c72655be9245d",
+  "pattern": "\\b(nudes?|naked|porn|sex|horny|boobs?|tits|dick|cock|pussy|blowjob|handjob|onlyfans|hook ?up|fwb|send (me )?(a )?pic|take it off|secret between us|don'?t tell (your )?(mum|mom|dad|parents)|ptgf|sugar ?daddy|sugar ?baby)\\b|(裸照|露點|色情|做愛|扑嘢|約炮|援交|包養|兼職女友|自慰|手淫|私密照|閃卡|J圖|咸相|鹹相|裸聊|電愛|唔好同(屋企人|阿媽|阿爸|父母)講|拍片比我睇|除衫)",
+  "flags": "IGNORE_CASE",
+  "scope": "SEXUAL_PATTERN content gate only, any individual message or sender; no sender trust/history, UI filtering, stranger alerts, or live side effects. Python re port of this literal; Unicode engines may differ."
+}

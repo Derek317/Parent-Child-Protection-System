@@ -1,0 +1,27 @@
+{
+  "resumed_utc": "2026-11-17T18:42:02.015792+00:00",
+  "pid": 32697,
+  "pause_record": {
+    "paused_utc": "2026-11-17T15:19:13.612479+00:00",
+    "pid": 32697,
+    "completed_rows": 22,
+    "reason": "User requests deferring full CPU evaluation until stableapp baseline compilation completes",
+    "stopped_state_confirmed": "T (stopped)",
+    "stopped_confirmed_monotonic": 22093.756294285
+  },
+  "resume_monotonic": 34191.769572121,
+  "estimated_stopped_seconds": 12098.013277835995,
+  "stopped_timing_limit": "Start is stop-confirmation time, not exact SIGSTOP delivery. Treat subtraction as approximate; exclude the interrupted row from latency percentiles.",
+  "cpu_affinity_all_existing_threads": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "pytorch_intraop_threads_from_frozen_protocol": 4,
+  "saved_prefix_rows": 22,
+  "saved_prefix_sha256": "059a41e4196a63e4dc4568ec97b883c288dcb0669ec3eec64a928d8e8fda5914",
+  "interrupted_row": "h02-zh-Hant-yue",
+  "execution": "SIGCONT of the original F32 process; no reloading, new download or repeated rows",
+  "raw_predictions_and_run_timing": "Preserved; interrupted row and total wall include the pause."
+}

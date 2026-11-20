@@ -1,0 +1,28 @@
+{
+  "checked_utc": "2026-11-17T18:47:03.327305+00:00",
+  "frozen_inputs_unchanged": true,
+  "complete_rows_per_backend": 90,
+  "original_smoke_prefix_unchanged": 22,
+  "original_saved_prefix_unchanged": 23,
+  "new_real_inferences": 67,
+  "no_repeated_fixture_rows": true,
+  "no_generated_tokens": true,
+  "all_model_token_counts_match_untruncated_encode": true,
+  "baseline_matches_captured_rule": true,
+  "saved_metrics_match_recalculation": true,
+  "independent_confusion_count_checks": true,
+  "android": {
+    "adb_available": false,
+    "device_test_run": false,
+    "runtime_built": false,
+    "gguf_inference_run": false
+  },
+  "files_sha256": {
+    "results/model-complete/predictions.jsonl": "36f57c9a16d924e057d5d40591ba0d3bc9f030bc647f89e5571f202b90c60251",
+    "results/model-complete/metrics.json": "91eb1ba8059fc656f918e0b3aebb09cdb7e3391473c209b72ce37e64d0b93390",
+    "results/model-complete/run.json": "e05d4c6b690e74bccb4a358cf56f707e62b678a6e052d69b237e8751d0dfa8fd",
+    "results/baseline/predictions.jsonl": "4218f694b818053bbdc3d44d99e6f0d6763cf3f9e59d75d7bff6ee70499c54d6",
+    "results/baseline/metrics.json": "a10178bf02843cc54c6f0400a36cc03c3fd555c57157a8c8096efe3875912940",
+    "results/baseline/run.json": "0b3ab4f6b09b6f0e0bfc9f5b13c605e1cf7cea4507cb2b3169112c479cb25525"
+  }
+}

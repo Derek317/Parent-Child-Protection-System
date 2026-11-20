@@ -1,0 +1,60 @@
+{
+  "all_rows_except_interrupted": {
+    "n": 89,
+    "wall_sum_seconds": 260.76310854700205,
+    "cpu_sum_seconds": 424.57190336800005,
+    "wall_p50_seconds": 0.6931719679996604,
+    "wall_p95_seconds_nearest_rank": 9.340255994000472
+  },
+  "initial_22_rows": {
+    "n": 22,
+    "wall_sum_seconds": 170.94807429200227,
+    "cpu_sum_seconds": 211.21759516700004,
+    "wall_p50_seconds": 7.564601488500557,
+    "wall_p95_seconds_nearest_rank": 16.03753738800151
+  },
+  "new_67_rows": {
+    "n": 67,
+    "wall_sum_seconds": 89.81503425499977,
+    "cpu_sum_seconds": 213.354308201,
+    "wall_p50_seconds": 0.5830856739994488,
+    "wall_p95_seconds_nearest_rank": 4.792585766001139
+  },
+  "baseline_all_90_rows": {
+    "n": 90,
+    "wall_sum_seconds": 0.0017077400189009495,
+    "cpu_sum_seconds": 0.0017076990000000902,
+    "wall_p50_seconds": 1.2391499694786035e-05,
+    "wall_p95_seconds_nearest_rank": 8.534099833923392e-05
+  },
+  "interrupted_row": {
+    "id": "h02-zh-Hant-yue",
+    "family": "h02",
+    "split": "heldout_style",
+    "language": "zh-Hant-yue",
+    "stage": "near_match",
+    "label": "benign",
+    "raw": {
+      "answers": {
+        "risk": {
+          "type": "noul",
+          "noul": 0.8295426964759827
+        }
+      },
+      "usage": {
+        "input_tokens": 162,
+        "output_tokens": 0
+      }
+    },
+    "score": 0.8295426964759827,
+    "decision": "risk",
+    "wall_seconds": 12171.298596735003,
+    "cpu_seconds": 6.999329509000006
+  },
+  "raw_sum_two_model_process_wall_seconds": 12491.103458339,
+  "sum_two_model_process_cpu_seconds": 469.372201592,
+  "pause_request_to_resume_utc_seconds": 12168.403313,
+  "pause_confirmation_to_resume_monotonic_seconds": 12098.013277835995,
+  "pause_markers_disagreement_seconds": 70.3900351640059,
+  "warning": "Raw latency and total wall include suspension. Pause request and stop-confirmation markers differ, so exact pause-free total and interrupted-row latency cannot be recovered. Pooled percentiles exclude that row; new-67 timings describe only the resumed process. Shared CPU contention, two loads/warmups, no repetitions; not mobile measurements."
+}
