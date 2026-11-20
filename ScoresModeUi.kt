@@ -312,6 +312,23 @@ internal object ScoresChildCopy {
     const val METHOD_CARD_BODY = "你同意之前，原來的方式繼續。請閱讀並決定。\nUntil you agree, the earlier method stays in effect. Please read and decide."
     const val UPLOAD_ON_TITLE = "手動上載已開啟 / Manual upload is on"
     const val UPLOAD_ON_NOTE = "本 App 不讀取 Instagram 的通知或畫面。你現在可以到 Android 設定關閉「通知存取」和「無障礙」；本 App 不能代你關閉。\nThis app reads nothing from Instagram notifications or screens. You may now switch off Notification access and Accessibility in Android settings; the app cannot do it for you."
+    const val IMPORT_EXPORT_ROW = "匯入 Instagram 資料 / Import Instagram export"
+    const val IMPORT_EXPORT_DESC = "選取 Instagram「下載你的資料」得到的 .zip，或其中一個 message_N.html / message_N.json。檔案只會被讀取，不會被複製。\nPick the .zip from Instagram's \"Download your information\", or one message_N.html / message_N.json from it. The file is only read, never copied."
+    const val EXPORT_RUNNING = "正在讀取檔案…\nReading the file…"
+    const val EXPORT_PICKER_MISSING = "找不到檔案選擇器。\nNo file picker is available."
+    /** Title and body for the outcome of an import; every failure says that nothing was stored. */
+    fun exportResult(s: ImportSummary): Pair<String, String> = when (s.result) {
+        ImportResult.OK -> if (s.conversations == 0) ("沒有可分析的對話 / No chats to analyse" to "這個檔案裡沒有一對一對話（群組聊天 ${s.groups} 個已略過）。\nThe file has no one-to-one chats (${s.groups} group chats were skipped).")
+            else ("已匯入 / Imported" to "${s.conversations} 個一對一對話，新增 ${s.messages} 則訊息；略過群組聊天 ${s.groups} 個。分析會在手機充電時進行。\n${s.conversations} one-to-one chats, ${s.messages} new messages; ${s.groups} group chats skipped. Analysis runs while the phone is charging.")
+        ImportResult.NOTHING_FOUND -> "找不到訊息 / No messages found" to "這個檔案裡沒有 Instagram 訊息檔（message_N.html 或 message_N.json）。沒有儲存任何內容。\nNo Instagram message files were found. Nothing was stored."
+        ImportResult.NOT_ALLOWED -> "現在不能匯入 / Cannot import now" to "需要你已同意手動上載，而且分析沒有暫停、模型有效。沒有儲存任何內容。\nYou must have agreed to manual upload, analysis must not be paused, and the model must be valid. Nothing was stored."
+        ImportResult.TOO_LARGE -> "檔案太大 / The file is too large" to "檔案或其內容超過上限。請只下載訊息（不含相片和影片）。沒有儲存任何內容。\nThe file or its contents are over the limit. Download messages only, without photos and videos. Nothing was stored."
+        ImportResult.TOO_MANY_ENTRIES -> "檔案裡的項目太多 / Too many items in the file" to "請只下載訊息，或選取其中一個對話的檔案。沒有儲存任何內容。\nDownload messages only, or pick one conversation's file. Nothing was stored."
+        ImportResult.UNSAFE_ENTRY -> "檔案不安全 / The file is not safe" to "壓縮檔裡有不安全的檔案路徑，所以整個檔案被拒絕。沒有儲存任何內容。\nThe archive contains an unsafe file path, so the whole file was refused. Nothing was stored."
+        ImportResult.MALFORMED -> "不是有效的 Instagram 資料檔 / Not a valid Instagram file" to "檔案損壞，或不是 Instagram 的訊息檔。沒有儲存任何內容。\nThe file is damaged or is not an Instagram message file. Nothing was stored."
+        ImportResult.TEEN_UNKNOWN -> "分不出哪一位是你 / Cannot tell which one is you" to "單一 HTML 檔不能判斷哪一位是你。請改選整個 .zip，或選 message_N.json。沒有儲存任何內容。\nA single HTML file cannot tell which person is you. Pick the whole .zip or a message_N.json instead. Nothing was stored."
+        ImportResult.IO_ERROR -> "讀取檔案時出錯 / Could not read the file" to "檔案可能已移動，或儲存裝置中斷了。沒有儲存任何內容，請重試。\nThe file may have moved or the storage was interrupted. Nothing was stored. Try again."
+    }
     const val RECONSENT_CARD_TITLE = "請再次決定 / Please decide again"
     const val RECONSENT_CARD_BODY = "說明文字已更新。你同意之前，不會儲存或分析任何內容，也不會傳送你的訊息文字給家長。\nThe explanation was updated. Until you agree, nothing is stored or analysed and no message text is sent to your parent."
     const val AGREE = "我同意 / I agree"

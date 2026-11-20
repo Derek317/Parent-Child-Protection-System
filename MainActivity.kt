@@ -2776,6 +2776,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
         super.onActivityResult(requestCode,resultCode,data)
         if(requestCode==parentAuthRequest && parentAuthPending)completeParentAuthentication(resultCode==RESULT_OK)
+        if(requestCode==exportPickRequest && resultCode==RESULT_OK)data?.data?.let{startExportImport(it)}
         if(requestCode==modelPickRequest) {
             // A picker result counts only if the parent's password was accepted before the picker was opened.
             val authorized=modelPickAuthorized;modelPickAuthorized=false
@@ -3140,7 +3141,7 @@ class MainActivity : Activity() {
         // onActivityResult runs before onResume, so a request still pending here received no result: drop it.
         if (parentAuthPending && parentAuthSignal == null) clearParentAuthRequest()
         activityVisible = true
-        ModelImportJob.listener = importListener
+        ModelImportJob.listener = importListener; InstagramImport.listener = exportListener
         val filter = IntentFilter(GuardEngine.ACTION_UI_REFRESH)
         // The flag protects Android 13+; the signature permission protects earlier releases.
         registerReceiver(refreshReceiver, filter, "$packageName.INTERNAL", null, Context.RECEIVER_NOT_EXPORTED)
@@ -3159,6 +3160,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
         if (ModelImportJob.listener === importListener) ModelImportJob.listener = null
+        if (InstagramImport.listener === exportListener) InstagramImport.listener = null
         parentAccess.lock()
         // The pending authentication request survives onPause: on Android 8-10 the credential check is a separate activity
         // that covers this one (onPause always precedes its result), and on 11+ an OEM prompt may pause the screen. onStop
@@ -3173,7 +3175,7 @@ class MainActivity : Activity() {
         super.onStop()
         parentAuthSignal?.let { parentAuthTicket++; it.cancel(); clearParentAuthRequest() }
     }
-    override fun onDestroy() { if (ModelImportJob.listener === importListener) ModelImportJob.listener = null; parentAuthSignal?.cancel();parentAccess.lock(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null); dismissUiDialogs(); super.onDestroy() }
+    override fun onDestroy() { if (ModelImportJob.listener === importListener) ModelImportJob.listener = null; if (InstagramImport.listener === exportListener) InstagramImport.listener = null; parentAuthSignal?.cancel();parentAccess.lock(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null); dismissUiDialogs(); super.onDestroy() }
 
     private fun navigateTo(destination: String) {
         val role = GuardEngine.getRole(this)
@@ -4071,10 +4073,12 @@ class MainActivity : Activity() {
 
     // ================= Scores-only family mode: child's phone =================
     private val modelPickRequest = 9032
+    private val exportPickRequest = 9033
     private var modelPickAuthorized = false
     private var scoresReadOnly = false
     /** Registered while this activity is on screen; the import itself lives in the process, so a recreated activity re-attaches here. */
     private val importListener: () -> Unit = { uiHandler.post { if (!isDestroyed && activityVisible && section == "permissions") renderUi() } }
+    private val exportListener: () -> Unit = { uiHandler.post { if (!isDestroyed && activityVisible && section == "overview") renderUi() } }
 
     private fun renderScoresChildBlocks(t: ThemeColors) {
         val s = RiskLocal.status(this)
@@ -4105,6 +4109,7 @@ class MainActivity : Activity() {
         if (s.consent == "accepted" && s.agreedMethod == ScoresMethod.UPLOAD) {
             card.addView(label(ScoresChildCopy.UPLOAD_ON_TITLE, 14f, t.textPrimary, true, bottomPad = 4))
             card.addView(label(ScoresChildCopy.UPLOAD_ON_NOTE, 13f, t.textSecondary, bottomPad = 8).apply { tag = "scores_upload_note" })
+            renderExportImport(card, t)
         }
         if (s.consent != "none") {
             card.addView(label(ScoresChildCopy.lastRun(s), 13f, t.textSecondary, bottomPad = 8).apply { tag = "scores_last_run" })
@@ -4130,6 +4135,26 @@ class MainActivity : Activity() {
                 }.show()
         }.apply { tag = "scores_withdraw" })
         rootContainer.addView(card)
+    }
+    /** Manual upload only, after the child agreed: the import action, a note while it runs, and what the last one did (nothing stored on any failure). */
+    private fun renderExportImport(card: LinearLayout, t: ThemeColors) {
+        if (InstagramImport.running) { card.addView(label(ScoresChildCopy.EXPORT_RUNNING, 14f, t.textPrimary, true, bottomPad = 8).apply { tag = "scores_export_running" }); return }
+        InstagramImport.last?.let { r ->
+            val (title, body) = ScoresChildCopy.exportResult(r)
+            val good = r.result == ImportResult.OK && r.conversations > 0
+            card.addView(iconLine(if (good) "check-circle" else "shield-warning", if (good) t.accentSeafoam else t.warmCoral, title, t, 15f, "scores_export_result"))
+            card.addView(label(body, 13f, t.textSecondary, bottomPad = 6))
+            card.addView(actionButton(ScoresChildCopy.OK_DISMISS, t.btnSecondaryBg, t.btnSecondaryText) { InstagramImport.dismiss(); renderUi() }.apply { tag = "scores_export_dismiss" })
+        }
+        card.addView(row("plus", ScoresChildCopy.IMPORT_EXPORT_ROW, ScoresChildCopy.IMPORT_EXPORT_DESC, t) { pickExportFile() }.apply { getChildAt(0).tag = "scores_export_row" })
+    }
+    private fun pickExportFile() {
+        try { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), exportPickRequest) }
+        catch (_: Exception) { Toast.makeText(this, ScoresChildCopy.EXPORT_PICKER_MISSING, Toast.LENGTH_LONG).show() }
+    }
+    private fun startExportImport(uri: Uri) {
+        if (!InstagramImport.allowed(this)) { InstagramImport.last = ImportSummary(ImportResult.NOT_ALLOWED); renderUi(); return }
+        InstagramImport.start(this, uri)
     }
     private fun renderScoresConsent(t: ThemeColors) {
         val decide = !scoresReadOnly && RiskLocal.pendingPolicy(this)

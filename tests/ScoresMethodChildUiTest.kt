@@ -87,6 +87,69 @@ class ScoresMethodChildUiTest {
             assertTrue(text.contains(ScoresChildCopy.METHOD_CARD_BODY.lineSequence().first())); assertFalse(text.contains(ScoresChildCopy.UPLOAD_ON_NOTE.lineSequence().first()))
         } finally { c.pause().stop().destroy() }
     }
+    private fun exportJson(): ByteArray {
+        val now = System.currentTimeMillis()
+        val messages = org.json.JSONArray().put(org.json.JSONObject().put("sender_name", "Bea Friend").put("timestamp_ms", now - 3_600_000L).put("content", "see you tomorrow"))
+            .put(org.json.JSONObject().put("sender_name", "Alex Teen").put("timestamp_ms", now - 7_200_000L).put("content", "hi Bea"))
+        return org.json.JSONObject().put("participants", org.json.JSONArray().put(org.json.JSONObject().put("name", "Bea Friend")).put(org.json.JSONObject().put("name", "Alex Teen"))).put("messages", messages).toString().toByteArray()
+    }
+    private fun count(table: String) = FamilyEvidence(ctx).use { db -> db.readableDatabase.rawQuery("SELECT COUNT(*) FROM $table", null).use { it.moveToFirst(); it.getInt(0) } }
+    private fun answerPick(a: MainActivity, code: Int, ok: Boolean, uri: android.net.Uri?) {
+        MainActivity::class.java.getDeclaredMethod("onActivityResult", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, android.content.Intent::class.java).apply { isAccessible = true }
+            .invoke(a, code, if (ok) android.app.Activity.RESULT_OK else android.app.Activity.RESULT_CANCELED, android.content.Intent().setData(uri))
+    }
+
+    @Test fun theImportActionIsOfferedOnlyInUploadMethodAfterTheChildAgreed() {
+        installModel()
+        // Not agreed yet: the parent asked for upload, the child has not answered.
+        RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD)
+        var c = launch("overview")
+        try { assertTrue(UiSupport.all(c.get().window.decorView).none { it.tag == "scores_export_row" }) } finally { c.pause().stop().destroy() }
+        assertTrue(RiskLocal.accept(ctx))
+        c = launch("overview")
+        try {
+            val rows = UiSupport.all(c.get().window.decorView).filter { it.tag == "scores_export_row" }
+            assertEquals(1, rows.size)
+            rows.single().performClick()
+            val started = org.robolectric.Shadows.shadowOf(c.get()).nextStartedActivityForResult
+            assertEquals(9033, started.requestCode); assertEquals(android.content.Intent.ACTION_OPEN_DOCUMENT, started.intent.action)
+            assertTrue("no storage permission is asked for", c.get().packageManager.getPackageInfo(c.get().packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().none { it.contains("STORAGE") })
+        } finally { c.pause().stop().destroy() }
+        reset(); installModel(); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.CAPTURE); assertTrue(RiskLocal.accept(ctx))
+        c = launch("overview")
+        try { assertTrue("capture method has no import action", UiSupport.all(c.get().window.decorView).none { it.tag == "scores_export_row" }) } finally { c.pause().stop().destroy() }
+    }
+    @Test fun aPickedFileIsReadAsAStreamImportedAndTheResultIsShown() {
+        installModel(); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD); assertTrue(RiskLocal.accept(ctx))
+        InstagramImport.runner = { it.run() }; InstagramImport.dismiss()
+        val good = android.net.Uri.parse("content://igguard.test/export/message_1.json"); val bad = android.net.Uri.parse("content://igguard.test/export/broken.json")
+        val shadow = org.robolectric.Shadows.shadowOf(ctx.contentResolver)
+        shadow.registerInputStream(good, ByteArrayInputStream(exportJson())); shadow.registerInputStream(bad, ByteArrayInputStream("{ broken".toByteArray()))
+        val c = launch("overview")
+        try {
+            answerPick(c.get(), 9033, false, good)
+            assertEquals("a cancelled picker imports nothing", 0, count("risk_store")); assertNull(InstagramImport.last)
+            answerPick(c.get(), 9033, true, bad)
+            assertEquals(ImportResult.MALFORMED, InstagramImport.last!!.result); assertEquals(0, count("risk_store"))
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            val views = UiSupport.all(c.get().window.decorView)
+            assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("Nothing was stored") }); assertEquals(1, views.count { it.tag == "scores_export_result" })
+            views.single { it.tag == "scores_export_dismiss" }.performClick()
+            assertNull(InstagramImport.last)
+            answerPick(c.get(), 9033, true, good)
+            assertEquals(ImportResult.OK, InstagramImport.last!!.result); assertEquals(2, count("risk_store"))
+        } finally { InstagramImport.runner = { Thread(it, "Instagram import").start() }; InstagramImport.dismiss(); c.pause().stop().destroy() }
+    }
+    @Test fun anImportThatIsNotAllowedSaysSoAndStoresNothing() {
+        installModel(); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD); assertTrue(RiskLocal.accept(ctx)); assertTrue(RiskLocal.pause(ctx))
+        val uri = android.net.Uri.parse("content://igguard.test/export/message_1.json")
+        org.robolectric.Shadows.shadowOf(ctx.contentResolver).registerInputStream(uri, ByteArrayInputStream(exportJson()))
+        val c = launch("overview")
+        try {
+            answerPick(c.get(), 9033, true, uri)
+            assertEquals(ImportResult.NOT_ALLOWED, InstagramImport.last!!.result); assertEquals(0, count("risk_store"))
+        } finally { InstagramImport.dismiss(); c.pause().stop().destroy() }
+    }
     @Test fun afterAgreeingToUploadTheOverviewSaysTheAccessesMayGo() {
         installModel(); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD); assertTrue(RiskLocal.accept(ctx))
         val c = launch("overview")
