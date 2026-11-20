@@ -35,7 +35,7 @@ object AppConsent {
     @Synchronized fun receipt(ctx: Context): Receipt? {
         try {
             val sealed = prefs(ctx).getString("receipt", null) ?: return null
-            val json = JSONObject(LocalVault.open(ctx, PURPOSE, sealed))
+            val json = JSONObject(LocalVault.open(ctx, PURPOSE, sealed, remember = true))
             require(json.getBoolean("accepted"))
             require(json.getString("version").isNotBlank())
             require(json.getString("sha256").matches(Regex("[a-f0-9]{64}")))

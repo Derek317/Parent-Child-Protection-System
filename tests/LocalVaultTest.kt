@@ -30,6 +30,18 @@ class LocalVaultTest {
         rejected { LocalVault.open(ctx, "one", a.replaceRange(index, index + 1, if (a[index] == 'A') "B" else "A")) }
         rejected { LocalVault.open(ctx, "one", "synthetic text") }
     }
+    @Test fun aRememberedValueNeedsNoKeystoreUntilForgottenAndIsBoundToItsPurpose() {
+        val value = LocalVault.seal(ctx, "one", "synthetic text")
+        assertEquals("synthetic text", LocalVault.open(ctx, "one", value, remember = true))
+        TestKeyStore.failReads = true
+        try {
+            assertEquals("the unchanged value is served without the Keystore", "synthetic text", LocalVault.open(ctx, "one", value, remember = true))
+            rejected { LocalVault.open(ctx, "two", value, remember = true) }
+            rejected { LocalVault.open(ctx, "one", value) }   // message text and other callers never use the remembered copy
+            LocalVault.forgetOpened()
+            rejected { LocalVault.open(ctx, "one", value, remember = true) }
+        } finally { TestKeyStore.failReads = false }
+    }
     @Test fun lostKeyDoesNotRegenerateDuringDecryption() {
         val value = LocalVault.seal(ctx, "one", "synthetic text")
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

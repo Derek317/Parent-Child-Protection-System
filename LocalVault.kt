@@ -68,7 +68,22 @@ object LocalVault {
         PREFIX + encoder.encodeToString(cipher.iv + cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8)))
     }
 
-    fun open(ctx: Context, purpose: String, sealed: String): String = protectedOperation {
+    // Settings and consent receipts are read on every Instagram screen event, and each read cost several Keystore round trips, which made a real phone slow.
+    // Keyed by purpose and sealed text (a new write gives new sealed text). Callers ask for it; message text is never remembered.
+    private val opened = object : LinkedHashMap<String, String>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 64
+    }
+    /** Drops the remembered values; a later read needs the Keystore again. */
+    internal fun forgetOpened() = synchronized(opened) { opened.clear() }
+
+    fun open(ctx: Context, purpose: String, sealed: String, remember: Boolean = false): String {
+        if (!remember) return decrypt(ctx, purpose, sealed)
+        val slot = "$purpose $sealed"   // sealed text is base64: it holds no space
+        synchronized(opened) { opened[slot] }?.let { return it }
+        return decrypt(ctx, purpose, sealed).also { synchronized(opened) { opened[slot] = it } }
+    }
+
+    private fun decrypt(ctx: Context, purpose: String, sealed: String): String = protectedOperation {
         require(isSealed(sealed)) { "Unencrypted storage value" }
         val bytes = decoder.decode(sealed.substring(PREFIX.length))
         require(bytes.size >= 28)
@@ -121,7 +136,7 @@ object LocalVault {
 
     private class VaultPreferences(val ctx: Context, val raw: SharedPreferences) : SharedPreferences by raw {
         override fun getString(key: String, defValue: String?): String? = synchronized(lock) {
-            if (!raw.contains(key)) defValue else raw.getString(key, null)?.let { open(ctx, "prefs:$key", it) }
+            if (!raw.contains(key)) defValue else raw.getString(key, null)?.let { open(ctx, "prefs:$key", it, remember = true) }
         }
         override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String>? = synchronized(lock) {
             if (!raw.contains(key)) defValues else raw.getStringSet(key, null)?.map { open(ctx, "prefs:$key", it) }?.toMutableSet()

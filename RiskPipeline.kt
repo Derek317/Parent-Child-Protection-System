@@ -278,7 +278,7 @@ internal object RiskLocal {
 
     private fun receipt(ctx: Context): JSONObject? {
         val sealed = receiptPrefs(ctx).getString("receipt", null) ?: return null
-        return try { JSONObject(LocalVault.open(ctx.applicationContext, RECEIPT_PURPOSE, sealed)) } catch (_: Exception) { null }
+        return try { JSONObject(LocalVault.open(ctx.applicationContext, RECEIPT_PURPOSE, sealed, remember = true)) } catch (_: Exception) { null }
     }
 
     /**
