@@ -67,7 +67,7 @@ test('only authenticated parent can retire; purge closes peers and prevents old 
   } finally { await mf.dispose(); }
 });
 
-test('idle registration expiry purges data and enters a bounded revocation period', async () => {
+test('idle registration expiry purges data and retires the room for good', async () => {
   const mf = runtime();
   try {
     const f = family(), p = await connection(mf, f); p.close();
@@ -79,9 +79,11 @@ test('idle registration expiry purges data and enters a bounded revocation perio
     assert.equal((await connection(mf, f, 'child')).response.status, 410);
     assert.equal((await sql(mf, f.room, 'SELECT COUNT(*) AS n FROM parent_inbox'))[0].n, 0);
     assert.equal((await connection(mf, f)).response.status, 410);
-    await sql(mf, f.room, "UPDATE metadata SET value=? WHERE key='revoked_until'", String(Date.now() - 1));
-    assert.equal((await connection(mf, f, 'child')).response.status, 409);
-    const fresh = await connection(mf, f); assert.equal(fresh.response.status, 101); fresh.close();
+    // No passage of time reopens a retired room: the old key and capability stay refused.
+    await sql(mf, f.room, "UPDATE metadata SET value=? WHERE key IN ('revoked_until','retired')", String(Date.now() - 1));
+    assert.equal((await connection(mf, f, 'child')).response.status, 410);
+    assert.equal((await connection(mf, f)).response.status, 410);
+    assert.deepEqual((await sql(mf, f.room, 'SELECT key FROM metadata')).map(r => r.key), ['retired']);
   } finally { await mf.dispose(); }
 });
 
@@ -96,7 +98,7 @@ test('retirement survives restart and in-flight publish cannot recreate the room
     assert.equal((await connection(mf, f)).response.status, 410);
     assert.equal((await connection(mf, f, 'child')).response.status, 410);
     for (const table of ['parent_inbox', 'child_inbox', 'packet_lifetimes']) assert.equal((await sql(mf, f.room, `SELECT COUNT(*) AS n FROM ${table}`))[0].n, 0);
-    assert.deepEqual((await sql(mf, f.room, 'SELECT key FROM metadata')).map(row => row.key), ['revoked_until']);
+    assert.deepEqual((await sql(mf, f.room, 'SELECT key FROM metadata')).map(row => row.key), ['retired']);
   } finally { await mf.dispose(); await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -150,7 +152,7 @@ test('legacy lifetime backfill leaves packets untouched when lifetime storage fa
   } finally { await mf.dispose(); }
 });
 
-test('consumption and repeated retirement never renew packet or revocation deadlines', async () => {
+test('consumption never renews a packet deadline and repeated retirement changes nothing', async () => {
   const mf = runtime();
   try {
     const f = family(), p = await connection(mf, f), c = await connection(mf, f, 'child');
@@ -165,13 +167,14 @@ test('consumption and repeated retirement never renew packet or revocation deadl
     assert.equal((await publish(p, 'consumed-control', undefined, 'control')).code, 'expired');
     const remove = authorization => mf.dispatchFetch(`https://relay.example/v1/rooms/${f.room}`, { method: 'DELETE', headers: { Authorization: authorization } });
     assert.equal((await remove(header(f))).status, 204);
-    const until = (await sql(mf, f.room, "SELECT value FROM metadata WHERE key='revoked_until'"))[0].value;
+    const marker = await sql(mf, f.room, 'SELECT key,value FROM metadata');
+    assert.deepEqual(marker.map(r => r.key), ['retired']);
     assert.equal((await remove(header(f, 'child'))).status, 401);
     const forged = JSON.parse(Buffer.from(header(f).slice(8), 'base64url'));
     forged.signature = 'a'.repeat(forged.signature.length);
     assert.equal((await remove('IGGuard ' + Buffer.from(JSON.stringify(forged)).toString('base64url'))).status, 401);
     assert.equal((await remove(header(f))).status, 204);
-    assert.equal((await sql(mf, f.room, "SELECT value FROM metadata WHERE key='revoked_until'"))[0].value, until);
+    assert.deepEqual(await sql(mf, f.room, 'SELECT key,value FROM metadata'), marker);
   } finally { await mf.dispose(); }
 });
 

@@ -80,16 +80,16 @@ export class FamilyRoom extends DurableObject {
     return row ? JSON.parse(row.value) : null;
   }
 
-  revokedUntil() {
-    if (!this.hasSchema()) return 0;
-    return Number(this.sql.exec("SELECT value FROM metadata WHERE key='revoked_until'").toArray()[0]?.value ?? 0);
+  // A deleted or expired room is never usable again: this content-free marker is the only thing kept, and it has no expiry.
+  retired() {
+    return this.hasSchema() && this.sql.exec("SELECT 1 FROM metadata WHERE key='retired'").toArray().length > 0;
   }
 
   retire(socket) {
     this.ctx.storage.transactionSync(() => {
       for (const inbox of ['parent_inbox', 'child_inbox', 'packet_lifetimes']) this.sql.exec(`DELETE FROM ${inbox}`);
       this.sql.exec('DELETE FROM metadata');
-      this.sql.exec("INSERT INTO metadata(key,value) VALUES('revoked_until',?)", String(Date.now() + REGISTRATION_TTL));
+      this.sql.exec("INSERT INTO metadata(key,value) VALUES('retired','1')");
     });
     if (socket?.readyState === 1) send(socket, { type: 'retired' });
     for (const peer of this.ctx.getWebSockets()) {
@@ -103,7 +103,6 @@ export class FamilyRoom extends DurableObject {
       // Existing registrations get a full idle period when this schema is first adopted.
       this.sql.exec("UPDATE metadata SET value=? WHERE key='owner'", JSON.stringify({ ...owner, last_active: now }));
     } else if (owner && owner.last_active + REGISTRATION_TTL <= now) this.retire();
-    if (this.revokedUntil() && this.revokedUntil() <= now) this.sql.exec("DELETE FROM metadata WHERE key='revoked_until'");
   }
 
   active(socket) {
@@ -128,7 +127,7 @@ export class FamilyRoom extends DurableObject {
     } catch { return json(401, 'unauthorized'); }
     try {
       this.cleanupRegistration();
-      if (this.revokedUntil()) {
+      if (this.retired()) {
         // A valid signing proof is required even for an idempotent purge acknowledgment.
         if (request.method === 'DELETE') return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
         return json(410, 'room_retired', REGISTRATION_TTL);
@@ -157,7 +156,7 @@ export class FamilyRoom extends DurableObject {
         if (owner.scope !== auth.scope || typeof auth.capability !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(auth.capability) ||
             !sameHash(owner.capability_hash, await capabilityHash(auth.capability))) return json(401, 'unauthorized');
         // Hashing yields; a concurrent parent purge must win over an in-flight child upgrade.
-        if (this.metadata()?.epoch !== owner.epoch || this.revokedUntil()) return json(410, 'room_retired', REGISTRATION_TTL);
+        if (this.metadata()?.epoch !== owner.epoch || this.retired()) return json(410, 'room_retired', REGISTRATION_TTL);
         this.touch();
       }
     } catch(error) { return error instanceof AccessDenied ? json(401, 'unauthorized') : json(503, 'relay_unavailable'); }
@@ -335,7 +334,7 @@ export class FamilyRoom extends DurableObject {
     const current = await this.ctx.storage.getAlarm();
     const nextPacket = this.sql.exec('SELECT MIN(expires) AS expiry FROM (SELECT expires FROM parent_inbox UNION ALL SELECT expires FROM child_inbox UNION ALL SELECT expires+? AS expires FROM packet_lifetimes)', REGISTRATION_TTL).one().expiry;
     const owner = this.metadata();
-    const next = Math.min(nextPacket ?? Infinity, owner ? owner.last_active + REGISTRATION_TTL : Infinity, this.revokedUntil() || Infinity);
+    const next = Math.min(nextPacket ?? Infinity, owner ? owner.last_active + REGISTRATION_TTL : Infinity);
     if (Number.isFinite(next) && (current === null || current > next || current <= Date.now())) await this.ctx.storage.setAlarm(Math.max(Date.now() + 1000, next));
   }
 
