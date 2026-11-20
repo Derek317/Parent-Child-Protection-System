@@ -13,10 +13,26 @@ import android.util.Log
 /** Android may defer background work; archive readers must enforce expiry independently. */
 object ArchiveMaintenance {
     private const val JOB_ID=0x49474752
+    /** Second schedule of the same job class, for a child phone: heartbeat and relay poll that need neither Notification access nor Accessibility. */
+    const val HEARTBEAT_ID=JOB_ID+1
+
+    /** shortcut: the poll only starts the relay connection and the job ends, so a parent change may wait for the next 15-minute run; upgrade if that proves too slow. */
+    fun backgroundTick(ctx:Context) {
+        if(!GuardEngine.isChildMode(ctx))return
+        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
+        GuardEngine.retryPendingAlerts(ctx)
+        GuardEngine.pollChannelOnce(ctx,since="all")
+    }
 
     fun schedule(ctx:Context) {
         val app=ctx.applicationContext
         val scheduler=app.getSystemService(JobScheduler::class.java) ?: return
+        if(!GuardEngine.isChildMode(app))scheduler.cancel(HEARTBEAT_ID)
+        else if(scheduler.getPendingJob(HEARTBEAT_ID)==null) {
+            val tick=JobInfo.Builder(HEARTBEAT_ID,ComponentName(app,ArchiveMaintenanceJob::class.java))
+                .setPeriodic(15*60_000L).setPersisted(true).build()   // 15 minutes is the shortest period Android allows
+            if(scheduler.schedule(tick)!=JobScheduler.RESULT_SUCCESS)Log.w("IGGuard","Android refused heartbeat scheduling")
+        }
         // Frequent component/UI refreshes must not postpone an already scheduled cleanup.
         if(scheduler.getPendingJob(JOB_ID)!=null)return
         val job=JobInfo.Builder(JOB_ID,ComponentName(app,ArchiveMaintenanceJob::class.java))
@@ -49,8 +65,11 @@ class ArchiveMaintenanceJob : JobService() {
 
     override fun onStartJob(params:JobParameters):Boolean {
         worker=Thread({
-            val retry=try {ArchiveMaintenance.pruneAll(applicationContext);false}
-                catch(_:Exception){true}
+            val retry=try {
+                if(params.jobId==ArchiveMaintenance.HEARTBEAT_ID)ArchiveMaintenance.backgroundTick(applicationContext)
+                else ArchiveMaintenance.pruneAll(applicationContext)
+                false
+            } catch(_:Exception){true}
             val current=Thread.currentThread()
             completion.post {
                 if(worker===current) {

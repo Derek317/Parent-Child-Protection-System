@@ -2264,7 +2264,6 @@ class IgAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!GuardEngine.isChildMode(this)) return
         if(!GuardEngine.collectionAllowed(this))return
-        if(RiskLocal.uploadOnly(this))return   // manual upload: the Instagram screen is not read
         val observationSession=GuardEngine.captureRelaySession(this)
 
         val fullCapture=GuardEngine.fullCaptureEnabled(this)
@@ -2273,6 +2272,13 @@ class IgAccessibilityService : AccessibilityService() {
         if (pkg != GuardEngine.INSTAGRAM_PKG) return
 
         val now = System.currentTimeMillis()
+        // The heartbeat and relay poll run before the upload gate: a phone that reads nothing must still report in and hear the parent.
+        GuardEngine.checkAndSendChildHeartbeatIfDue(this)
+        if (now - lastRemoteSyncMs > 45_000L) {
+            lastRemoteSyncMs = now
+            thread { GuardEngine.pollChannelOnce(applicationContext, since = "all") }
+        }
+        if(RiskLocal.uploadOnly(this))return   // manual upload: the Instagram screen is not read
         val scanNow=SystemClock.uptimeMillis()
         if (event.eventType in setOf(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,AccessibilityEvent.TYPE_VIEW_SCROLLED) && scanNow-lastScanMs<450L) {
             pendingScan?.let{debounceHandler.removeCallbacks(it)}
@@ -2289,12 +2295,6 @@ class IgAccessibilityService : AccessibilityService() {
         lastScanMs = scanNow
         GuardEngine.cpAccConnected = true
         GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
-
-        GuardEngine.checkAndSendChildHeartbeatIfDue(this)
-        if (now - lastRemoteSyncMs > 45_000L) {
-            lastRemoteSyncMs = now
-            thread { GuardEngine.pollChannelOnce(applicationContext, since = "all") }
-        }
 
         val root = rootInActiveWindow ?: run{GuardEngine.cpLastCaptureStatus="Instagram 尚未提供可讀取的前景視窗";return}
         if(root.packageName?.toString()?.let{it!=GuardEngine.INSTAGRAM_PKG}==true){GuardEngine.cpLastCaptureStatus="目前前景視窗不是 Instagram";return}
