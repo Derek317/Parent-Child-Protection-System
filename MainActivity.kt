@@ -391,7 +391,8 @@ object GuardEngine {
         val accOn = isAccessibilityEnabledStatic(ctx)
 
         val statusSummary = "裝置 ${Build.MODEL} IG Guard 運作中 (通知讀取: ${if (notifOn) "ON ✅" else "OFF ❌"} | 畫面保護: ${if (accOn) "ON ✅" else "選用"}) • 下次隨機回報約 ${nextMins} 分鐘後"
-        val reason = if (notifOn) "heartbeat_ok" else "tamper_attempt"
+        // Under manual upload the teen may switch notification access off, which is then no tampering.
+        val reason = if (notifOn || RiskLocal.uploadOnly(ctx)) "heartbeat_ok" else "tamper_attempt"
 
         sendAlertFromChild(
             ctx,
@@ -1163,6 +1164,7 @@ object GuardEngine {
                 val rows=observations;val now=System.currentTimeMillis()
                 // Scores-only mode: text is stored on this phone, never queued; keyword alerts go out without text.
                 val riskMode=RiskLocal.captureMode(ctx);val contentFreeAlerts=mutableListOf<JSONObject>()
+                if(riskMode==RiskCapture.UPLOAD)return emptyList()
                 val hashes=rows.map { c->AlertFrames.digest(JSONArray().put(c.direction).put(c.author).put(c.text).put(c.messageTime).toString().toByteArray(Charsets.UTF_8)) }
                 FamilyEvidence(ctx).use { db ->
                     val sql=db.writableDatabase;sql.beginTransaction()
@@ -2032,6 +2034,7 @@ class IgNotificationListener : NotificationListenerService() {
         if(!GuardEngine.collectionAllowed(this))return
         val observationSession=GuardEngine.captureRelaySession(this)
         GuardEngine.checkAndSendChildHeartbeatIfDue(this)
+        if(RiskLocal.uploadOnly(this))return   // manual upload: nothing in a notification is read
 
         val pkg = sbn?.packageName ?: return
         if (pkg != GuardEngine.INSTAGRAM_PKG) return
@@ -2255,6 +2258,7 @@ class IgAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!GuardEngine.isChildMode(this)) return
         if(!GuardEngine.collectionAllowed(this))return
+        if(RiskLocal.uploadOnly(this))return   // manual upload: the Instagram screen is not read
         val observationSession=GuardEngine.captureRelaySession(this)
 
         val fullCapture=GuardEngine.fullCaptureEnabled(this)
@@ -4083,8 +4087,9 @@ class MainActivity : Activity() {
         if (s.pendingPolicy) {
             val card = noticeCard(t, true, "scores_consent_card")
             val again = s.consent == "reconsent"
-            card.addView(label(if (again) ScoresChildCopy.RECONSENT_CARD_TITLE else ScoresChildCopy.CARD_TITLE, 17f, t.textPrimary, true, bottomPad = 8))
-            card.addView(label(if (again) ScoresChildCopy.RECONSENT_CARD_BODY else ScoresChildCopy.CARD_BODY, 14f, t.textSecondary, bottomPad = 8))
+            val changed = s.consent == "accepted"   // agreed before; the parent now asks for another method
+            card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_TITLE else if (again) ScoresChildCopy.RECONSENT_CARD_TITLE else ScoresChildCopy.CARD_TITLE, 17f, t.textPrimary, true, bottomPad = 8))
+            card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_BODY else if (again) ScoresChildCopy.RECONSENT_CARD_BODY else ScoresChildCopy.CARD_BODY, 14f, t.textSecondary, bottomPad = 8))
             card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") }.apply { tag = "scores_consent_open" })
             rootContainer.addView(card)
         }
@@ -4097,6 +4102,10 @@ class MainActivity : Activity() {
         card.addView(iconLine(st.icon, if (st == ScoresChildCopy.StatusState.ON) t.accentSeafoam else if (st == ScoresChildCopy.StatusState.PAUSED || st == ScoresChildCopy.StatusState.WAITING || st == ScoresChildCopy.StatusState.RECONSENT) t.warmHoney else t.warmCoral, st.label, t, 15f, "scores_state_label"))
         // Each state says only what is true in that state; the "parent does not see your messages" line is for ON alone.
         for ((i, line) in ScoresChildCopy.statusLines(st, s.consent).withIndex()) card.addView(label(line, 13f, if (i == 0 && st != ScoresChildCopy.StatusState.ON) t.textPrimary else t.textSecondary, i == 0 && st != ScoresChildCopy.StatusState.ON, bottomPad = 8).apply { tag = "scores_status_line" })
+        if (s.consent == "accepted" && s.agreedMethod == ScoresMethod.UPLOAD) {
+            card.addView(label(ScoresChildCopy.UPLOAD_ON_TITLE, 14f, t.textPrimary, true, bottomPad = 4))
+            card.addView(label(ScoresChildCopy.UPLOAD_ON_NOTE, 13f, t.textSecondary, bottomPad = 8).apply { tag = "scores_upload_note" })
+        }
         if (s.consent != "none") {
             card.addView(label(ScoresChildCopy.lastRun(s), 13f, t.textSecondary, bottomPad = 8).apply { tag = "scores_last_run" })
             card.addView(label(ScoresChildCopy.unknown(s.unknownThreads), 13f, t.textSecondary, bottomPad = 8))
@@ -4126,7 +4135,9 @@ class MainActivity : Activity() {
         val decide = !scoresReadOnly && RiskLocal.pendingPolicy(this)
         rootContainer.addView(textAction("返回 / Back") { navigateTo("overview") })
         heading(ScoresChildCopy.CONSENT_TITLE, "", t)
-        for ((title, body) in ScoresChildCopy.consentPoints(RiskLocal.consentState(this) == "reconsent")) {
+        // To decide: the method the parent asks for. To read again: the one the child agreed to.
+        val method = if (decide) RiskLocal.policyMethod(this) else RiskLocal.agreedMethod(this) ?: RiskLocal.policyMethod(this)
+        for ((title, body) in ScoresChildCopy.consentPoints(RiskLocal.consentState(this) == "reconsent", method)) {
             rootContainer.addView(label(title, 16f, t.textPrimary, true, topPad = 14, bottomPad = 6))
             rootContainer.addView(label(body, 14f, t.textSecondary))
         }

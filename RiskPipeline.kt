@@ -70,7 +70,9 @@ internal data class RiskReportRow(val thread: String, val label: String, val sco
 /** Child-side snapshot for the settings and status screens. */
 internal data class RiskChildStatus(
     val modelState: String, val policyEnabled: Boolean, val consent: String, val paused: Boolean, val pausedAt: Long?,
-    val active: Boolean, val lastRun: Long?, val scoredCount: Int, val needsReview: Int, val unknownThreads: Int, val pendingPolicy: Boolean
+    val active: Boolean, val lastRun: Long?, val scoredCount: Int, val needsReview: Int, val unknownThreads: Int, val pendingPolicy: Boolean,
+    /** The method the parent asks for, and the one the child agreed to (null before any agreement). */
+    val method: String = ScoresMethod.CAPTURE, val agreedMethod: String? = null
 )
 
 internal enum class RiskImportResult { OK, WRONG_FILE, NOT_ENOUGH_SPACE, IO_ERROR, UNSUPPORTED_DEVICE }
@@ -227,7 +229,8 @@ internal object RiskModelStore {
     }
 }
 
-internal enum class RiskCapture { NORMAL, CONTENT_FREE, ACTIVE }
+/** [UPLOAD]: the child agreed to manual upload, so nothing from Instagram's notifications or screen is stored, scored, forwarded or alerted on. */
+internal enum class RiskCapture { NORMAL, CONTENT_FREE, ACTIVE, UPLOAD }
 
 /**
  * Child-side mode state and the API the child screens use. Gating:
@@ -308,8 +311,9 @@ internal object RiskLocal {
     fun contentFree(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && policyEnabled(ctx) && receiptPrefs(ctx).contains("receipt")
 
     fun active(ctx: Context): Boolean =
-        AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && GuardEngine.collectionAllowed(ctx) && GuardEngine.fullCaptureEnabled(ctx) &&
-            policyEnabled(ctx) && consentState(ctx) == "accepted" && !paused(ctx) && RiskModelStore.state(ctx) == RiskModelState.INSTALLED
+        AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && GuardEngine.collectionAllowed(ctx) &&
+            // Manual upload reads nothing from Instagram, so the confirmed two-way capture scope does not apply to it.
+            (GuardEngine.fullCaptureEnabled(ctx) || agreedMethod(ctx) == ScoresMethod.UPLOAD) && policyEnabled(ctx) && consentState(ctx) == "accepted" && !paused(ctx) && RiskModelStore.state(ctx) == RiskModelState.INSTALLED
 
     /** Old wording was agreed to: nothing may stay stored for it. Wipes the store once, at the first chance, not at daily maintenance. */
     fun enforceWording(ctx: Context) {
@@ -324,7 +328,11 @@ internal object RiskLocal {
         return captureModeNow(ctx)
     }
     private fun captureModeNow(ctx: Context): RiskCapture =
-        if (!contentFree(ctx)) RiskCapture.NORMAL else if (active(ctx)) RiskCapture.ACTIVE else RiskCapture.CONTENT_FREE
+        if (!contentFree(ctx)) RiskCapture.NORMAL else if (agreedMethod(ctx) == ScoresMethod.UPLOAD) RiskCapture.UPLOAD
+        else if (active(ctx)) RiskCapture.ACTIVE else RiskCapture.CONTENT_FREE
+
+    /** The child agreed to manual upload and the mode is on: the notification listener and the screen service read nothing. */
+    fun uploadOnly(ctx: Context): Boolean = contentFree(ctx) && agreedMethod(ctx) == ScoresMethod.UPLOAD
 
     /** Reasons whose alert text is message content; in content-free mode their text is dropped. */
     fun scrubsText(ctx: Context, reason: String): Boolean = reason in messageReasons && contentFree(ctx)
@@ -585,7 +593,7 @@ internal object RiskLocal {
         } catch (_: Exception) { 0 to 0 }
         val last = prefs(ctx).getLong(LAST_RUN, 0L)
         return RiskChildStatus(RiskModelStore.state(ctx).wire, policyEnabled(ctx), consentState(ctx), paused(ctx), pausedAt(ctx).takeIf { it > 0 },
-            active(ctx), last.takeIf { it > 0 }, prefs(ctx).getInt(LAST_SCORED, 0), review, unknown, pendingPolicy(ctx))
+            active(ctx), last.takeIf { it > 0 }, prefs(ctx).getInt(LAST_SCORED, 0), review, unknown, pendingPolicy(ctx), policyMethod(ctx), agreedMethod(ctx))
     }
 
     fun lastRun(ctx: Context): Long = prefs(ctx).getLong(LAST_RUN, 0L)
@@ -626,6 +634,7 @@ internal object RiskLocal {
         val consent = consentState(ctx)
         return when {
             pendingPolicy(ctx) && !contentFree(ctx) -> "AI 風險分析 (AI risk analysis)：等待你同意，尚未開始。$base"
+            uploadOnly(ctx) && consent == "accepted" && !paused(ctx) -> "AI 風險分析（手動上載）：本 App 不讀取 Instagram 的通知或畫面，只分析你匯入的檔案；家長只收到風險分數。 (Manual upload: this app reads nothing from Instagram; your parent receives risk scores only.)"
             pendingPolicy(ctx) -> "AI 風險分析 (AI risk analysis)：等待你再次同意 · 警報不含訊息內容。"
             consent == "withdrawn" -> "你已撤回 AI 風險分析 (withdrawn) · 警報不含訊息內容。"
             consent == "none" -> base

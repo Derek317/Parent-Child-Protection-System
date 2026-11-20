@@ -298,8 +298,20 @@ internal object ScoresChildCopy {
         "重要 / Please note" to "本功能未獲 Meta 批准，也不代表已通過法律審核。選擇「暫時不要」不會儲存或分析任何內容，原有的運作方式繼續。\nNot approved by Meta and not legally cleared. Choosing \"Not now\" stores and analyses nothing, and the earlier behaviour continues."
     )
     /** On the page for a child who agreed to older wording, "Not now" must not promise the earlier mode: nothing is sent as text either way. */
-    fun consentPoints(reconsent: Boolean): List<Pair<String, String>> = if (!reconsent) CONSENT_POINTS else CONSENT_POINTS.dropLast(1) + (
+    /** The page for [method], the one the parent asked for: its own first point says how chats reach the analysis; upload words replace the capture-only first point. */
+    fun consentPoints(reconsent: Boolean, method: String = ScoresMethod.CAPTURE): List<Pair<String, String>> {
+        val base = consentBasePoints(reconsent)
+        return if (method == ScoresMethod.UPLOAD) listOf(UPLOAD_METHOD_POINT, UPLOAD_ANALYSED_POINT) + base.drop(1) else listOf(CAPTURE_METHOD_POINT) + base
+    }
+    private val UPLOAD_METHOD_POINT = "收集方式：手動上載 / Method: manual upload" to "你的家長選擇了手動上載。你自己從 Instagram 下載資料，再在這部手機匯入。本 App 不讀取 Instagram 的通知或畫面，所以你可以關閉「通知存取」和「無障礙」（本 App 不能代你關閉）。這個方式沒有即時的關鍵字提醒，也沒有陌生人提醒。\nYour parent chose manual upload. You download your own data from Instagram and import it on this phone. This app reads nothing from Instagram notifications or screens, so you may switch off Notification access and Accessibility (the app cannot switch them off for you). There are no real-time keyword alerts and no unapproved-contact alerts."
+    private val UPLOAD_ANALYSED_POINT = "分析什麼 / What is analysed" to "只分析你匯入的 Instagram 資料檔裡的一對一對話；群組聊天不會被分析。每個對話只保留最新 60 則訊息，存放在這部手機上，最長 14 天。你選擇的檔案只會被讀取，不會被複製到本 App 的儲存空間。\nOnly one-to-one chats in the Instagram file you import are analysed; group chats are not. The latest 60 messages per conversation are kept on this phone for at most 14 days. The file you pick is only read, never copied into this app's storage."
+    private val CAPTURE_METHOD_POINT = "收集方式：自動擷取 / Method: automatic capture" to "你的家長選擇了自動擷取：本 App 讀取你手機上 Instagram 的通知及對話畫面。這可能違反 Instagram 的使用條款，你的 Instagram 帳戶可能因此被限制或停用。本 App 與 Meta 無關，亦未獲 Meta 批准。\nYour parent chose automatic capture: this app reads Instagram notifications and conversation screens on your phone. This may breach Instagram's Terms of Use, and your Instagram account could be restricted or disabled. This app is independent of Meta and has no Meta approval."
+    private fun consentBasePoints(reconsent: Boolean): List<Pair<String, String>> = if (!reconsent) CONSENT_POINTS else CONSENT_POINTS.dropLast(1) + (
         "重要 / Please note" to "本功能未獲 Meta 批准，也不代表已通過法律審核。選擇「暫時不要」不會儲存或分析任何內容，也不會傳送你的訊息文字給家長；不含文字的提醒仍會傳給家長。\nNot approved by Meta and not legally cleared. Choosing \"Not now\" stores and analyses nothing, and no message text is sent to your parent; alerts without text still go to your parent.")
+    const val METHOD_CARD_TITLE = "家長更改了收集方式 / Your parent changed the method"
+    const val METHOD_CARD_BODY = "你同意之前，原來的方式繼續。請閱讀並決定。\nUntil you agree, the earlier method stays in effect. Please read and decide."
+    const val UPLOAD_ON_TITLE = "手動上載已開啟 / Manual upload is on"
+    const val UPLOAD_ON_NOTE = "本 App 不讀取 Instagram 的通知或畫面。你現在可以到 Android 設定關閉「通知存取」和「無障礙」；本 App 不能代你關閉。\nThis app reads nothing from Instagram notifications or screens. You may now switch off Notification access and Accessibility in Android settings; the app cannot do it for you."
     const val RECONSENT_CARD_TITLE = "請再次決定 / Please decide again"
     const val RECONSENT_CARD_BODY = "說明文字已更新。你同意之前，不會儲存或分析任何內容，也不會傳送你的訊息文字給家長。\nThe explanation was updated. Until you agree, nothing is stored or analysed and no message text is sent to your parent."
     const val AGREE = "我同意 / I agree"
