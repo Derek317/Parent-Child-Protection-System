@@ -167,6 +167,7 @@ class ScoresMethodUiTest {
         val c = launch()
         try {
             UiSupport.all(c.get().window.decorView).single { it.tag == "scores_method_change" }.performClick()
+            (tagged("scores_capture_ack").single() as CheckBox).isChecked = true   // the sheet offers the other method, capture, first
             tagged("scores_on_confirm").single().performClick(); answer(c.get(), true)
             assertEquals(ScoresUi.METHOD_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
             assertEquals(id, GuardEngine.scoresModePolicy(ctx)!!.policyId)
