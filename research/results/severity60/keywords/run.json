@@ -1,0 +1,20 @@
+{
+  "name": "keywords",
+  "kind": "keywords",
+  "set": "severity60",
+  "input": {
+    "path": "/home/user/Parent-Child-Protection-System/research/data/handoff/severity-test.jsonl",
+    "sha256": "e4e7a141039d85f8952fe657d5d9d6b55ab4ad60d76c901d81429f5ae2358dd8",
+    "mode": "severity",
+    "n": 60
+  },
+  "python": "3.12.3",
+  "platform": "Linux-6.18.44-fc-v595-x86_64-with-glibc2.39",
+  "template": "server",
+  "model": "keywords (GuardEngine.SEXUAL_PATTERN)",
+  "timing": {
+    "wall_seconds_this_invocation": 0.003972018000013122,
+    "chats_run_this_invocation": 60,
+    "workers": 1
+  }
+}

@@ -1,0 +1,496 @@
+{
+  "layers": {
+    "embed": {
+      "auroc_all": 0.5,
+      "auroc_en": 0.5,
+      "auroc_zh-Hant-yue": 0.5,
+      "auroc_mixed": 0.5,
+      "risk_flagged": 0.0,
+      "benign_flagged": 0.0,
+      "cv_auroc_train": 0.5,
+      "ridge": 0.1,
+      "cutoff": 0.33333333333333337
+    },
+    "L1": {
+      "auroc_all": 0.6198765432098765,
+      "auroc_en": 0.7911111111111111,
+      "auroc_zh-Hant-yue": 0.5033333333333333,
+      "auroc_mixed": 0.5622222222222222,
+      "risk_flagged": 0.8,
+      "benign_flagged": 0.8,
+      "cv_auroc_train": 0.5163,
+      "ridge": 0.1,
+      "cutoff": 0.25641552324242933
+    },
+    "L2": {
+      "auroc_all": 0.655679012345679,
+      "auroc_en": 0.7644444444444445,
+      "auroc_zh-Hant-yue": 0.5455555555555556,
+      "auroc_mixed": 0.6555555555555556,
+      "risk_flagged": 0.8333333333333334,
+      "benign_flagged": 0.6888888888888889,
+      "cv_auroc_train": 0.5363111111111111,
+      "ridge": 100000.0,
+      "cutoff": 0.3332303805482661
+    },
+    "L3": {
+      "auroc_all": 0.9879012345679012,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 0.9888888888888889,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9444444444444444,
+      "benign_flagged": 0.044444444444444446,
+      "cv_auroc_train": 0.9967666666666667,
+      "ridge": 100.0,
+      "cutoff": 0.15348804368388835
+    },
+    "L4": {
+      "auroc_all": 0.9977777777777778,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 1.0,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 1.0,
+      "benign_flagged": 0.08888888888888889,
+      "cv_auroc_train": 0.9963222222222222,
+      "ridge": 100.0,
+      "cutoff": -0.00013432779989741572
+    },
+    "L5": {
+      "auroc_all": 0.9948148148148148,
+      "auroc_en": 0.9933333333333333,
+      "auroc_zh-Hant-yue": 0.9955555555555555,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9222222222222223,
+      "benign_flagged": 0.022222222222222223,
+      "cv_auroc_train": 0.9967,
+      "ridge": 100.0,
+      "cutoff": 0.21954402641067178
+    },
+    "L6": {
+      "auroc_all": 0.994567901234568,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 0.9866666666666667,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9777777777777777,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.99745,
+      "ridge": 100.0,
+      "cutoff": 0.21350595515649742
+    },
+    "L7": {
+      "auroc_all": 0.9962962962962963,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 0.9955555555555555,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9888888888888889,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9976222222222222,
+      "ridge": 100.0,
+      "cutoff": 0.10616837314220645
+    },
+    "L8": {
+      "auroc_all": 0.9903703703703703,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 0.9777777777777777,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 1.0,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9978444444444444,
+      "ridge": 100.0,
+      "cutoff": 0.12511984569899842
+    },
+    "L9": {
+      "auroc_all": 0.9977777777777778,
+      "auroc_en": 0.9977777777777778,
+      "auroc_zh-Hant-yue": 0.9955555555555555,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9777777777777777,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9980277777777777,
+      "ridge": 100.0,
+      "cutoff": 0.16501137526676912
+    },
+    "L10": {
+      "auroc_all": 0.9987654320987654,
+      "auroc_en": 0.9977777777777778,
+      "auroc_zh-Hant-yue": 0.9977777777777778,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9666666666666667,
+      "benign_flagged": 0.022222222222222223,
+      "cv_auroc_train": 0.9982388888888889,
+      "ridge": 100.0,
+      "cutoff": 0.16276465505394944
+    },
+    "L11": {
+      "auroc_all": 0.9916049382716049,
+      "auroc_en": 0.9977777777777778,
+      "auroc_zh-Hant-yue": 0.9955555555555555,
+      "auroc_mixed": 0.9955555555555555,
+      "risk_flagged": 0.9444444444444444,
+      "benign_flagged": 0.044444444444444446,
+      "cv_auroc_train": 0.9950888888888889,
+      "ridge": 100.0,
+      "cutoff": 0.18640290777077761
+    },
+    "L12": {
+      "auroc_all": 0.9832098765432099,
+      "auroc_en": 0.9933333333333333,
+      "auroc_zh-Hant-yue": 0.9777777777777777,
+      "auroc_mixed": 0.9911111111111112,
+      "risk_flagged": 0.9333333333333333,
+      "benign_flagged": 0.044444444444444446,
+      "cv_auroc_train": 0.9948666666666667,
+      "ridge": 100.0,
+      "cutoff": 0.21507668758202253
+    },
+    "L13": {
+      "auroc_all": 0.9881481481481481,
+      "auroc_en": 0.9911111111111112,
+      "auroc_zh-Hant-yue": 0.9933333333333333,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9666666666666667,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9908166666666667,
+      "ridge": 100.0,
+      "cutoff": 0.09878261234416241
+    },
+    "L14": {
+      "auroc_all": 0.9898765432098765,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 0.9822222222222222,
+      "auroc_mixed": 0.9977777777777778,
+      "risk_flagged": 0.9777777777777777,
+      "benign_flagged": 0.13333333333333333,
+      "cv_auroc_train": 0.9847222222222223,
+      "ridge": 100.0,
+      "cutoff": 0.04501455577994651
+    },
+    "L15": {
+      "auroc_all": 0.9748148148148148,
+      "auroc_en": 0.9533333333333334,
+      "auroc_zh-Hant-yue": 0.9888888888888889,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9555555555555556,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9856277777777778,
+      "ridge": 100.0,
+      "cutoff": 0.16813839257353588
+    },
+    "L16": {
+      "auroc_all": 0.9782716049382716,
+      "auroc_en": 0.9422222222222222,
+      "auroc_zh-Hant-yue": 0.9933333333333333,
+      "auroc_mixed": 0.9933333333333333,
+      "risk_flagged": 0.9111111111111111,
+      "benign_flagged": 0.1111111111111111,
+      "cv_auroc_train": 0.9800166666666666,
+      "ridge": 100.0,
+      "cutoff": 0.15958481175347383
+    },
+    "trunk_out": {
+      "auroc_all": 0.9738271604938271,
+      "auroc_en": 0.94,
+      "auroc_zh-Hant-yue": 0.9911111111111112,
+      "auroc_mixed": 0.9888888888888889,
+      "risk_flagged": 0.9333333333333333,
+      "benign_flagged": 0.17777777777777778,
+      "cv_auroc_train": 0.9801555555555556,
+      "ridge": 100.0,
+      "cutoff": 0.08322905595363311
+    },
+    "scorer1_in": {
+      "auroc_all": 0.9698765432098766,
+      "auroc_en": 0.9311111111111111,
+      "auroc_zh-Hant-yue": 0.9911111111111112,
+      "auroc_mixed": 0.9866666666666667,
+      "risk_flagged": 0.9,
+      "benign_flagged": 0.13333333333333333,
+      "cv_auroc_train": 0.9824722222222222,
+      "ridge": 100.0,
+      "cutoff": 0.24153482147498487
+    },
+    "scorer3_in": {
+      "auroc_all": 0.931604938271605,
+      "auroc_en": 0.9266666666666666,
+      "auroc_zh-Hant-yue": 0.9222222222222223,
+      "auroc_mixed": 0.9933333333333333,
+      "risk_flagged": 0.9111111111111111,
+      "benign_flagged": 0.2222222222222222,
+      "cv_auroc_train": 0.9518722222222222,
+      "ridge": 10.0,
+      "cutoff": 0.13265564289278053
+    }
+  },
+  "true_marker_only": {
+    "embed": {
+      "auroc_all": 0.5,
+      "auroc_en": 0.5,
+      "auroc_zh-Hant-yue": 0.5,
+      "auroc_mixed": 0.5,
+      "risk_flagged": 0.0,
+      "benign_flagged": 0.0,
+      "cv_auroc_train": 0.5,
+      "ridge": 0.1,
+      "cutoff": 0.33333333333333337
+    },
+    "L1": {
+      "auroc_all": 0.6134567901234568,
+      "auroc_en": 0.7822222222222223,
+      "auroc_zh-Hant-yue": 0.5144444444444445,
+      "auroc_mixed": 0.5422222222222223,
+      "risk_flagged": 0.7222222222222222,
+      "benign_flagged": 0.6222222222222222,
+      "cv_auroc_train": 0.5190444444444444,
+      "ridge": 1.0,
+      "cutoff": 0.31313925288964356
+    },
+    "L2": {
+      "auroc_all": 0.635432098765432,
+      "auroc_en": 0.8355555555555556,
+      "auroc_zh-Hant-yue": 0.5077777777777778,
+      "auroc_mixed": 0.58,
+      "risk_flagged": 0.9,
+      "benign_flagged": 0.8666666666666667,
+      "cv_auroc_train": 0.5212222222222223,
+      "ridge": 10.0,
+      "cutoff": 0.23178711642858324
+    },
+    "L3": {
+      "auroc_all": 0.9980246913580247,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 0.9955555555555555,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 1.0,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9975,
+      "ridge": 100.0,
+      "cutoff": 0.03453021466705164
+    },
+    "L4": {
+      "auroc_all": 0.9977777777777778,
+      "auroc_en": 0.9955555555555555,
+      "auroc_zh-Hant-yue": 1.0,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9888888888888889,
+      "benign_flagged": 0.044444444444444446,
+      "cv_auroc_train": 0.9982333333333333,
+      "ridge": 10.0,
+      "cutoff": 0.07447823492542094
+    },
+    "L5": {
+      "auroc_all": 0.9972839506172839,
+      "auroc_en": 0.9933333333333333,
+      "auroc_zh-Hant-yue": 0.9977777777777778,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9888888888888889,
+      "benign_flagged": 0.1111111111111111,
+      "cv_auroc_train": 0.9986944444444444,
+      "ridge": 10.0,
+      "cutoff": -0.03668189627065255
+    },
+    "L6": {
+      "auroc_all": 0.9916049382716049,
+      "auroc_en": 0.9977777777777778,
+      "auroc_zh-Hant-yue": 0.9777777777777777,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9333333333333333,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9982,
+      "ridge": 100.0,
+      "cutoff": 0.1907209971102315
+    },
+    "L7": {
+      "auroc_all": 0.991358024691358,
+      "auroc_en": 0.9955555555555555,
+      "auroc_zh-Hant-yue": 0.9822222222222222,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9333333333333333,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9980722222222222,
+      "ridge": 100.0,
+      "cutoff": 0.2110607786894727
+    },
+    "L8": {
+      "auroc_all": 0.9851851851851852,
+      "auroc_en": 0.9933333333333333,
+      "auroc_zh-Hant-yue": 0.9622222222222222,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9333333333333333,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9981555555555556,
+      "ridge": 100.0,
+      "cutoff": 0.23238762184963319
+    },
+    "L9": {
+      "auroc_all": 0.9955555555555555,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 0.9866666666666667,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9444444444444444,
+      "benign_flagged": 0.022222222222222223,
+      "cv_auroc_train": 0.9977388888888888,
+      "ridge": 100.0,
+      "cutoff": 0.2637149366972964
+    },
+    "L10": {
+      "auroc_all": 0.9965432098765432,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 0.9911111111111112,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9777777777777777,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9971166666666667,
+      "ridge": 100.0,
+      "cutoff": 0.07359900320292972
+    },
+    "L11": {
+      "auroc_all": 0.9960493827160494,
+      "auroc_en": 1.0,
+      "auroc_zh-Hant-yue": 1.0,
+      "auroc_mixed": 1.0,
+      "risk_flagged": 0.9888888888888889,
+      "benign_flagged": 0.08888888888888889,
+      "cv_auroc_train": 0.9907888888888889,
+      "ridge": 100.0,
+      "cutoff": 0.09936492522643908
+    },
+    "L12": {
+      "auroc_all": 0.9876543209876543,
+      "auroc_en": 0.9911111111111112,
+      "auroc_zh-Hant-yue": 0.9866666666666667,
+      "auroc_mixed": 0.9955555555555555,
+      "risk_flagged": 0.9888888888888889,
+      "benign_flagged": 0.08888888888888889,
+      "cv_auroc_train": 0.9894722222222222,
+      "ridge": 100.0,
+      "cutoff": 0.10708401394197328
+    },
+    "L13": {
+      "auroc_all": 0.9883950617283951,
+      "auroc_en": 0.9977777777777778,
+      "auroc_zh-Hant-yue": 0.9755555555555555,
+      "auroc_mixed": 0.9955555555555555,
+      "risk_flagged": 0.9666666666666667,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9853166666666666,
+      "ridge": 100.0,
+      "cutoff": 0.20228395412730443
+    },
+    "L14": {
+      "auroc_all": 0.9804938271604938,
+      "auroc_en": 0.9911111111111112,
+      "auroc_zh-Hant-yue": 0.9577777777777777,
+      "auroc_mixed": 0.9933333333333333,
+      "risk_flagged": 0.9666666666666667,
+      "benign_flagged": 0.1111111111111111,
+      "cv_auroc_train": 0.9864666666666667,
+      "ridge": 100.0,
+      "cutoff": 0.13954532056409258
+    },
+    "L15": {
+      "auroc_all": 0.9841975308641975,
+      "auroc_en": 0.98,
+      "auroc_zh-Hant-yue": 0.9733333333333334,
+      "auroc_mixed": 0.9977777777777778,
+      "risk_flagged": 0.9555555555555556,
+      "benign_flagged": 0.06666666666666667,
+      "cv_auroc_train": 0.9839,
+      "ridge": 100.0,
+      "cutoff": 0.27055058303252477
+    },
+    "L16": {
+      "auroc_all": 0.9654320987654321,
+      "auroc_en": 0.9622222222222222,
+      "auroc_zh-Hant-yue": 0.9488888888888889,
+      "auroc_mixed": 0.9955555555555555,
+      "risk_flagged": 0.9555555555555556,
+      "benign_flagged": 0.17777777777777778,
+      "cv_auroc_train": 0.9832444444444445,
+      "ridge": 100.0,
+      "cutoff": 0.14712157166848175
+    },
+    "trunk_out": {
+      "auroc_all": 0.9617283950617284,
+      "auroc_en": 0.9488888888888889,
+      "auroc_zh-Hant-yue": 0.9511111111111111,
+      "auroc_mixed": 0.9955555555555555,
+      "risk_flagged": 0.9444444444444444,
+      "benign_flagged": 0.13333333333333333,
+      "cv_auroc_train": 0.98335,
+      "ridge": 100.0,
+      "cutoff": 0.18114418078191927
+    },
+    "scorer1_in": {
+      "auroc_all": 0.9637037037037037,
+      "auroc_en": 0.9488888888888889,
+      "auroc_zh-Hant-yue": 0.9555555555555556,
+      "auroc_mixed": 0.9933333333333333,
+      "risk_flagged": 0.9555555555555556,
+      "benign_flagged": 0.17777777777777778,
+      "cv_auroc_train": 0.9806333333333334,
+      "ridge": 100.0,
+      "cutoff": 0.18977486639520805
+    },
+    "scorer3_in": {
+      "auroc_all": 0.9461728395061728,
+      "auroc_en": 0.9488888888888889,
+      "auroc_zh-Hant-yue": 0.9088888888888889,
+      "auroc_mixed": 0.9866666666666667,
+      "risk_flagged": 0.9777777777777777,
+      "benign_flagged": 0.2222222222222222,
+      "cv_auroc_train": 0.9571277777777778,
+      "ridge": 10.0,
+      "cutoff": 0.16673185102932947
+    }
+  },
+  "shuffled_labels_check": {
+    "L4": {
+      "mean": 0.485,
+      "sd": 0.07138949602897363,
+      "min": 0.3488888888888889,
+      "max": 0.6362962962962962
+    },
+    "L10": {
+      "mean": 0.4961111111111111,
+      "sd": 0.08607613786013127,
+      "min": 0.3466666666666667,
+      "max": 0.6780246913580247
+    },
+    "trunk_out": {
+      "mean": 0.4957283950617283,
+      "sd": 0.09578748450967249,
+      "min": 0.24592592592592594,
+      "max": 0.7266666666666667
+    },
+    "scorer3_in": {
+      "mean": 0.5146049382716049,
+      "sd": 0.10463602879298714,
+      "min": 0.3414814814814815,
+      "max": 0.754320987654321
+    }
+  },
+  "baseline_model_p_yes": {
+    "at_0.5": {
+      "auroc_all": 0.7437037037037038,
+      "auroc_en": 0.8133333333333334,
+      "auroc_zh-Hant-yue": 0.6,
+      "auroc_mixed": 0.8777777777777778,
+      "risk_flagged": 0.5666666666666667,
+      "benign_flagged": 0.2222222222222222
+    },
+    "at_train_cutoff": {
+      "auroc_all": 0.7437037037037038,
+      "auroc_en": 0.8133333333333334,
+      "auroc_zh-Hant-yue": 0.6,
+      "auroc_mixed": 0.8777777777777778,
+      "risk_flagged": 0.8888888888888888,
+      "benign_flagged": 0.5777777777777777
+    },
+    "train_cutoff": 0.2900426685810089,
+    "train_auroc": 0.7669388888888888
+  },
+  "n": {
+    "train": 900,
+    "tune": 135
+  }
+}

@@ -28,15 +28,18 @@ object ArchiveMaintenance {
     fun pruneAll(ctx:Context,now:Long=System.currentTimeMillis()):Int {
         if(Thread.currentThread().isInterrupted)throw InterruptedException()
         // FamilyEvidence requires the archive keys on open; failures propagate without resetting them.
-        return FamilyEvidence(ctx).use { archive ->
+        val pruned = FamilyEvidence(ctx).use { archive ->
             val scopes=archive.readableDatabase.rawQuery(
-                "SELECT scope FROM evidence UNION SELECT scope FROM outbox UNION SELECT scope FROM fragments UNION SELECT scope FROM capture_windows",null
+                "SELECT scope FROM evidence UNION SELECT scope FROM outbox UNION SELECT scope FROM fragments UNION SELECT scope FROM capture_windows UNION SELECT scope FROM risk_store UNION SELECT scope FROM risk_threads UNION SELECT scope FROM risk_results UNION SELECT scope FROM risk_unknown UNION SELECT scope FROM risk_authors UNION SELECT scope FROM risk_scores UNION SELECT scope FROM risk_state UNION SELECT scope FROM risk_replay UNION SELECT scope FROM risk_tombstones",null
             ).use { cursor -> buildList {while(cursor.moveToNext())add(cursor.getString(0))} }
             scopes.sumOf { scope ->
                 if(Thread.currentThread().isInterrupted)throw InterruptedException()
                 archive.pruneExpired(scope,now)
             }
         }
+        // The scoring store exists only while scores-only mode is accepted and on; anything else is wiped here.
+        RiskLocal.maintain(ctx)
+        return pruned
     }
 }
 

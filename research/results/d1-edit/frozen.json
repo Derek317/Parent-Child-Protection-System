@@ -1,0 +1,156 @@
+{
+  "patch_file": "d1-head-edit.safetensors",
+  "patch_sha256": "9c240628a9f378627984ba8a2c278a7f102dc8654acbdd9a79ac2fca5955f518",
+  "base_checkpoint_sha256": "0713bb05270c2685ad106522f4092bceeeb3a93cf79b401f399a712296c911e1",
+  "variant": "A",
+  "ridge_fraction": 0.1,
+  "scale": 6.304949434575862,
+  "temperature": 1.6663223505020142,
+  "rows_rewritten": [
+    594,
+    746
+  ],
+  "target_c_for_B": 2.0,
+  "cutoff": 0.5,
+  "changed_entries": {
+    "head.scorer.1.weight": 2048,
+    "head.scorer.1.bias": 2,
+    "head.scorer.3.weight": 1024
+  },
+  "changed_total": 3074,
+  "live_vs_reconstructed_max_abs_diff_tune": 1.7692221048193346e-06,
+  "selection": {
+    "variant": "A",
+    "frac": 0.1,
+    "scale": 6.304949434575862,
+    "cv_balanced_acc": 0.9175,
+    "tune_balanced_acc": 0.8611111111111112,
+    "tune_auroc": 0.9740740740740741,
+    "tune_risk_flagged": 0.9666666666666667,
+    "tune_benign_flagged": 0.24444444444444444
+  },
+  "grid": {
+    "A/0.0001": {
+      "variant": "A",
+      "frac": 0.0001,
+      "scale": 1.492094450001381,
+      "cv_balanced_acc": 0.8283333333333334,
+      "tune_balanced_acc": 0.8277777777777777,
+      "tune_auroc": 0.8965432098765432,
+      "tune_risk_flagged": 0.8777777777777778,
+      "tune_benign_flagged": 0.2222222222222222
+    },
+    "A/0.001": {
+      "variant": "A",
+      "frac": 0.001,
+      "scale": 2.5639896843384316,
+      "cv_balanced_acc": 0.8625,
+      "tune_balanced_acc": 0.9222222222222223,
+      "tune_auroc": 0.9503703703703704,
+      "tune_risk_flagged": 0.9333333333333333,
+      "tune_benign_flagged": 0.08888888888888889
+    },
+    "A/0.01": {
+      "variant": "A",
+      "frac": 0.01,
+      "scale": 4.671182501580917,
+      "cv_balanced_acc": 0.9099999999999999,
+      "tune_balanced_acc": 0.8888888888888888,
+      "tune_auroc": 0.9696296296296296,
+      "tune_risk_flagged": 0.9333333333333333,
+      "tune_benign_flagged": 0.15555555555555556
+    },
+    "A/0.1": {
+      "variant": "A",
+      "frac": 0.1,
+      "scale": 6.304949434575862,
+      "cv_balanced_acc": 0.9175,
+      "tune_balanced_acc": 0.8611111111111112,
+      "tune_auroc": 0.9740740740740741,
+      "tune_risk_flagged": 0.9666666666666667,
+      "tune_benign_flagged": 0.24444444444444444
+    },
+    "A/1": {
+      "variant": "A",
+      "frac": 1.0,
+      "scale": 5.608121950614314,
+      "cv_balanced_acc": 0.8708333333333333,
+      "tune_balanced_acc": 0.8444444444444444,
+      "tune_auroc": 0.942962962962963,
+      "tune_risk_flagged": 0.9555555555555556,
+      "tune_benign_flagged": 0.26666666666666666
+    },
+    "A/10": {
+      "variant": "A",
+      "frac": 10.0,
+      "scale": 3.7407386707045616,
+      "cv_balanced_acc": 0.7516666666666667,
+      "tune_balanced_acc": 0.7444444444444445,
+      "tune_auroc": 0.8222222222222222,
+      "tune_risk_flagged": 0.8666666666666667,
+      "tune_benign_flagged": 0.37777777777777777
+    },
+    "B/0.0001": {
+      "variant": "B",
+      "frac": 0.0001,
+      "scale": 1.0,
+      "cv_balanced_acc": 0.8291666666666666,
+      "tune_balanced_acc": 0.8277777777777777,
+      "tune_auroc": 0.8948148148148148,
+      "tune_risk_flagged": 0.8777777777777778,
+      "tune_benign_flagged": 0.2222222222222222
+    },
+    "B/0.001": {
+      "variant": "B",
+      "frac": 0.001,
+      "scale": 1.0,
+      "cv_balanced_acc": 0.8633333333333333,
+      "tune_balanced_acc": 0.9111111111111111,
+      "tune_auroc": 0.9508641975308642,
+      "tune_risk_flagged": 0.9333333333333333,
+      "tune_benign_flagged": 0.1111111111111111
+    },
+    "B/0.01": {
+      "variant": "B",
+      "frac": 0.01,
+      "scale": 1.0,
+      "cv_balanced_acc": 0.9108333333333334,
+      "tune_balanced_acc": 0.8777777777777778,
+      "tune_auroc": 0.9693827160493828,
+      "tune_risk_flagged": 0.9333333333333333,
+      "tune_benign_flagged": 0.17777777777777778
+    },
+    "B/0.1": {
+      "variant": "B",
+      "frac": 0.1,
+      "scale": 1.0,
+      "cv_balanced_acc": 0.9175,
+      "tune_balanced_acc": 0.8611111111111112,
+      "tune_auroc": 0.9725925925925926,
+      "tune_risk_flagged": 0.9666666666666667,
+      "tune_benign_flagged": 0.24444444444444444
+    },
+    "B/1": {
+      "variant": "B",
+      "frac": 1.0,
+      "scale": 1.0,
+      "cv_balanced_acc": 0.8716666666666666,
+      "tune_balanced_acc": 0.8444444444444444,
+      "tune_auroc": 0.9409876543209876,
+      "tune_risk_flagged": 0.9555555555555556,
+      "tune_benign_flagged": 0.26666666666666666
+    },
+    "B/10": {
+      "variant": "B",
+      "frac": 10.0,
+      "scale": 1.0,
+      "cv_balanced_acc": 0.7491666666666666,
+      "tune_balanced_acc": 0.7388888888888889,
+      "tune_auroc": 0.8175308641975308,
+      "tune_risk_flagged": 0.8555555555555555,
+      "tune_benign_flagged": 0.37777777777777777
+    }
+  },
+  "script_sha256": "e662340f5ca9f88cd6ddba7047d7ee615fcb1232e5f61822ff5eff588d216adc",
+  "selection_rule": "ridge strength per variant by family-grouped 5-fold CV balanced accuracy at cutoff 0.5 inside train; variant by tune balanced accuracy then AUROC; no other data used"
+}

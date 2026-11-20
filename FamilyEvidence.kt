@@ -17,14 +17,14 @@ data class EvidenceQuery(val text: String = "", val filter: String = "all", val 
     val conversationKey:String?=null,val section:String="all",val review:String="all",val direction:String="all",val before:EvidenceCursor?=null)
 data class EvidenceCursor(val stamp:Long,val order:Long,val id:String)
 data class EvidenceContact(val sender: String, val count: Int, val important: Int, val latest: Long)
-data class ConversationSummary(val key:String,val label:String,val account:String,val count:Int,val unreviewed:Int,val latest:Long,val preview:String,val categories:List<String> = emptyList(),val kind:String="unknown",val unidentified:Boolean=false)
+data class ConversationSummary(val key:String,val label:String,val account:String,val count:Int,val unreviewed:Int,val latest:Long,val preview:String,val categories:List<String> = emptyList(),val kind:String="unknown",val unidentified:Boolean=false,val contentFree:Boolean=false)
 data class PendingEvidence(val id: String, val wire: String, val waitForReceipt: Boolean, val kind:String="urgent")
 data class CaptureWindow(val tokens:List<String> = emptyList(),val anchor:Long=0,val start:Long=0)
 data class RetentionPreview(val retentionDays:Int,val legacyCount:Int,val legacyExpiredCount:Int,
     val expiredCount:Int,val pendingExpiredCount:Int,val preservedCount:Int)
 
 /** Content is encrypted; scopes, opaque IDs, timestamps, reasons and workflow flags remain clear. */
-class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 6), java.io.Closeable {
+class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 9), java.io.Closeable {
     companion object {
         private val openLock=Any()
         private const val DAY=86_400_000L
@@ -93,6 +93,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         upgradeRelayOutbox(db)
         encryptedSchema(db)
         retentionSchema(db)
+        riskSchema(db)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if(oldVersion<2)upgradeConversationSchema(db)
@@ -114,6 +115,16 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.execSQL("INSERT INTO archive_maintenance VALUES(1)")
         }
         if(oldVersion<6)retentionSchema(db)
+        if(oldVersion<9) {
+            riskSchema(db)
+            // Before schema 9 a thread was keyed by account, label and kind and risk_unknown meant "counted, not stored".
+            // From 9 a thread is keyed by its label alone and risk_unknown means "set aside as a group", so nothing carries over.
+            if(oldVersion in 7..8) {
+                for(table in riskChildTables)db.delete(table,null,null)
+                // Counts and results are gone: say so to the parent at the next heartbeat or start.
+                LocalVault.preferences(app).edit().remove("scores_last_scored").remove("scores_last_review").putBoolean("scores_report_due",true).commit()
+            }
+        }
     }
     private fun retentionSchema(db:SQLiteDatabase) {
         // NULL marks existing archives for preview and explicit adoption, never first-open erasure.
@@ -176,6 +187,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             val outbox=db.delete("outbox","scope=? AND event_id IN (SELECT id FROM outbox_lifetimes WHERE scope=? AND expires<=?)",arrayOf(scope,scope,now.toString()))
             val windows=db.delete("capture_windows",if(evidence+fragments+outbox>0)"scope=?" else "scope=? AND updated<=?",
                 if(evidence+fragments+outbox>0)arrayOf(scope) else arrayOf(scope,(now-PENDING_TTL).toString()))
+            pruneRisk(db,scope,now)
             db.setTransactionSuccessful();return evidence+fragments+outbox+windows
         }finally{db.endTransaction()}
     }
@@ -360,10 +372,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             buildList {while(c.moveToNext()) {
                 val last=readableDatabase.rawQuery("SELECT $evidenceColumns FROM evidence WHERE $where AND conversation_index=? ORDER BY sort_stamp DESC,sort_order DESC,id DESC LIMIT 1",args+arrayOf(c.string("conversation_index"))).use {
                     check(it.moveToFirst());val payload=JSONObject(it.content("payload"))
-                    Triple(it.content("body"),payload.optString("conversation_kind","unknown"),ConversationCapture.unidentifiedLegacyLabel(payload))
+                    Triple(it.content("body"),payload.optString("conversation_kind","unknown"),ConversationCapture.unidentifiedLegacyLabel(payload)) to payload.optBoolean("content_free")
                 }
                 add(c.getInt(10) to ConversationSummary(c.content("conversation_key"),c.content("conversation_label"),c.content("account_label"),
-                    c.getInt(6),c.getInt(7),c.getLong(8),last.first,c.getString(9)?.split(",")?:emptyList(),last.second,last.third))
+                    c.getInt(6),c.getInt(7),c.getLong(8),last.first.first,c.getString(9)?.split(",")?:emptyList(),last.first.second,last.first.third,last.second))
             }}
         }.sortedWith(compareByDescending<Pair<Int,ConversationSummary>>{if(q.section=="review")it.first else 0}
             .thenByDescending{it.second.latest}.thenBy{it.second.key}).drop(q.page.coerceAtLeast(0)*30).take(31).map{it.second}
@@ -381,7 +393,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                     (old?.count?:0)+1,(old?.unreviewed?:0)+if(actionable && c.string("review_state")!="reviewed")1 else 0,
                     maxOf(old?.latest?:0,c.number("stamp")),if(latest)c.content("body") else old!!.preview,
                     ((old?.categories?:emptyList())+if(actionable)listOf(reason) else emptyList()).distinct(),
-                    payload?.optString("conversation_kind","unknown")?:old!!.kind,if(payload!=null)ConversationCapture.unidentifiedLegacyLabel(payload) else old!!.unidentified)
+                    payload?.optString("conversation_kind","unknown")?:old!!.kind,if(payload!=null)ConversationCapture.unidentifiedLegacyLabel(payload) else old!!.unidentified,
+                    payload?.optBoolean("content_free") ?: old!!.contentFree)
                 groups[key]=ConversationGroup(summary,if(latest)position else previous!!.cursor,maxOf(previous?.priority?:0,if(reason=="sexual_or_grooming_content")2 else 1))
             }
         }
@@ -404,7 +417,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.execSQL("INSERT OR IGNORE INTO seen(scope,id) SELECT scope,id FROM evidence WHERE scope=?",arrayOf(scope))
             discardPending(scope,"child","data");discardPending(scope,"child","urgent")
             db.delete("evidence","scope=?",arrayOf(scope));db.delete("fragments","scope=?",arrayOf(scope))
-            db.delete("capture_windows","scope=?",arrayOf(scope));db.setTransactionSuccessful()
+            db.delete("capture_windows","scope=?",arrayOf(scope))
+            tombstoneScores(db,scope,System.currentTimeMillis())
+            for(table in riskTables)db.delete(table,"scope=?",arrayOf(scope))
+            db.setTransactionSuccessful()
         }
         finally { db.endTransaction() }
     }
@@ -420,15 +436,268 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         }finally{db.endTransaction()}
     }
     fun otherArchiveCount(scope: String): Int = readableDatabase.rawQuery(
-        "SELECT (SELECT COUNT(*) FROM evidence WHERE scope<>?)+(SELECT COUNT(DISTINCT scope||':'||id) FROM fragments WHERE scope<>?)",arrayOf(scope,scope)).use{it.moveToFirst();it.getInt(0)}
+        "SELECT (SELECT COUNT(*) FROM evidence WHERE scope<>?)+(SELECT COUNT(DISTINCT scope||':'||id) FROM fragments WHERE scope<>?)+(SELECT COUNT(*) FROM risk_store WHERE scope<>?)+(SELECT COUNT(*) FROM risk_scores WHERE scope<>?)",arrayOf(scope,scope,scope,scope)).use{it.moveToFirst();it.getInt(0)}
     fun deleteOtherArchives(scope: String) {
         val db=writableDatabase;db.beginTransaction()
         try {
-            val scopes=db.rawQuery("SELECT scope FROM evidence WHERE scope<>? UNION SELECT scope FROM fragments WHERE scope<>? UNION SELECT scope FROM capture_windows WHERE scope<>? UNION SELECT scope FROM outbox WHERE scope<>? AND role='child' AND relay_kind IN ('data','urgent')",arrayOf(scope,scope,scope,scope)).use{c->buildList{while(c.moveToNext())add(c.getString(0))}}
+            val scopes=db.rawQuery("SELECT scope FROM evidence WHERE scope<>? UNION SELECT scope FROM fragments WHERE scope<>? UNION SELECT scope FROM capture_windows WHERE scope<>? UNION SELECT scope FROM outbox WHERE scope<>? AND role='child' AND relay_kind IN ('data','urgent') UNION SELECT scope FROM risk_store WHERE scope<>? UNION SELECT scope FROM risk_threads WHERE scope<>? UNION SELECT scope FROM risk_results WHERE scope<>? UNION SELECT scope FROM risk_unknown WHERE scope<>? UNION SELECT scope FROM risk_authors WHERE scope<>? UNION SELECT scope FROM risk_scores WHERE scope<>? UNION SELECT scope FROM risk_state WHERE scope<>?",arrayOf(scope,scope,scope,scope,scope,scope,scope,scope,scope,scope,scope)).use{c->buildList{while(c.moveToNext())add(c.getString(0))}}
             for(old in scopes)deleteArchive(old)
             db.setTransactionSuccessful()
         }
         finally { db.endTransaction() }
+    }
+
+    // ---- Scores-only mode (schema 9). Child: risk_store, risk_threads, risk_results, risk_unknown (set-aside group chats), risk_authors. Parent: risk_scores, risk_state, risk_tombstones, risk_replay. ----
+    private val riskChildTables=listOf("risk_store","risk_threads","risk_results","risk_unknown","risk_authors")
+    private val riskParentTables=listOf("risk_scores","risk_state")
+    private val riskTables=riskChildTables+riskParentTables
+    private fun riskSchema(db:SQLiteDatabase) {
+        // Text and labels are sealed like the evidence table; thread identity is a blind index.
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_store(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,id TEXT NOT NULL,thread_index TEXT NOT NULL,label TEXT NOT NULL,direction TEXT NOT NULL,body TEXT NOT NULL,stamp INTEGER NOT NULL,sort_stamp INTEGER NOT NULL,sort_order INTEGER NOT NULL,UNIQUE(scope,id))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS risk_store_thread ON risk_store(scope,thread_index,sort_stamp DESC,sort_order DESC,id DESC)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_threads(scope TEXT NOT NULL,thread_index TEXT NOT NULL,label TEXT NOT NULL,scored_seq INTEGER NOT NULL DEFAULT 0,sent_sig TEXT NOT NULL DEFAULT '',PRIMARY KEY(scope,thread_index))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_results(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,thread_index TEXT NOT NULL,score REAL,reason TEXT,scored_at INTEGER NOT NULL)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS risk_results_thread ON risk_results(scope,thread_index,scored_at)")
+        // Content-free: which distinct incoming authors an unknown-kind thread has shown (blind indexes only).
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_authors(scope TEXT NOT NULL,thread_index TEXT NOT NULL,author_index TEXT NOT NULL,seen_at INTEGER NOT NULL,PRIMARY KEY(scope,thread_index,author_index))")
+        addColumn(db,"risk_store","body_hash","TEXT NOT NULL DEFAULT ''")
+        addColumn(db,"risk_store","source","TEXT NOT NULL DEFAULT ''")
+        addColumn(db,"risk_store","matched","INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_unknown(scope TEXT NOT NULL,thread_index TEXT NOT NULL,seen_at INTEGER NOT NULL,PRIMARY KEY(scope,thread_index))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_scores(scope TEXT NOT NULL,label_index TEXT NOT NULL,label TEXT NOT NULL,result TEXT NOT NULL,scored_at INTEGER NOT NULL,first_reached_50 INTEGER,PRIMARY KEY(scope,label_index))")
+        // Content-free replay guard: the last 64 report ids per scope survive deleteArchive, like the seen tombstones.
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_replay(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,command_id TEXT NOT NULL,UNIQUE(scope,command_id))")
+        addColumn(db,"risk_replay","stored_at","INTEGER NOT NULL DEFAULT 0")
+        // Per-label deletion tombstones: a deleted score is not resurrected by a resend, and a notified one does not notify again.
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_tombstones(scope TEXT NOT NULL,label_index TEXT NOT NULL,label TEXT NOT NULL,deleted_at INTEGER NOT NULL,notified_at INTEGER,PRIMARY KEY(scope,label_index))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS risk_state(scope TEXT PRIMARY KEY,policy_id TEXT,model TEXT NOT NULL,consent TEXT NOT NULL,paused INTEGER NOT NULL,paused_at INTEGER,last_run INTEGER,scored_count INTEGER NOT NULL,unknown_threads INTEGER NOT NULL,sent_at INTEGER NOT NULL,received_at INTEGER NOT NULL)")
+        addColumn(db,"risk_state","active","INTEGER NOT NULL DEFAULT 0")
+    }
+    private fun addColumn(db:SQLiteDatabase,table:String,column:String,definition:String) {
+        val has=db.rawQuery("PRAGMA table_info($table)",null).use{c->var found=false;while(c.moveToNext())if(c.getString(1)==column)found=true;found}
+        if(!has)db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
+    }
+    /** Remembers the deletion of score rows (all of a scope's, or those scored at or before [upTo]). */
+    private fun tombstoneScores(db:SQLiteDatabase,scope:String,now:Long,upTo:Long?=null) {
+        db.execSQL("INSERT OR REPLACE INTO risk_tombstones(scope,label_index,label,deleted_at,notified_at) SELECT scope,label_index,label,?,first_reached_50 FROM risk_scores WHERE scope=?"+(if(upTo!=null)" AND scored_at<=?" else ""),
+            if(upTo!=null)arrayOf(now,scope,upTo) else arrayOf(now,scope))
+    }
+    private fun scoreLabelKey(scope:String,label:String):String = index(scope,"score_label",label.trim().removePrefix("@").lowercase(Locale.ROOT))
+    private fun protectScore(scope:String,label:String,result:String):ContentValues {
+        val key=scoreLabelKey(scope,label)
+        return ContentValues().apply{put("label_index",key);put("label",seal(scope,"risk_scores",key,"label",label));put("result",seal(scope,"risk_scores",key,"result",result))}
+    }
+    private fun pruneRisk(db:SQLiteDatabase,scope:String,now:Long) {
+        val cutoff=(now-RiskLimits.DAYS*DAY).toString()
+        db.execSQL("DELETE FROM risk_store WHERE scope=? AND stamp<?",arrayOf(scope,cutoff))
+        db.execSQL("DELETE FROM risk_results WHERE scope=? AND scored_at<?",arrayOf(scope,cutoff))
+        db.execSQL("DELETE FROM risk_unknown WHERE scope=? AND seen_at<?",arrayOf(scope,cutoff))
+        db.execSQL("DELETE FROM risk_authors WHERE scope=? AND seen_at<?",arrayOf(scope,cutoff))
+        db.execSQL("DELETE FROM risk_threads WHERE scope=? AND thread_index NOT IN (SELECT thread_index FROM risk_store WHERE scope=?) AND thread_index NOT IN (SELECT thread_index FROM risk_results WHERE scope=?)",arrayOf(scope,scope,scope))
+        // Parent copies expire on the archive's clock, counted from the time they were scored.
+        val retention=(now-retentionDays(scope)*DAY).toString()
+        tombstoneScores(db,scope,now,now-retentionDays(scope)*DAY)
+        db.execSQL("DELETE FROM risk_scores WHERE scope=? AND scored_at<=?",arrayOf(scope,retention))
+        db.execSQL("DELETE FROM risk_tombstones WHERE scope=? AND deleted_at<?",arrayOf(scope,(now-30*DAY).toString()))
+        db.execSQL("DELETE FROM risk_replay WHERE scope=? AND stored_at<?",arrayOf(scope,(now-30*DAY).toString()))
+        db.execSQL("DELETE FROM risk_state WHERE scope=? AND received_at<=?",arrayOf(scope,retention))
+    }
+    /** Child: content-free marker so a re-read message is neither stored nor alerted twice. True when [id] is new. */
+    fun markCaptured(scope:String,id:String):Boolean =
+        writableDatabase.insertWithOnConflict("capture_seen",null,ContentValues().apply{put("scope",scope);put("id",id)},SQLiteDatabase.CONFLICT_IGNORE)!=-1L
+    /**
+     * Child: stores one message of a one-to-one thread (caller's transaction) and enforces 60 messages per thread and 14 days.
+     * [threadKey] is the normalised conversation label. The same message read through two routes is kept once, one to one:
+     * a screen row claims at most one notification row with the same direction and text that is not newer than the
+     * capture (the newest such row, so an older, distinct "ok" stays) (the notification row is dropped, the screen row's position is kept), and a notification arriving after the
+     * screen read is dropped if an unclaimed screen row matches. So "ok","ok" stays two messages.
+     */
+    fun storeRiskMessage(scope:String,id:String,threadKey:String,label:String,direction:String,text:String,stamp:Long,sortStamp:Long,sortOrder:Long,now:Long,source:String=""):Boolean {
+        require(direction in setOf("incoming","outgoing"))
+        val db=writableDatabase;val thread=index(scope,"conversation",threadKey)
+        val bodyHash=index(scope,"risk_body",text)
+        var matched=0
+        if(source=="visible_dm") {
+            val claim=db.rawQuery("SELECT seq FROM risk_store WHERE scope=? AND thread_index=? AND direction=? AND body_hash=? AND source='notification' AND stamp<=? ORDER BY stamp DESC LIMIT 1",
+                arrayOf(scope,thread,direction,bodyHash,stamp.toString())).use{if(it.moveToFirst())it.getLong(0) else null}
+            if(claim!=null){db.delete("risk_store","seq=?",arrayOf(claim.toString()));matched=1}
+        } else if(source=="notification") {
+            val screenRow=db.rawQuery("SELECT seq FROM risk_store WHERE scope=? AND thread_index=? AND direction=? AND body_hash=? AND source='visible_dm' AND matched=0 AND stamp>=? ORDER BY stamp LIMIT 1",
+                arrayOf(scope,thread,direction,bodyHash,stamp.toString())).use{if(it.moveToFirst())it.getLong(0) else null}
+            if(screenRow!=null){db.execSQL("UPDATE risk_store SET matched=1 WHERE seq=?",arrayOf(screenRow));return false}
+        }
+        val row=ContentValues().apply {
+            put("scope",scope);put("id",id);put("thread_index",thread);put("direction",direction)
+            put("label",seal(scope,"risk_store",id,"label",label));put("body",seal(scope,"risk_store",id,"body",text))
+            put("stamp",stamp);put("sort_stamp",sortStamp);put("sort_order",sortOrder);put("body_hash",bodyHash);put("source",source);put("matched",matched)
+        }
+        val inserted=db.insertWithOnConflict("risk_store",null,row,SQLiteDatabase.CONFLICT_IGNORE)!=-1L
+        if(inserted) {
+            db.execSQL("DELETE FROM risk_store WHERE scope=? AND stamp<?",arrayOf(scope,(now-RiskLimits.DAYS*DAY).toString()))
+            db.execSQL("DELETE FROM risk_store WHERE scope=? AND thread_index=? AND seq NOT IN (SELECT seq FROM risk_store WHERE scope=? AND thread_index=? ORDER BY sort_stamp DESC,sort_order DESC,id DESC LIMIT ?)",
+                arrayOf(scope,thread,scope,thread,RiskLimits.MESSAGES))
+        }
+        return inserted
+    }
+    /** Child: true while [threadKey] is marked as looking like a group chat (excluded, within the 14-day window). */
+    fun riskExcluded(scope:String,threadKey:String,now:Long):Boolean = readableDatabase.rawQuery("SELECT 1 FROM risk_unknown WHERE scope=? AND thread_index=? AND seen_at>=?",
+        arrayOf(scope,index(scope,"conversation",threadKey),(now-RiskLimits.DAYS*DAY).toString())).use{it.moveToFirst()}
+    /** Child: records an incoming author of an unknown-kind thread (blind index only) and returns how many distinct ones it has shown. */
+    fun noteRiskAuthor(scope:String,threadKey:String,author:String,now:Long):Int {
+        val db=writableDatabase;val thread=index(scope,"conversation",threadKey)
+        db.insertWithOnConflict("risk_authors",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);put("author_index",index(scope,"risk_author",author));put("seen_at",now)},SQLiteDatabase.CONFLICT_REPLACE)
+        return db.rawQuery("SELECT COUNT(*) FROM risk_authors WHERE scope=? AND thread_index=? AND seen_at>=?",arrayOf(scope,thread,(now-RiskLimits.DAYS*DAY).toString())).use{it.moveToFirst();it.getInt(0)}
+    }
+    /**
+     * Child: sets a thread aside as a group chat (a group record, or a second incoming author): marks it first, then deletes
+     * what was kept. True if it was not already marked. The marker is a blind index only and expires 14 days after last seen.
+     */
+    fun excludeRiskThread(scope:String,threadKey:String,now:Long):Boolean {
+        val db=writableDatabase;val thread=index(scope,"conversation",threadKey)
+        val fresh=!riskExcluded(scope,threadKey,now)
+        noteRiskUnknown(scope,threadKey,now)
+        for(table in listOf("risk_store","risk_results","risk_threads","risk_authors"))db.delete(table,"scope=? AND thread_index=?",arrayOf(scope,thread))
+        return fresh
+    }
+    /** Child: marks a thread set aside as a group chat (or refreshes the marker); keeps no text. */
+    fun noteRiskUnknown(scope:String,threadKey:String,now:Long) {
+        writableDatabase.insertWithOnConflict("risk_unknown",null,ContentValues().apply{put("scope",scope);put("thread_index",index(scope,"conversation",threadKey));put("seen_at",now)},SQLiteDatabase.CONFLICT_REPLACE)
+    }
+    fun riskUnknownCount(scope:String,now:Long):Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM risk_unknown WHERE scope=? AND seen_at>=?",arrayOf(scope,(now-RiskLimits.DAYS*DAY).toString())).use{it.moveToFirst();it.getInt(0)}
+    /** Child: threads whose newest stored message is newer than the last scored one. */
+    fun riskDueThreads(scope:String):List<Pair<String,Long>> = readableDatabase.rawQuery(
+        "SELECT s.thread_index,MAX(s.seq) FROM risk_store s WHERE s.scope=? GROUP BY s.thread_index HAVING MAX(s.seq)>COALESCE((SELECT t.scored_seq FROM risk_threads t WHERE t.scope=s.scope AND t.thread_index=s.thread_index),0) ORDER BY MAX(s.seq)",arrayOf(scope)).use { c ->
+        buildList{while(c.moveToNext())add(c.getString(0) to c.getLong(1))}
+    }
+    /** Child: the newest [limit] messages of a thread, oldest first. */
+    internal fun riskThreadMessages(scope:String,thread:String,limit:Int=RiskModelSpec.WINDOW,now:Long=System.currentTimeMillis()):List<RiskMessage> = readableDatabase.rawQuery(
+        "SELECT id,direction,body FROM risk_store WHERE scope=? AND thread_index=? AND stamp>=? ORDER BY sort_stamp DESC,sort_order DESC,id DESC LIMIT ?",arrayOf(scope,thread,(now-RiskLimits.DAYS*DAY).toString(),limit.toString())).use { c ->
+        buildList{while(c.moveToNext())add(RiskMessage(if(c.getString(1)=="outgoing")"child" else "other",RiskMessages.sanitize(open(scope,"risk_store",c.getString(0),"body",c.getString(2)))))}
+    }.asReversed()
+    /** Child: records one scoring result. False (nothing written) if the thread's messages are gone, e.g. after a wipe. */
+    fun saveRiskResult(scope:String,thread:String,seq:Long,score:Double?,reason:String?,now:Long):Boolean {
+        require((score==null)==(reason!=null))
+        val db=writableDatabase;db.beginTransaction()
+        try {
+            val label=db.rawQuery("SELECT id,label FROM risk_store WHERE scope=? AND thread_index=? ORDER BY seq DESC LIMIT 1",arrayOf(scope,thread)).use {
+                if(!it.moveToFirst()){return false}
+                open(scope,"risk_store",it.getString(0),"label",it.getString(1))
+            }
+            db.insertOrThrow("risk_results",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);if(score!=null)put("score",score) else putNull("score");if(reason!=null)put("reason",reason) else putNull("reason");put("scored_at",now)})
+            db.execSQL("DELETE FROM risk_results WHERE scope=? AND thread_index=? AND scored_at<?",arrayOf(scope,thread,(now-RiskLimits.DAYS*DAY).toString()))
+            db.insertWithOnConflict("risk_threads",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);put("label",seal(scope,"risk_threads",thread,"label",label));put("scored_seq",seq)},SQLiteDatabase.CONFLICT_IGNORE)
+            db.execSQL("UPDATE risk_threads SET scored_seq=?,label=? WHERE scope=? AND thread_index=?",arrayOf(seq,seal(scope,"risk_threads",thread,"label",label),scope,thread))
+            db.setTransactionSuccessful();return true
+        }finally{db.endTransaction()}
+    }
+    /** Child: one report row per thread with a result in the last 14 days: highest score seen, time of the latest run. */
+    internal fun riskReportRows(scope:String,now:Long):List<RiskReportRow> {
+        val cutoff=(now-RiskLimits.DAYS*DAY).toString()
+        val byThread=linkedMapOf<String,MutableList<Triple<Double?,String?,Long>>>()
+        readableDatabase.rawQuery("SELECT thread_index,score,reason,scored_at FROM risk_results WHERE scope=? AND scored_at>=? ORDER BY thread_index,scored_at,seq",arrayOf(scope,cutoff)).use { c ->
+            while(c.moveToNext())byThread.getOrPut(c.getString(0)){mutableListOf()}.add(Triple(if(c.isNull(1))null else c.getDouble(1),c.getString(2),c.getLong(3)))
+        }
+        return readableDatabase.rawQuery("SELECT thread_index,label,sent_sig FROM risk_threads WHERE scope=?",arrayOf(scope)).use { c ->
+            buildList {
+                while(c.moveToNext()) {
+                    val results=byThread[c.getString(0)]?:continue
+                    val best=results.mapNotNull{it.first}.maxOrNull();val latest=results.last()
+                    val reason=if(best!=null)null else latest.second
+                    val row=RiskReportRow(c.getString(0),open(scope,"risk_threads",c.getString(0),"label",c.getString(1)),best,reason,latest.third)
+                    add(row.copy(changed=row.signature()!=c.getString(2)))
+                }
+            }
+        }.sortedBy{it.scoredAt}
+    }
+    /** Child: forgets what was sent, so the next report carries every row again. */
+    internal fun resetRiskSent(scope:String) { writableDatabase.execSQL("UPDATE risk_threads SET sent_sig='' WHERE scope=?",arrayOf(scope)) }
+    internal fun markRiskSent(scope:String,rows:List<RiskReportRow>) {
+        val db=writableDatabase;db.beginTransaction()
+        try{for(r in rows)db.execSQL("UPDATE risk_threads SET sent_sig=? WHERE scope=? AND thread_index=?",arrayOf(r.signature(),scope,r.thread));db.setTransactionSuccessful()}finally{db.endTransaction()}
+    }
+    /** Child: removes every stored message, result and unknown-thread marker in every scope. */
+    fun wipeRisk() {
+        val db=writableDatabase;db.beginTransaction()
+        try{for(table in riskChildTables)db.delete(table,null,null);db.setTransactionSuccessful()}finally{db.endTransaction()}
+    }
+
+    /**
+     * Parent: stores a validated report. Returns how many conversations reached a score of 50 for the first time in 14 days,
+     * or -1 if the report id was already stored (a replay: nothing changed).
+     */
+    internal fun storeScoresReport(scope:String,report:ParsedScoresReport,receivedAt:Long):Int {
+        val db=writableDatabase;db.beginTransaction()
+        try {
+            // A report id already stored is a replay (relay redelivery or a stale queued copy): change nothing.
+            val fresh=db.insertWithOnConflict("risk_replay",null,ContentValues().apply{put("scope",scope);put("command_id",report.commandId);put("stored_at",receivedAt)},SQLiteDatabase.CONFLICT_IGNORE)!=-1L
+            if(!fresh){db.setTransactionSuccessful();return -1}
+            // Ids are kept 30 days (see pruneRisk), capped per scope.
+            db.execSQL("DELETE FROM risk_replay WHERE scope=? AND seq NOT IN (SELECT seq FROM risk_replay WHERE scope=? ORDER BY seq DESC LIMIT 5000)",arrayOf(scope,scope))
+            var reached=0
+            for(row in report.conversations) {
+                val key=scoreLabelKey(scope,row.label)
+                val old=db.rawQuery("SELECT scored_at,first_reached_50 FROM risk_scores WHERE scope=? AND label_index=?",arrayOf(scope,key)).use{if(it.moveToFirst())it.getLong(0) to (if(it.isNull(1))null else it.getLong(1)) else null}
+                if(old!=null && row.scoredAt<=old.first)continue
+                val tomb=db.rawQuery("SELECT deleted_at,notified_at FROM risk_tombstones WHERE scope=? AND label_index=?",arrayOf(scope,key)).use{if(it.moveToFirst())it.getLong(0) to (if(it.isNull(1))null else it.getLong(1)) else null}
+                if(tomb!=null && row.scoredAt<=tomb.first)continue
+                var first=old?.second ?: tomb?.second
+                if(row.score!=null && row.score>=50.0 && (first==null || first<row.scoredAt-RiskLimits.DAYS*DAY)){first=row.scoredAt;reached++}
+                val result=JSONObject().put("score",row.score ?: JSONObject.NULL).put("review_reason",row.reviewReason ?: JSONObject.NULL).toString()
+                val values=protectScore(scope,row.label,result).apply{put("scope",scope);put("scored_at",row.scoredAt);if(first!=null)put("first_reached_50",first) else putNull("first_reached_50")}
+                db.insertWithOnConflict("risk_scores",null,values,SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            // A bounded table: an authenticated but misbehaving child cannot grow the parent database without limit.
+            db.execSQL("DELETE FROM risk_scores WHERE scope=? AND label_index NOT IN (SELECT label_index FROM risk_scores WHERE scope=? ORDER BY scored_at DESC LIMIT 2000)",arrayOf(scope,scope))
+            val s=report.state
+            // State follows arrival order; the child's clock is only kept (clamped) for display.
+            db.insertWithOnConflict("risk_state",null,ContentValues().apply {
+                put("scope",scope);if(s.policyId!=null)put("policy_id",s.policyId) else putNull("policy_id")
+                put("model",s.model);put("consent",s.consent);put("paused",if(s.paused)1 else 0)
+                if(s.pausedAt!=null)put("paused_at",s.pausedAt) else putNull("paused_at")
+                if(s.lastRun!=null)put("last_run",s.lastRun) else putNull("last_run")
+                put("scored_count",s.scoredCount);put("unknown_threads",s.unknownThreads);put("active",if(s.active)1 else 0);put("sent_at",minOf(report.sentAt,receivedAt));put("received_at",receivedAt)
+            },SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful();return reached
+        }finally{db.endTransaction()}
+    }
+    /** Parent: conversation scores for [scope], newest first, hiding rows older than the retention setting. */
+    fun riskScores(scope:String,now:Long=System.currentTimeMillis()):List<RiskScoreRow> = readableDatabase.rawQuery(
+        "SELECT label_index,label,result,scored_at FROM risk_scores WHERE scope=? AND scored_at>? ORDER BY scored_at DESC,label_index",arrayOf(scope,(now-retentionDays(scope)*DAY).toString())).use { c ->
+        buildList {
+            while(c.moveToNext()) {
+                val key=c.getString(0);val result=JSONObject(open(scope,"risk_scores",key,"result",c.getString(2)))
+                add(RiskScoreRow(open(scope,"risk_scores",key,"label",c.getString(1)),if(result.isNull("score"))null else result.getDouble("score"),
+                    if(result.isNull("review_reason"))null else result.getString("review_reason"),c.getLong(3)))
+            }
+        }
+    }
+    /** Parent: the child's last reported state, or null if none has arrived or it has expired. */
+    fun scoresModeState(scope:String,now:Long=System.currentTimeMillis()):ScoresModeState? = readableDatabase.rawQuery(
+        "SELECT policy_id,model,consent,paused,paused_at,last_run,scored_count,unknown_threads,sent_at,received_at,active FROM risk_state WHERE scope=? AND received_at>?",
+        arrayOf(scope,(now-retentionDays(scope)*DAY).toString())).use { c ->
+        if(!c.moveToFirst())null else ScoresModeState(if(c.isNull(0))null else c.getString(0),c.getString(1),c.getString(2),c.getInt(3)==1,
+            if(c.isNull(4))null else c.getLong(4),if(c.isNull(5))null else c.getLong(5),c.getInt(6),c.getInt(7),c.getLong(8),c.getLong(9),now-c.getLong(9)>RiskLimits.STALE_REPORT_MS,c.getInt(10)==1)
+    }
+    /**
+     * Child: discards queued data and urgent events for which [carriesText] is true of any of their frames; every other
+     * pending record (tamper, unlock, pairing, heartbeat, control) is kept. Same tombstoning as [discardPending].
+     */
+    fun discardPendingMatching(scope:String,carriesText:(String)->Boolean):Int {
+        val db=writableDatabase;db.beginTransaction()
+        try {
+            val events=db.rawQuery("SELECT event_id,wire FROM outbox WHERE scope=? AND role='child' AND relay_kind IN ('data','urgent')",arrayOf(scope)).use { c ->
+                buildSet{while(c.moveToNext())if(carriesText(c.getString(1)))add(c.getString(0))}
+            }
+            for(event in events) {
+                db.execSQL("INSERT OR IGNORE INTO capture_seen(scope,id) VALUES(?,?)",arrayOf(scope,event))
+                db.execSQL("INSERT OR IGNORE INTO seen(scope,id) VALUES(?,?)",arrayOf(scope,event))
+                db.execSQL("UPDATE outbox_lifetimes SET blocked=1 WHERE scope=? AND id=?",arrayOf(scope,event))
+                db.execSQL("DELETE FROM fragments WHERE scope=? AND id=?",arrayOf(scope,event))
+                db.delete("outbox","scope=? AND event_id=?",arrayOf(scope,event))
+            }
+            if(events.isNotEmpty())db.delete("capture_windows","scope=?",arrayOf(scope))
+            db.setTransactionSuccessful();return events.size
+        }finally{db.endTransaction()}
     }
     fun enqueue(scope: String,id: String,wire: String,role:String="child",kind:String="urgent") {
         require(role in setOf("parent","child") && kind in setOf("data","urgent","receipt","control"))
@@ -564,6 +833,25 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 val tokens=open(old,"capture_windows",key,"tokens",c.string("tokens"))
                 protectWindow(new,thread,tokens).apply{put("scope",new)}
             }
+            // The child-side scoring store is wiped, never moved, when the family key changes.
+            for(table in riskChildTables)db.delete(table,"scope=?",arrayOf(old))
+            transformRows(db,"risk_scores",old) { c ->
+                val key=c.string("label_index")
+                val label=open(old,"risk_scores",key,"label",c.string("label"))
+                val result=open(old,"risk_scores",key,"result",c.string("result"))
+                protectScore(new,label,result).apply{put("scope",new)}
+            }
+            transformRows(db,"risk_tombstones",old) { c ->
+                val key=c.string("label_index")
+                val label=open(old,"risk_scores",key,"label",c.string("label"))
+                val moved=protectScore(new,label,"{}")
+                ContentValues().apply{put("scope",new);put("label_index",moved.getAsString("label_index"));put("label",moved.getAsString("label"))}
+            }
+            db.delete("risk_tombstones","scope=?",arrayOf(old))
+            db.execSQL("UPDATE OR IGNORE risk_state SET scope=? WHERE scope=?",arrayOf(new,old))
+            db.execSQL("UPDATE OR IGNORE risk_replay SET scope=? WHERE scope=?",arrayOf(new,old))
+            db.delete("risk_replay","scope=?",arrayOf(old))
+            for(table in riskParentTables)db.delete(table,"scope=?",arrayOf(old))
             for(table in listOf("seen","capture_seen")){
                 db.execSQL("UPDATE OR IGNORE $table SET scope=? WHERE scope=?",arrayOf(new,old))
             }
