@@ -98,6 +98,12 @@ class InstagramExportTest {
         assertEquals("\u00c3(", InstagramExport.fixMojibake("\u00c3("))
     }
 
+    @Test fun deeplyNestedJsonIsMalformedNotACrash() {
+        val deep = "{\"messages\":" + "[".repeat(100_000) + "]".repeat(100_000) + "}"
+        assertEquals(ImportResult.MALFORMED, parse(deep, "message_1.json").result)
+        assertEquals(ImportResult.MALFORMED, parse("{\"a\":" + "{\"a\":".repeat(100_000) + "1" + "}".repeat(100_001), "message_1.json").result)
+    }
+
     @Test fun jsonOrdersByItsOwnTimestampsWhateverTheFileOrder() {
         val shuffled = listOf(chat[2], chat[0], chat[3], chat[1])
         val c = parse(jsonOf(shuffled), "message_1.json").conversations.single()

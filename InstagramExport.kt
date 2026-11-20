@@ -85,6 +85,8 @@ internal object InstagramExport {
         ParsedExport(ImportResult.IO_ERROR)
     } catch (_: OutOfMemoryError) {
         ParsedExport(ImportResult.TOO_LARGE)
+    } catch (_: StackOverflowError) {
+        ParsedExport(ImportResult.MALFORMED)   // org.json recurses: a deeply nested file is hostile input, not a crash
     }
 
     private fun readFully(input: InputStream, into: ByteArray): Int {
