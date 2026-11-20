@@ -504,7 +504,8 @@ internal object RiskLocal {
         if (policyId(ctx) == id && wasEnabled == enabled) return
         val editor = prefs(ctx).edit().putString(POLICY_ID, id).putBoolean(POLICY_ENABLED, enabled).putString(POLICY_METHOD, method)
         // Manual upload was agreed: switching the mode off must not hand Instagram back to capture without the child agreeing (read before the receipt is cleared).
-        val hold = !enabled && agreedMethod(ctx) == ScoresMethod.UPLOAD
+        // A receipt that is present but unreadable (agreedMethod is null) counts as upload: only a readable capture receipt, or no receipt, releases capture.
+        val hold = !enabled && receiptPrefs(ctx).contains("receipt") && agreedMethod(ctx) != ScoresMethod.CAPTURE
         if (hold) editor.putBoolean(CAPTURE_HELD, true)
         if (!enabled) {
             editor.remove(PAUSED_AT).commit()
