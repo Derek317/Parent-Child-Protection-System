@@ -14,6 +14,7 @@ import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
 import java.text.ParsePosition
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
 import java.util.zip.ZipException
 import java.util.zip.ZipInputStream
@@ -232,8 +233,19 @@ internal object InstagramExport {
     fun parseTime(raw: String): Long? = parseTime(raw, timeFormats())
     private fun timeFormats() = TIMES.map { SimpleDateFormat(it, Locale.ENGLISH).apply { isLenient = false } }
     private val SPACES = Regex("\\s+")
+    /** A Chinese-language account writes "11 月 13, 2026 9:05 下午": month 1-12, 12-hour clock, 上午 = AM, 下午 = PM. Device time zone, like the other formats. */
+    private val ZH_TIME = Regex("^(\\d{1,2}) 月 (\\d{1,2}), (\\d{4}) (\\d{1,2}):(\\d{2}) (上午|下午)$")
+    private fun zhTime(text: String): Long? {
+        val m = ZH_TIME.matchEntire(text)?.groupValues ?: return null
+        val hour = m[4].toInt()
+        if (hour !in 1..12) return null
+        return try {
+            Calendar.getInstance().apply { isLenient = false; clear(); set(m[3].toInt(), m[1].toInt() - 1, m[2].toInt(), hour % 12 + if (m[6] == "下午") 12 else 0, m[5].toInt(), 0) }.timeInMillis
+        } catch (_: IllegalArgumentException) { null }
+    }
     private fun parseTime(raw: String, formats: List<SimpleDateFormat>): Long? {
         val text = raw.replace(' ', ' ').replace(' ', ' ').trim().replace(SPACES, " ")
+        zhTime(text)?.let { return it }
         for (format in formats) {
             val pos = ParsePosition(0)
             val date = format.parse(text, pos)
