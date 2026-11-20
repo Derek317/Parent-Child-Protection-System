@@ -193,11 +193,11 @@ internal object ScoresUi {
             "說明文字已更新，子女需要在自己的手機上再次同意。在子女再次同意之前，子女手機不會儲存或分析任何內容，也不會把訊息文字傳給你，只會傳送不含文字的提醒。你不能代替子女同意。",
             "下一步：請向孩子說明，並請孩子打開 IG Guard 查看。")
         ScoresPage.MODEL_MISSING -> StateCopy("子女手機尚未安裝模型",
-            "分析需要一個模型檔（$MODEL_FILE）。如果安裝的 IG Guard 已內附模型，子女手機打開 App 後會自己安裝；否則要在子女手機手動匯入。在安裝之前不會有新的分數，而在這個模式下你也不會收到訊息內容。",
-            "下一步：請子女打開 IG Guard，等安裝完成（手機需要約 1.1 GB 可用空間）；如果安裝的版本沒有內附模型，請在子女手機的「權限」頁匯入模型檔。")
+            "分析模型（$MODEL_FILE）隨 App 內附，子女手機第一次打開 App 時會自己安裝。如果這個版本的 App 沒有內附模型，AI 風險分析無法使用，請改裝內附模型的安裝包。在安裝之前不會有新的分數，而在這個模式下你也不會收到訊息內容。",
+            "下一步：請子女打開 IG Guard，等安裝完成（手機需要約 1.1 GB 可用空間）。只有沒有內附模型的版本，才需要在子女手機的「權限」頁手動匯入（需要家長密碼）。")
         ScoresPage.MODEL_WRONG -> StateCopy("子女手機的模型檔不正確",
             "子女手機上的檔案不是指定的模型檔，所以不會被使用。只接受完全相同的檔案：$MODEL_FILE，$MODEL_SIZE_TEXT。",
-            "下一步：在子女手機移除該檔案（需要家長密碼），再安裝內附的模型或匯入正確的模型檔。")
+            "下一步：在子女手機移除該檔案（需要家長密碼），再安裝 App 內附的模型。")
         ScoresPage.MODEL_UNSUPPORTED -> StateCopy("子女手機不支援這個功能",
             "這個模式需要約 6 GB 記憶體和 64 位元 ARM 處理器（arm64）的手機。子女手機的記憶體不足或處理器不支援，不能在手機上分析。",
             "下一步：如不打算使用，可以到「家庭」頁關閉僅分數模式。")
@@ -241,8 +241,8 @@ internal object ScoresUi {
         state == null -> "還沒有收到子女手機的回報，暫時不能開啟。"
         state.model == "unsupported_device" -> "子女手機的記憶體不足或處理器不支援，不能使用這個模式。"
         state.model == "engine_unavailable" -> "子女手機的分析功能未能啟動。更新或重新安裝 IG Guard 可能有幫助。"
-        state.model == "mismatch" -> "子女手機上的模型檔不正確。請先在子女手機移除它，再安裝內附的模型或匯入模型檔 $MODEL_FILE。"
-        else -> "請先讓子女手機安裝內附的模型，或匯入模型檔 $MODEL_FILE，子女手機回報模型有效後才能開啟。"
+        state.model == "mismatch" -> "子女手機上的模型檔不正確。請先在子女手機移除它，再安裝 App 內附的模型。"
+        else -> "分析模型隨 App 內附，子女手機第一次打開 IG Guard 時會自己安裝（需要約 1.1 GB 可用空間），回報模型有效後才能開啟。如果這個版本沒有內附模型，AI 風險分析無法使用，請改裝內附模型的安裝包。"
     }
 
     const val PARENT_ON_TITLE = "改用「僅分數模式」？ / Switch to scores-only mode?"
@@ -375,7 +375,7 @@ internal object ScoresChildCopy {
         StatusState.RECONSENT -> listOf(UNTIL_AGREE_AGAIN, PARENT_GETS_NO_TEXT)
         StatusState.PAUSED -> listOf("暫停期間不會儲存或分析任何訊息，家長已被告知你暫停了。不含文字的提醒仍會傳給家長，家長不會收到你的訊息文字。\nWhile paused no messages are stored or analysed, and your parent is told you paused. Alerts without text still go to your parent, who does not receive your message text.")
         StatusState.WITHDRAWN -> listOf("你已撤回同意：分析已停止，這部手機上儲存的訊息已刪除，家長已被告知。在家長關閉僅分數模式之前，家長不會收到訊息文字，只會收到不含文字的提醒。\nYou withdrew: analysis stopped, the messages stored on this phone were deleted and your parent is told. Until your parent turns the mode off, they do not receive message text, only alerts without text.")
-        StatusState.MODEL_MISSING -> listOf("這部手機沒有有效的模型檔，所以不會儲存或分析任何內容。如果這個 App 內附模型，會自動安裝；否則請到「權限」頁匯入模型檔。\nThere is no valid model file on this phone, so nothing is stored or analysed. If this app includes the model it installs by itself; otherwise import the file in Permissions.", PARENT_GETS_NO_TEXT)
+        StatusState.MODEL_MISSING -> listOf("這部手機沒有有效的模型檔，所以不會儲存或分析任何內容。模型隨 App 內附，會自動安裝；如果這個版本沒有內附模型，AI 風險分析無法使用。\nThere is no valid model file on this phone, so nothing is stored or analysed. The model comes with the app and installs itself; if this build does not include it, AI risk analysis is unavailable.", PARENT_GETS_NO_TEXT)
         StatusState.NOT_AVAILABLE -> listOf("這部手機的記憶體不足或處理器不支援，不能使用這個功能，所以不會儲存或分析任何內容。\nThis phone does not have enough memory or the right processor, so nothing is stored or analysed.") + noteForConsent(consent, held)
         StatusState.ENGINE_UNAVAILABLE -> listOf("這個 App 的分析部分未能在這部手機上啟動，所以不會儲存或分析任何內容。更新或重新安裝 App 可能有幫助。\nThe analysis part of this app could not start on this phone, so nothing is stored or analysed. Updating or reinstalling the app may help.") + noteForConsent(consent, held)
         StatusState.NOT_RUNNING -> listOf("目前沒有儲存或分析任何內容（擷取已停止，或雙向擷取尚未確認）。\nNothing is being stored or analysed right now (capture is stopped, or two-way capture is not confirmed).", PARENT_GETS_NO_TEXT)
@@ -426,7 +426,7 @@ internal object ScoresChildCopy {
     // model import
     const val IMPORT_TITLE = "分析模型檔 / Analysis model file"
     const val IMPORT_ROW = "匯入分析模型"
-    const val IMPORT_ROW_DESC = "需要家長的密碼。由家長把模型檔放到這部手機，再在這裡選取。\nA parent's password is needed. A parent puts the model file on this phone, then picks it here."
+    const val IMPORT_ROW_DESC = "這個版本的 App 沒有內附模型，所以無法使用 AI 風險分析。請改裝內附模型的安裝包；否則需要家長的密碼，再手動匯入模型檔。\nThis copy of the app does not include the model, so AI risk analysis is unavailable. Install the package that includes it; otherwise, with a parent's password, import the model file by hand."
     /** Manual import when this app already includes the model. */
     const val IMPORT_ROW_DESC_BUNDLED = "也可以手動匯入模型檔，需要家長的密碼。這個 App 已內附模型，通常不需要。\nYou can also import a model file by hand with a parent's password. This app already includes the model, so this is usually not needed."
     const val BUNDLED_ROW = "安裝 App 內附的模型 / Install the model included in this app"

@@ -4559,8 +4559,8 @@ class MainActivity : Activity() {
                 addView(actionButton("受限設定協助", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss(); openAppDetailsSettings() })
             }
         })
-        rootContainer.addView(row("info", "字型與圖示授權", "開放字型與圖示的來源及授權", t) {
-            showSheet("字型與圖示授權") { _ ->
+        rootContainer.addView(row("info", "開放原始碼及模型授權", "字型、圖示、分析引擎及模型的來源及授權", t) {
+            showSheet("開放原始碼及模型授權") { _ ->
                 val id = resources.getIdentifier("ui_asset_licenses", "raw", packageName)
                 if (id != 0) addView(label(resources.openRawResource(id).bufferedReader().use { it.readText() }, 12f, t.textSecondary))
             }

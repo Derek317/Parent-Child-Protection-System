@@ -120,6 +120,15 @@ class NativeDesignTest {
         assertFalse(latest.isShowing && all(latest.window!!.decorView).filterIsInstance<TextView>().any{it.text.toString()==secret})
         c.destroy()
     }
+    @Test fun licencesScreenListsEngineAndModel() {
+        GuardEngine.setRole(ctx,"parent")
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
+        invoke(c.get(),"navigateTo","settings")
+        all(root(c.get())).first{it.isClickable && it.contentDescription?.toString()?.startsWith("開放原始碼及模型授權")==true}.performClick()
+        val shown=all(ShadowDialog.getLatestDialog().window!!.decorView).filterIsInstance<TextView>().joinToString("\n"){it.text.toString()}
+        assertTrue(shown.contains("llama.cpp") && shown.contains("The ggml authors") && shown.contains("Qwen3 1.7B") && shown.contains("Apache License 2.0"))
+        c.destroy()
+    }
     @Test fun passwordSuggestionIsGeneratedWithoutCreatingFamily() {
         val c=Robolectric.buildActivity(MainActivity::class.java).setup()
         invoke(c.get(),"navigateTo","parent_setup")

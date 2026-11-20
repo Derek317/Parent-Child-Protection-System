@@ -252,7 +252,7 @@ class ScoresParentUiTest {
                 assertFalse(sw.createAccessibilityNodeInfo().isEnabled)
                 val why = UiSupport.texts(sw).joinToString("\n")
                 assertTrue(why.contains("暫時不能開啟"))
-                assertTrue(why.contains("匯入模型檔 ${RiskModelSpec.FILE_NAME}") || why.contains("記憶體不足") || why.contains("還沒有收到"))
+                assertTrue(why.contains("內附") || why.contains("記憶體不足") || why.contains("還沒有收到"))
                 sw.performClick()
                 assertNull(GuardEngine.scoresModePolicy(ctx))
             } finally { c.pause().stop().destroy() }
