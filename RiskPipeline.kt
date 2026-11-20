@@ -328,11 +328,14 @@ internal object RiskLocal {
         return captureModeNow(ctx)
     }
     private fun captureModeNow(ctx: Context): RiskCapture =
-        if (!contentFree(ctx)) RiskCapture.NORMAL else if (agreedMethod(ctx) == ScoresMethod.UPLOAD) RiskCapture.UPLOAD
+        if (!contentFree(ctx)) RiskCapture.NORMAL else if (readsNothing(ctx)) RiskCapture.UPLOAD
         else if (active(ctx)) RiskCapture.ACTIVE else RiskCapture.CONTENT_FREE
 
     /** The child agreed to manual upload and the mode is on: the notification listener and the screen service read nothing. */
-    fun uploadOnly(ctx: Context): Boolean = contentFree(ctx) && agreedMethod(ctx) == ScoresMethod.UPLOAD
+    fun uploadOnly(ctx: Context): Boolean = contentFree(ctx) && readsNothing(ctx)
+
+    /** Only meaningful once [contentFree] holds, i.e. a receipt is present: no agreed method then means the receipt cannot be read, which must fail closed (read nothing) rather than re-enable capture. */
+    private fun readsNothing(ctx: Context): Boolean = agreedMethod(ctx).let { it == null || it == ScoresMethod.UPLOAD }
 
     /** Reasons whose alert text is message content; in content-free mode their text is dropped. */
     fun scrubsText(ctx: Context, reason: String): Boolean = reason in messageReasons && contentFree(ctx)

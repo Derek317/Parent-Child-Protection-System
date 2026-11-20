@@ -599,6 +599,21 @@ class ScoresModeChildTest {
         methodPolicy("upload"); assertTrue(RiskLocal.pendingPolicy(ctx))
     }
 
+    @Test fun anUnreadableReceiptFailsClosedInsteadOfReEnablingCapture() {
+        val receipts = ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE)
+        for (method in listOf("upload", "capture")) {
+            reset(); assertTrue(installModel()); methodPolicy(method); assertTrue(RiskLocal.accept(ctx))
+            receipts.edit().putString("receipt", "not a sealed receipt").commit()
+            assertNull(RiskLocal.agreedMethod(ctx)); assertFalse(RiskLocal.active(ctx))
+            assertTrue("$method: nothing is read from notifications or the screen", RiskLocal.uploadOnly(ctx))
+            assertEquals(method, RiskCapture.UPLOAD, RiskLocal.captureMode(ctx))
+            capture(obs(text(1))); assertEquals(0, count("risk_store"))
+        }
+        // A truly absent receipt keeps its contract: nothing agreed, earlier behaviour.
+        receipts.edit().remove("receipt").commit()
+        assertNull(RiskLocal.agreedMethod(ctx)); assertFalse(RiskLocal.uploadOnly(ctx)); assertEquals(RiskCapture.NORMAL, RiskLocal.captureMode(ctx))
+    }
+
     // ---------- review fixes ----------
     private fun assertTextFree(vararg messages: CapturedText) {
         capture(*messages)
