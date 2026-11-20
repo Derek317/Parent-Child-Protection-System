@@ -33,10 +33,12 @@ class Checks(unittest.TestCase):
   root=Path(__file__).resolve().parents[1]
   ttl=re.search(r'const TTL = (\d+) \* 24',(root/'relay/src/worker.js').read_text()).group(1)
   self.assertEqual(ttl,'7','relay packet lifetime changed: update the in-app texts')
+  idle=re.search(r'const REGISTRATION_TTL = (\d+) \* 24',(root/'relay/src/worker.js').read_text()).group(1)
+  self.assertEqual(idle,'90','relay registration lifetime changed: update the Terms and privacy texts')
   for source in list(root.glob('*.kt'))+list((root/'ui-res').rglob('*.xml')):
    for number,line in enumerate(source.read_text().splitlines(),1):
     for clause in re.split('[。；;]',line):
-     if ('中繼' in clause and '72 小時' in clause) or '退役標記' in clause or ('登記' in clause and '90 天' in clause):
+     if '中繼' in clause and '72 小時' in clause:
       self.fail(f'{source.name}:{number} states relay retention that the relay does not implement: {clause[:60]}')
  def test_user_facing_documents_have_no_branch_or_draft_language(self):
   root=Path(__file__).resolve().parents[1]

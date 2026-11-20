@@ -1,8 +1,8 @@
 # IG Guard 使用條款 / Terms of Service
 
-更新 / Updated: 19 November 2026（香港 / Hong Kong）
+更新 / Updated: 20 November 2026（香港 / Hong Kong）
 版本 / Release: 4.9-beta.4
-條款修訂 / Terms revision: 2026-11-19-v3
+條款修訂 / Terms revision: 2026-11-20-v4
 營運 / Operator: Safe Guard — ppefyp2026@gmail.com
 
 ## 繁體中文
@@ -23,7 +23,7 @@
 
 新封存預設由家長手機收到記錄起計30天到期（記錄顯示的時間來自子女手機，不影響到期），父母可選較短期限。個別記錄詳情提供明確限期保留功能，設定一次90天期限，非無限期延長；普通「儲存」標記不延長期限。既有封存不會因升級立即到期刪除；須先預覽並確認採用期限。手機待傳內容及未完成組合設定72小時期限，重試／日常輪換不延長。到期內容於程式運作及處理封存時清理；App 停止運作時，不能保證到期即從儲存裝置移除所有內容。
 
-中繼封包首次入列七天到期，或消耗後較早移除；重複提交不延長原期限。房間註冊資料目前不會自動到期，亦沒有刪除途徑。本機亦可留下無訊息內容的防重播識別碼及統計。刪除／到期識別碼用於防止相同記錄經重播還原，不等於所有副本已抹除。供應商日誌、地區、備份及支援電郵保留期限未核實，上述期限不涵蓋它們。
+中繼封包首次入列七天到期，或消耗後較早移除；重複提交不延長原期限。若父母及子女手機連續 90 天均沒有連線，中繼會刪除該房間的註冊資料及仍在等候的封包。已驗證的父母亦可在 App 內要求刪除房間。房間刪除或到期後即永久停用：中繼即時刪除該房間的註冊資料及等候中的封包，只保留一項不含金鑰、名稱或訊息內容，而且沒有期限的停用標記；該房間、其金鑰及子女手機的憑證不能再使用，兩部手機須重新配對。父母要求刪除房間前，App 會先向子女手機送出已簽署的解除指令；子女手機核實後會清除該房間的金鑰及未傳送記錄。若子女手機當時離線或未收到指令，則要到重新配對時才清除。父母手機在建立新配對時捨棄舊金鑰及未傳送記錄，已儲存的封存則保留。中繼另保留不含訊息內容的封包記錄（識別碼雜湊、內容雜湊、類別及期限），最長至封包期限後 90 天，用於防止相同記錄經重播還原。本機亦可留下無訊息內容的防重播識別碼及統計。刪除房間不會刪除父母手機的封存、已送達的內容或其他副本；刪除／到期識別碼用於防止相同記錄經重播還原，不等於所有副本已抹除。供應商日誌、地區、備份及支援電郵保留期限未核實，上述期限不涵蓋它們。
 
 ### 4. 首次選擇及停止
 
@@ -65,7 +65,7 @@ The parent UI requires Android biometric/device-credential authentication and re
 
 New archives receive a 30-day expiry counted from when the parent's phone receives the record by default (the time shown comes from the child's phone and does not affect expiry); parents can choose a shorter period. Record details offer explicit preservation for a one-time 90-day period, not indefinite renewal; the ordinary saved/bookmark flag does not extend expiry. Existing archives are not immediately expired/deleted on upgrade: preview and confirmation are required to adopt retention. Phone pending content and incomplete assemblies receive 72-hour deadlines, unchanged by retries or routine rotation. Expired content is cleaned during app activity and archive processing; immediate on-disk removal of all content at the deadline is not assured while the app is stopped.
 
-The relay expires buffered packets seven days after first acceptance, or removes them sooner when consumed; duplicates do not extend the original deadline. Room registration metadata currently has no automatic expiry and no deletion route. Local replay identifiers and statistics can remain. Deleted/expired identifiers help prevent restoration of the same record through replay; they do not establish erasure of every copy. Provider logs, regions, backups and support-email retention remain unverified and are outside these deadlines.
+The relay expires buffered packets seven days after first acceptance, or removes them sooner when consumed; duplicates do not extend the original deadline. If neither the parent's nor the child's phone connects for 90 consecutive days, the relay deletes that room's registration metadata and any packets still waiting. An authenticated parent can also ask in the app for the room to be deleted. A deleted or expired room is retired for good: the relay deletes its registration metadata and waiting packets at once and keeps only a retirement marker that holds no key, name or message and has no expiry. The room, its key and the child phone's credential cannot be used again, and both phones must be paired afresh. Before a parent deletes a room, the app first sends the child phone a signed release; a child phone that verifies it removes that room's key and unsent records. A child phone that is offline or does not receive the release is cleared only when it is paired again. The parent phone discards the old key and unsent records when it creates the new pairing; its saved archive is kept. The relay also keeps content-free packet records (identifier hash, body hash, type and deadline) for up to 90 days after a packet's deadline, to prevent the same record being restored through replay. Local replay identifiers and statistics can remain. Deleting a room does not delete the parent's archive, content already delivered or any other copy; deleted/expired identifiers help prevent restoration of the same record through replay and do not establish erasure of every copy. Provider logs, regions, backups and support-email retention remain unverified and are outside these deadlines.
 
 ### 4. Initial choice and stopping
 

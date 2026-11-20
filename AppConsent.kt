@@ -21,7 +21,7 @@ import java.time.Instant
 
 /** Installation-level acceptance; capture-scope and Android permission grants remain separate. */
 object AppConsent {
-    const val VERSION = "2026-11-19-v3"
+    const val VERSION = "2026-11-20-v4"
     const val TERMS_ASSET = "ig-guard-terms-of-service.md"
     internal val acknowledgments = setOf("consent_terms", "consent_transfer", "consent_family")
     private const val PURPOSE = "consent_receipt"

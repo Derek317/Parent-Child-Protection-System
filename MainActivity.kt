@@ -4094,7 +4094,7 @@ class MainActivity : Activity() {
     }
     private fun showCompromiseRecovery(t: ThemeColors) {
         showSheet("重新安全配對") { dialog ->
-            addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對及核對完整安全代碼。已被複製的舊資料無法收回。 目前的中繼不能刪除房間；中繼上未被取走的舊密文最多保留 7 天。",14f,t.textSecondary,bottomPad=18))
+            addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對及核對完整安全代碼。已被複製的舊資料無法收回。 可先要求中繼刪除舊房間：App 會先向子女手機送出解除指令，中繼確認後舊房間即永久停用，金鑰不能再使用。若中繼未能確認，舊房間上未被取走的密文最多保留 7 天。",14f,t.textSecondary,bottomPad=18))
             fun create(resetSent: Boolean, roomDeleted: Boolean = false) {
                     try {
                         GuardEngine.createFreshFamilyForRecovery(this@MainActivity)
