@@ -2,7 +2,7 @@
 
 更新 / Updated: 20 November 2026（香港 / Hong Kong）
 版本 / Release: 4.9-beta.4
-條款修訂 / Terms revision: 2026-11-20-v4
+條款修訂 / Terms revision: 2026-11-20-v5
 營運 / Operator: Safe Guard — ppefyp2026@gmail.com
 
 ## 繁體中文
@@ -13,13 +13,56 @@
 
 ### 2. 有條件轉傳
 
-接受本條款表示同意下述處理，並不代替 Android 授權或額外啟用擴展擷取。兒童模式配對及 Android 權限具備且未停止收集時，選取的 Instagram 通知／畫面文字加密經 Cloudflare 傳至專門配對並核對的父母／法定監護人閱讀，可含文字、帳戶／對話標籤、方向、時間及提醒原因。一般模式傳送符合規則的傳入提醒；擴展模式另須父母簽署請求及兒童手機本機確認，依子女所選範圍涵蓋傳入、已送出的傳出訊息及可信聯絡人的普通對話脈絡。傳出及可信對象脈絡可分別選擇，擴大範圍須重新確認。不擷取輸入框草稿；歷史草稿仍標示為未確認送出，按封存控制處理。
+接受本條款表示同意下述處理，並不代替 Android 授權或額外啟用擴展擷取。兒童模式配對及 Android 權限具備且未停止收集時，選取的 Instagram 通知／畫面文字加密經 Cloudflare 傳至專門配對並核對的父母／法定監護人閱讀，可含文字、帳戶／對話標籤、方向、時間及提醒原因。一般模式傳送符合規則的傳入提醒；擴展模式另須父母簽署請求及兒童手機本機確認，依子女所選範圍涵蓋傳入、已送出的傳出訊息及可信聯絡人的普通對話脈絡。傳出及可信對象脈絡可分別選擇，擴大範圍須重新確認。不擷取輸入框草稿；歷史草稿仍標示為未確認送出，按封存控制處理。以上轉傳不適用於第2A節的「僅分數模式」：子女同意該模式後，父母不會收到訊息文字。
+
+子女手機約每15分鐘在背景檢查一次：到期時傳送心跳，並向中繼查詢父母指令。即使通知存取及無障礙均已關閉，這項檢查仍會執行。Android 省電時可能延遲。
+
+### 2A. AI 風險分析（僅分數模式）
+
+此模式可選，預設關閉。子女手機回報已有有效模型（見2C）後，父母才可開啟。子女須在自己的手機同意；父母不能代子女同意。子女同意之前，一切不變；選擇「暫時不要」不會儲存或分析任何內容。此同意與第7節三項確認分開。父母每次開啟、關閉或更改此模式，均須在父母手機重新通過裝置驗證。
+
+**做什麼。** 一對一對話由子女手機上的本機模型分析，只在手機充電時進行。從畫面讀取的對話未必能與群組聊天區分，所以在手機上打開的群組聊天也可能被分析；已知是群組的對話不會被分析，只計算數目。子女手機的加密儲存每個對話只保留最新60則訊息，不保留超過14天的訊息；每個對話以最新30則評分。
+
+**父母會收到。** 每個對話對象的帳戶標籤、0至100的分數或「需要檢視」及時間；不含訊息文字的提醒；以及分析是否開啟、暫停或撤回和模型狀態。此模式下，父母不會收到訊息文字，即使在緊急情況亦然。分數報告與其他記錄一樣加密經中繼傳送。
+
+**雙向擷取選項。** 此模式下，雙向擷取的選項只決定子女手機自己為分析儲存甚麼，不會令文字傳給父母。使用自動擷取時，須子女已確認雙向擷取範圍，分析才會運行。
+
+**子女的控制。** 子女可隨時暫停：即時停止儲存及分析，父母會被告知；已儲存的訊息保留，恢復無須重新同意。子女亦可撤回：刪除手機上儲存的聊天文字，父母會被告知；之後提醒仍不含文字，直至父母關閉此模式。
+
+**父母關閉此模式。** 子女手機停止分析並刪除儲存的聊天文字，子女會被告知，原有模式再次適用（例外見2B「擷取暫停」）。已配對家庭在開啟此模式前的封存，會留在父母手機直至父母刪除。
+
+**刪除。** 父母關閉此模式、子女撤回、移除模型、更改收集方式（子女同意新方式時）、子女停止擷取、角色或家庭改變及刪除房間，都會刪除子女手機上儲存的聊天文字。已傳到父母手機的分數報告會保留：報告不含訊息文字，但含對話對象的帳戶標籤，屬個人資料。父母手機上的分數按封存保留期限（由評分時間起計）到期，「刪除此家庭的全部證據」亦會刪除。
+
+**對話的另一方。** 其訊息會儲存於子女手機並被分析，其帳戶標籤會傳給父母。他們未被詢問；父母或子女的同意不代表他們。
+
+### 2B. 收集方式
+
+父母選擇收集方式，子女須在自己的手機同意；更改方式須子女重新同意。子女同意前，原先已同意的方式繼續；從未同意則不會為分析收集任何內容。
+
+**自動擷取。** App 讀取子女手機上的 Instagram 通知及對話畫面（通知存取及無障礙）。父母須勾選以下警告才能送出此選擇，子女的同意頁亦會重複：
+
+> **自動擷取可能違反 Instagram 使用條款**
+> 此方式會讀取子女手機上的 Instagram 通知及對話畫面。Instagram 的使用條款禁止未經其許可以自動方式取得資料。子女的 Instagram 帳戶可能因此被限制或停用。IG Guard 與 Meta 無關，亦未獲 Meta 批准。選擇此方式即表示你明白上述風險，並由你自行決定及承擔使用此方式的責任。如不接受，請改用「手動上載」。
+
+此警告用於告知風險；它本身不會免除任何其他人的法律責任，也不改變第5及6節。關鍵字及非核准聯絡人提醒繼續運作，但不含訊息文字。
+
+**手動上載。** App 不讀取 Instagram：通知或畫面內容不會被儲存、評分、轉傳或用於提醒。青少年自行匯入 Instagram「下載你的資料」得到的檔案（.zip，或其中一個 message_N.html／message_N.json）。檔案以串流讀取，不會複製到 App；只保留一對一對話的訊息文字、方向、時間及對話標籤，存於子女手機的加密儲存；群組對話會略過。上限同上：每個對話最新60則，不超過14天。此方式沒有即時關鍵字提醒及非核准聯絡人提醒。檔案由子女提供，父母無法得知它是否完整或未經修改。App 不能代子女關閉通知存取及無障礙。
+
+**擷取暫停。** 如子女曾同意手動上載，其後父母關閉僅分數模式，App 不會自動恢復讀取 Instagram。擷取保持關閉，直至子女在自己的手機上的提示卡允許；父母會看到擷取已暫停。
+
+### 2C. 模型
+
+模型名為「Beacon」（Qwen3 1.7B 加上經訓練的附加部分，約1.1 GB），由 llama.cpp 在子女手機的處理器上運行。它不在公開儲存庫或 GitHub 版本內；只會隨開發者在本機建立的套件提供，或手動匯入。檔案大小及 SHA-256 不符即被拒絕。記憶體少於約5 GB 或處理器不支援的手機，會顯示此模式不適用；實際上，售賣時標示6 GB 或以上記憶體的手機一般符合。
+
+模型以虛構對話、開發者提供的少量真實對話、PAN-12 研究語料庫（公開的真實聊天研究資料集）的對話，以及開發者自己的普通聊天訓練及測試。這些真實資料不在 App 或儲存庫內，對話亦不是以檔案形式存於模型中；但訓練後的模型有時可能重現訓練文字的片段，這一點未經測試。使用真實對話訓練的合法依據及所需同意，仍是有待香港私隱律師確定的問題。
+
+模型兩個方向都可能出錯，亦不能可靠分辨成年人之間的性對話與誘騙。沒有證據顯示它能可靠偵測真實的誘騙。分數只是訊號，不是結論。如認為子女有即時危險，請致電999（香港）。
 
 ### 3. 加密及保留
 
 傳輸採 AES-256-GCM；WSS/TLS 於 Cloudflare 終止，內容仍以家庭金鑰加密。Safe Guard／Cloudflare 處理密文及房間、傳送、連線中繼資料，不獲家庭解密金鑰。手機偏好字串及封存內容／標籤採 Keystore AES-GCM 欄位加密及 HMAC 索引；時間、類別、不透明識別碼及狀態仍可見，非整個資料庫檔案加密。父母可閱讀／複製；請保護手機、密碼及配對秘密。
 
-父母介面須通過 Android 生物辨識／裝置憑證驗證，離開前景即重新鎖定；背景接收、解密、封存及收據不因此停止。安全視窗旗標及一般私密通知減少畫面外洩；App 的明確複製操作標示為敏感，並嘗試於60秒後清除仍屬該次複製的剪貼簿項目，不能收回其他副本。生產用途的父母簽署身分使用不可匯出的 Keystore 私鑰；核對後匯入舊金鑰以保留子女已信任的公鑰，再移除舊私鑰偏好值。若將既有金鑰移入 Keystore 失敗，App 會繼續使用原有金鑰（由 App 加密保存，不受硬件保護），顯示警告並於每次啟動重試；只有確認 Keystore 金鑰與子女信任的金鑰相符後，才移除舊副本。硬件支援視裝置而定，無法讀取金鑰時不會靜默更換身分。日常遠端金鑰輪換不等於金鑰外洩後復原；「秘密可能外洩：重新安全配對」另建新秘密及簽署身分，須先確認兩部手機安全、停止子女舊擷取，再當面重新配對及核對完整安全代碼，替代秘密不經可疑舊通道傳送。目前的中繼不支援刪除房間，App 會如實顯示為未確認，並保留原有配對；選擇只建立新配對時，不保證中繼已刪除舊資料。舊本機封存隔離保留，舊待傳內容及信任設定捨棄，已被複製的資料無法收回。
+父母介面須通過 Android 生物辨識／裝置憑證驗證，離開前景即重新鎖定；背景接收、解密、封存及收據不因此停止。安全視窗旗標及一般私密通知減少畫面外洩；App 的明確複製操作標示為敏感，並嘗試於60秒後清除仍屬該次複製的剪貼簿項目，不能收回其他副本。生產用途的父母簽署身分使用不可匯出的 Keystore 私鑰；核對後匯入舊金鑰以保留子女已信任的公鑰，再移除舊私鑰偏好值。若將既有金鑰移入 Keystore 失敗，App 會繼續使用原有金鑰（由 App 加密保存，不受硬件保護），顯示警告並於每次啟動重試；只有確認 Keystore 金鑰與子女信任的金鑰相符後，才移除舊副本。硬件支援視裝置而定，無法讀取金鑰時不會靜默更換身分。日常遠端金鑰輪換不等於金鑰外洩後復原；「秘密可能外洩：重新安全配對」另建新秘密及簽署身分，須先確認兩部手機安全、停止子女舊擷取，再當面重新配對及核對完整安全代碼，替代秘密不經可疑舊通道傳送。此畫面可先向子女手機送出已簽署的解除指令，再要求中繼刪除舊房間，並顯示中繼是否確認；未獲確認時保留原有配對，仍可選擇只建立新配對，但不保證中繼已刪除舊資料。舊本機封存隔離保留，舊待傳內容及信任設定捨棄，已被複製的資料無法收回。
 
 新封存預設由家長手機收到記錄起計30天到期（記錄顯示的時間來自子女手機，不影響到期），父母可選較短期限。個別記錄詳情提供明確限期保留功能，設定一次90天期限，非無限期延長；普通「儲存」標記不延長期限。既有封存不會因升級立即到期刪除；須先預覽並確認採用期限。手機待傳內容及未完成組合設定72小時期限，重試／日常輪換不延長。到期內容於程式運作及處理封存時清理；App 停止運作時，不能保證到期即從儲存裝置移除所有內容。
 
@@ -31,7 +74,7 @@
 
 接受前停用收集／中繼。拒絕／返回會回 Android 主畫面，不產生接受收據；佇列暫存待處理，原期限不延長，既有雲端／父母副本不刪除。接受不會取消子女已設定的停止狀態。日常更新保留原同意記錄，不代表同意新修訂。
 
-子女可在「擷取範圍與停止」持續停止新擷取及本機待傳送（停止前會先向家長手機送出一則不含訊息內容的通知，並最多等候約 6 秒；之後不再傳送任何內容），選擇捨棄待傳內容或在原期限內暫存。重新開始須明確選擇，會捨棄舊待傳內容並先恢復傳入提醒，擴展擷取須重新確認。儲存範圍選擇也會捨棄舊範圍待傳內容。可另在 Android 同時關閉通知存取及無障礙以撤銷兩種擷取權限；僅關閉權限不等於捨棄佇列。已轉傳或中繼已緩存的內容仍可能送達；已送達封存、Instagram 內容及外部副本須分別處理。每部手機須分別清除應用程式資料。
+子女可在「擷取範圍與停止」持續停止新擷取及本機待傳送（停止前會先向家長手機送出一則不含訊息內容的通知，並最多等候約 6 秒；之後不再傳送任何內容），選擇捨棄待傳內容或在原期限內暫存。重新開始須明確選擇，會捨棄舊待傳內容並先恢復傳入提醒，擴展擷取須重新確認。儲存範圍選擇也會捨棄舊範圍待傳內容。可另在 Android 同時關閉通知存取及無障礙以撤銷兩種擷取權限；僅關閉權限不等於捨棄佇列。已轉傳或中繼已緩存的內容仍可能送達；已送達封存、Instagram 內容及外部副本須分別處理。每部手機須分別清除應用程式資料。僅分數模式的暫停、撤回及刪除見2A。
 
 ### 5. 法律範圍
 
@@ -39,7 +82,7 @@
 
 ### 6. 服務及查詢
 
-獨立於 Meta，未獲 Meta 批准。擷取、標籤及傳送可不完整、不準確或延遲，無保護保證。穩定 App 未加入新模型；另行進行的合成資料可行性實驗不代表已驗證偵測成效。青少年及其他資料涉及者可電郵上述地址申請查閱、更正或刪除，或須核實身分／權限；初次勿附私訊、密碼或金鑰。
+獨立於 Meta，未獲 Meta 批准。擷取、標籤及傳送可不完整、不準確或延遲，無保護保證。GitHub 版本不含模型；模型只在僅分數模式下於子女手機運行（見2C），並不代表已驗證偵測成效。另行進行的合成資料可行性實驗亦不代表已驗證偵測成效。青少年及其他資料涉及者可電郵上述地址申請查閱、更正或刪除，或須核實身分／權限；初次勿附私訊、密碼或金鑰。
 
 ### 7. 三項確認
 
@@ -55,13 +98,56 @@ Only authorized private safeguarding by parents/legal guardians is permitted. No
 
 ### 2. Conditional forwarding
 
-Acceptance agrees to the processing below; it neither grants Android permissions nor enables expanded capture. With Child Mode pairing, Android permissions and collection active, selected Instagram notification/screen text is encrypted through Cloudflare to the dedicated verified paired parent/legal guardian for reading, including text, account/conversation labels, direction, times and alert reasons. Baseline sends qualifying incoming alerts. Expansion separately requires a signed parent request and local child acknowledgment, covering incoming messages, sent outgoing messages and ordinary trusted-contact context within the child's choices. Outgoing and trusted-context scope can be chosen separately; widening scope requires renewed acknowledgment. Composer drafts are excluded; historical drafts remain labelled unconfirmed as sent and subject to archive controls.
+Acceptance agrees to the processing below; it neither grants Android permissions nor enables expanded capture. With Child Mode pairing, Android permissions and collection active, selected Instagram notification/screen text is encrypted through Cloudflare to the dedicated verified paired parent/legal guardian for reading, including text, account/conversation labels, direction, times and alert reasons. Baseline sends qualifying incoming alerts. Expansion separately requires a signed parent request and local child acknowledgment, covering incoming messages, sent outgoing messages and ordinary trusted-contact context within the child's choices. Outgoing and trusted-context scope can be chosen separately; widening scope requires renewed acknowledgment. Composer drafts are excluded; historical drafts remain labelled unconfirmed as sent and subject to archive controls. This forwarding does not apply in the scores-only mode of section 2A: once the child agrees to that mode, the parent receives no message text.
+
+A child phone checks in in the background about every 15 minutes: it sends a heartbeat when one is due and asks the relay for parent commands. This runs even when both Notification access and Accessibility are off. Android may delay it under battery saving.
+
+### 2A. AI risk analysis (scores-only mode)
+
+This mode is optional and off by default. The parent can switch it on only after the child's phone has reported a valid model (see 2C). The child must agree on their own phone; the parent cannot agree for them. Nothing changes before the child agrees, and choosing "Not now" stores and analyses nothing. This agreement is separate from the three confirmations in section 7. Every parent change to this mode (on, off or method) needs a fresh device authentication on the parent phone.
+
+**What happens.** One-to-one conversations are analysed on the child's phone by a local model, only while the phone is charging. Chats read from the screen cannot always be told apart from group chats, so a group chat opened on the phone may be analysed; a chat known to be a group is not analysed and is only counted. The child phone's encrypted store keeps the latest 60 messages per conversation and nothing older than 14 days. Each conversation is scored on its latest 30 messages.
+
+**What the parent receives.** For each conversation: the other person's account label, a score from 0 to 100 or "needs review", and the time. Also alerts without message text, whether analysis is on, paused or withdrawn, and the model's state. In this mode the parent does not receive message text, even in an emergency. Score reports travel encrypted through the relay like other records.
+
+**Two-way capture options.** In this mode the two-way capture options only decide what the child phone itself stores for analysis. They never send text to the parent. With automatic capture, analysis runs only after the child has confirmed the two-way capture scope.
+
+**The child's controls.** The child can pause at any time. Storing and analysis stop at once and the parent is told; stored messages are kept, and resuming needs no new agreement. The child can also withdraw. This deletes the stored chat text on the child's phone and the parent is told. Alerts then stay without text until the parent switches the mode off.
+
+**The parent switches the mode off.** The child's phone stops analysing and deletes the stored chat text, the child is told, and the earlier mode applies again (except during a capture hold, see 2B). An existing family's archive from before the mode stays on the parent phone until the parent deletes it.
+
+**Deletion.** The stored chat text on the child's phone is deleted when the parent switches the mode off, the child withdraws, the model is removed, the collection method changes (when the child agrees to the new one), the child stops capture, the role or family changes, or the room is deleted. Score reports already sent stay on the parent phone. They hold no message text but do hold the other person's account label, which is personal data. On the parent phone, scores expire with the archive's retention period, counted from when they were scored, and **Delete all evidence for this family** also deletes them.
+
+**The other person in each conversation.** Their messages are stored and analysed on the child's phone, and their account label is sent to the parent. They have not been asked. The parent's or child's agreement does not speak for them.
+
+### 2B. Collection method
+
+The parent chooses the method, and the child must agree on their own phone. A change of method needs the child's fresh agreement. Until then the previously agreed method stays in effect; with no earlier agreement, nothing is collected for analysis.
+
+**Automatic capture.** The app reads Instagram notifications and conversation screens on the child's phone (Notification access and Accessibility). The parent must tick this warning before the choice is sent, and the child's consent page repeats it:
+
+> **Automatic capture may breach Instagram's Terms of Use**
+> This method reads Instagram notifications and conversation screens on your child's phone. Instagram's Terms of Use prohibit collecting information in an automated way without its permission. Your child's Instagram account could be restricted or disabled as a result. IG Guard is independent of Meta and has no Meta approval. By choosing this method you confirm that you understand this risk and that the decision to use it, and the responsibility for it, are yours. If you do not accept this, choose Manual upload.
+
+This warning tells you about a risk. It does not by itself remove anyone else's legal responsibility, and it does not change sections 5 and 6. Keyword and unapproved-contact alerts keep working, without message text.
+
+**Manual upload.** The app reads nothing from Instagram: no notification or screen is stored, scored, forwarded or alerted on. The teen imports the file from Instagram's own "Download your information" (a .zip, or one message_N.html / message_N.json). The file is read as a stream and is not copied into the app. Only message text, direction, time and conversation label of one-to-one chats are kept, in the child phone's encrypted store; group chats are skipped. The same limits apply: the latest 60 messages per conversation, nothing older than 14 days. Real-time keyword and unapproved-contact alerts are not available in this method. The file is supplied by the child, so the parent cannot know that it is complete or unedited. The app cannot switch off Notification access or Accessibility for the child.
+
+**Capture hold.** If the child agreed to manual upload and the parent later switches the scores-only mode off, the app does not go back to reading Instagram. Capture stays off until the child allows it on a card on their own phone, and the parent is told that capture is held.
+
+### 2C. The model
+
+The model is "Beacon" (Qwen3 1.7B with a trained add-on, about 1.1 GB), run by llama.cpp on the child phone's processor. It is not in the public repository or in the GitHub build. It arrives inside a package the developer builds locally, or by manual import, and the app refuses any file whose size and SHA-256 do not match. Phones reporting less than about 5 GB of memory, or with an unsupported processor, show the mode as unavailable; in practice phones sold with 6 GB or more qualify.
+
+The model was trained and tested on invented conversations, a small number of real conversations supplied by the developer, conversations from the PAN-12 research corpus (a public research collection of real chats), and the developer's own ordinary chats. None of that real material is in the app or the repository, and the conversations are not stored as files inside the model. A trained model can sometimes reproduce fragments of its training text; this has not been tested. The lawful basis and consent for using real conversations in training is an open question for a Hong Kong privacy lawyer.
+
+The model can be wrong in both directions. It cannot reliably tell sexual conversation between adults from grooming, and nothing shows that it reliably detects real grooming. A score is a signal, not a conclusion. If you believe a child is in immediate danger, call 999 (Hong Kong).
 
 ### 3. Encryption and retention
 
 Transport uses AES-256-GCM. WSS/TLS terminates at Cloudflare; payloads remain family-encrypted. Safe Guard/Cloudflare process ciphertext and room/delivery/connection metadata without the family decryption key. Phone preference strings and archive content/labels use Keystore AES-GCM field encryption and HMAC indexes. Times/categories/opaque IDs/status remain visible; the whole database file is not encrypted. Parents can read/copy content; secure phones, passwords and pairing secrets.
 
-The parent UI requires Android biometric/device-credential authentication and relocks on leaving the foreground; background receipt, decryption, archiving and acknowledgments continue. Secure-window flags and generic private notifications reduce screen exposure. Explicit app copy actions mark clipboard items sensitive and attempt to clear the still-current item after 60 seconds; other copies cannot be recalled. Production parent signing identities use non-exportable Keystore private keys. Verified legacy import preserves the public key already trusted by the child before removing the old private-key preference. If moving an existing key into the Keystore fails, the app keeps using that existing key (stored encrypted by the app, not hardware-protected), shows a warning and retries at each start; the old copy is removed only after the Keystore key is verified to match the key the child trusts. Hardware backing depends on the device; unavailable keys are not silently replaced. Routine remote rotation is not recovery from key compromise. **秘密可能外洩：重新安全配對** creates fresh secrets and signing identity; first establish that both phones are safe, stop the child's old capture locally, then re-pair in person and compare the full security code. Replacement secrets do not travel through the suspect old channel. The current relay does not support deleting a room, so the app reports this as unconfirmed and keeps the existing pairing; choosing to create a new pairing only gives no assurance that the relay has deleted old data. Old local archives stay isolated, old pending content and trust settings are discarded, and copied old data cannot be recalled.
+The parent UI requires Android biometric/device-credential authentication and relocks on leaving the foreground; background receipt, decryption, archiving and acknowledgments continue. Secure-window flags and generic private notifications reduce screen exposure. Explicit app copy actions mark clipboard items sensitive and attempt to clear the still-current item after 60 seconds; other copies cannot be recalled. Production parent signing identities use non-exportable Keystore private keys. Verified legacy import preserves the public key already trusted by the child before removing the old private-key preference. If moving an existing key into the Keystore fails, the app keeps using that existing key (stored encrypted by the app, not hardware-protected), shows a warning and retries at each start; the old copy is removed only after the Keystore key is verified to match the key the child trusts. Hardware backing depends on the device; unavailable keys are not silently replaced. Routine remote rotation is not recovery from key compromise. **秘密可能外洩：重新安全配對** creates fresh secrets and signing identity; first establish that both phones are safe, stop the child's old capture locally, then re-pair in person and compare the full security code. Replacement secrets do not travel through the suspect old channel. The screen can first send the child phone a signed release and ask the relay to delete the old room, and reports whether the relay confirmed it; if it did not, the existing pairing is kept and creating a new pairing only remains available, without assurance that the relay has deleted old data. Old local archives stay isolated, old pending content and trust settings are discarded, and copied old data cannot be recalled.
 
 New archives receive a 30-day expiry counted from when the parent's phone receives the record by default (the time shown comes from the child's phone and does not affect expiry); parents can choose a shorter period. Record details offer explicit preservation for a one-time 90-day period, not indefinite renewal; the ordinary saved/bookmark flag does not extend expiry. Existing archives are not immediately expired/deleted on upgrade: preview and confirmation are required to adopt retention. Phone pending content and incomplete assemblies receive 72-hour deadlines, unchanged by retries or routine rotation. Expired content is cleaned during app activity and archive processing; immediate on-disk removal of all content at the deadline is not assured while the app is stopped.
 
@@ -73,7 +159,7 @@ These exact GitHub terms appear offline. Three boxes start unticked; all are req
 
 Collection/relay stay off until acceptance. Decline/Back returns to Android Home without an acceptance receipt; queues stay pending within their original deadlines, and earlier cloud/parent copies remain. Acceptance does not cancel a child's persistent stop choice. Ordinary updates preserve the original receipt rather than recording agreement to revised Terms.
 
-The child can use **擷取範圍與停止** (which first sends the parent phone one notice without message content and waits up to about 6 seconds; nothing is sent afterwards) to persistently stop new capture and local pending transfer, choosing discard or hold within the original deadline. Explicit resume discards old pending content and first restarts incoming alerts; expanded capture requires renewed acknowledgment. Saving scope choices also discards old-scope pending content. Both Android notification access and accessibility can additionally be disabled to revoke both capture permissions; permission revocation alone does not discard queues. Already forwarded or relay-buffered content may still arrive. Delivered archives, Instagram content and external copies need separate handling. Clear app data on each phone separately.
+The child can use **擷取範圍與停止** (which first sends the parent phone one notice without message content and waits up to about 6 seconds; nothing is sent afterwards) to persistently stop new capture and local pending transfer, choosing discard or hold within the original deadline. Explicit resume discards old pending content and first restarts incoming alerts; expanded capture requires renewed acknowledgment. Saving scope choices also discards old-scope pending content. Both Android notification access and accessibility can additionally be disabled to revoke both capture permissions; permission revocation alone does not discard queues. Already forwarded or relay-buffered content may still arrive. Delivered archives, Instagram content and external copies need separate handling. Clear app data on each phone separately. Pause, withdrawal and deletion in the scores-only mode are in section 2A.
 
 ### 5. Legal scope
 
@@ -81,7 +167,7 @@ Hong Kong Cap. 486, section 52 exempts personal data held by an individual and c
 
 ### 6. Service and requests
 
-Independent of Meta; no Meta approval. Capture, labels and delivery can be incomplete, inaccurate or delayed; no guaranteed protection. No new model runs in the stable app; separate synthetic-data feasibility experiments do not establish detection efficacy. Teens/others may email above for access/correction/deletion; identity/authority verification may be needed. Initially omit messages/passwords/keys.
+Independent of Meta; no Meta approval. Capture, labels and delivery can be incomplete, inaccurate or delayed; no guaranteed protection. The GitHub build contains no model; a model runs on the child's phone only in the scores-only mode (see 2C), and this does not establish detection efficacy. Separate synthetic-data feasibility experiments also do not establish detection efficacy. Teens/others may email above for access/correction/deletion; identity/authority verification may be needed. Initially omit messages/passwords/keys.
 
 ### 7. Three confirmations
 

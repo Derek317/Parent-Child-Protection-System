@@ -1,6 +1,6 @@
 # IG Guard Data Deletion Instructions
 
-Updated: **20 November 2026 (Hong Kong)**. These steps describe **IG Guard 4.9-beta.4**, bundled Terms revision **2026-11-20-v4**. See the [release notes and known limits](releases/4.9-beta.4.md). Safe Guard handles privacy requests at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
+Updated: **20 November 2026 (Hong Kong)**. These steps describe **IG Guard 4.9-beta.4**, bundled Terms revision **2026-11-20-v5**. See the [release notes and known limits](releases/4.9-beta.4.md). Safe Guard handles privacy requests at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
 
 ## Declining initial terms is separate from deletion
 
@@ -23,12 +23,23 @@ The in-app stop does not revoke Android grants. To remove both capture paths, ad
 
 Content already forwarded or buffered by the relay may still arrive. Neither stop nor permission withdrawal recalls delivered archives, Instagram content or external copies. Use the separate deletion controls below. Locking the **parent UI** also does not stop background delivery or delete anything.
 
+## AI risk analysis (scores-only mode): pause, withdraw and scores
+
+In this mode the child's phone keeps chat text for analysis in its own encrypted store (latest 60 messages per conversation, nothing older than 14 days). Safe Guard and the relay never hold this text.
+
+- **Pause** (child's phone, **AI 風險分析 / AI risk analysis**): storing and analysis stop at once and the parent is told. Pausing does not delete the stored messages.
+- **Withdraw** (child's phone, same place): deletes the stored chat text on the child's phone and tells the parent. Alerts stay without message text until the parent switches the mode off.
+- **The stored chat text is also deleted** when the parent switches the mode off, the model is removed, the collection method changes (when the child agrees to the new one), the child stops capture with **擷取範圍與停止**, the phone leaves the child role or joins another family, or the room is deleted.
+- **Scores already sent stay on the parent's phone.** They hold no message text but do hold the other person's account label, which is personal data. They expire with the archive's retention period, counted from when they were scored. To delete them sooner, use **Delete all evidence for this family (刪除此家庭的全部證據)** below. Scores still queued on the child's phone are kept after a wipe, except when the family itself ends (role change, new family, room deletion).
+- **Manual upload.** The Instagram file the teen imports is read but not copied into the app, so there is no copy of the file to delete inside IG Guard. The file itself stays wherever the teen saved it; delete it there if it is no longer needed.
+- **Capture hold.** If the child had agreed to manual upload and the parent switches the mode off, IG Guard does not read Instagram again until the child allows it on their own phone.
+
 ## Delete captured records on the parent’s phone
 
 Authenticate with the parent phone's Android biometric/device credential first. Leaving the app relocks its UI while background reception continues.
 
 - **One record.** Open **Alerts (提醒) → Conversation history (對話記錄)**, open the message’s full record, then tap **Delete this record (刪除此記錄)** and confirm.
-- **All records for the current family.** In **Conversation history (對話記錄)**, return to the list, scroll to **Delete all evidence for this family (刪除此家庭的全部證據)**, and confirm. This removes the current family’s archived text, saved records and incomplete message fragments on that phone. Chart counts and replay-prevention identifiers may remain. This also clears the phone's connection diagnostics log.
+- **All records for the current family.** In **Conversation history (對話記錄)**, return to the list, scroll to **Delete all evidence for this family (刪除此家庭的全部證據)**, and confirm. This removes the current family’s archived text, saved records, incomplete message fragments and AI risk scores on that phone. Chart counts and replay-prevention identifiers may remain. This also clears the phone's connection diagnostics log.
 - **Archives for other families.** Open **Settings (設定) → Other families’ local archives (其他家庭的本機封存)** if that option appears, then confirm deletion.
 
 Older unsent comment/story-reply observations remain labelled historical, with sending unconfirmed. They are subject to the same deletion controls and legacy-retention preview.
@@ -41,7 +52,7 @@ Open **Settings → 保留期限與舊記錄預覽** to see the number of legacy
 
 ## Remove IG Guard data from both phones
 
-On each phone, open **Android Settings → Apps → IG Guard → Storage**, then choose **Clear storage** or **Clear data**. Uninstalling IG Guard also removes its local app data. Perform this separately on the teen’s phone and the parent’s phone to remove both the local delivery queue and the parent’s archive. This also removes pairing, settings and that phone's acceptance receipt. A subsequent setup requires initial acceptance again; this is different from a normal update retaining app data. Any text someone copied or shared outside the app must be removed wherever that copy is stored. Clearing a child's phone does not erase the parent's phone, and neither action alone requests relay erasure.
+On each phone, open **Android Settings → Apps → IG Guard → Storage**, then choose **Clear storage** or **Clear data**. Uninstalling IG Guard also removes its local app data. Perform this separately on the teen’s phone and the parent’s phone to remove both the local delivery queue and the parent’s archive. This also removes pairing, settings and that phone's acceptance receipt, and on the child's phone the scores-only store, the child's agreement record and the app's copy of the model. A subsequent setup requires initial acceptance again; this is different from a normal update retaining app data. Any text someone copied or shared outside the app must be removed wherever that copy is stored. Clearing a child's phone does not erase the parent's phone, and neither action alone requests relay erasure.
 
 ## Request help with data held by Safe Guard
 
