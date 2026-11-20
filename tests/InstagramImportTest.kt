@@ -227,4 +227,25 @@ class InstagramImportTest {
         assertTrue(outbox().none { it.toString().contains(secret) })
         runBatch(); assertTrue(outbox().none { it.toString().contains(secret) || it.toString().contains("PRIVATE") })
     }
+
+    // ---------- order of messages in the prompt ----------
+    private fun promptOrder(prompt: String, vararg texts: String): List<Int> = texts.map { prompt.indexOf(it).also { i -> assertTrue("missing $it", i >= 0) } }
+    @Test fun thePromptListsAnImportedConversationOldestFirst() {
+        activate(ScoresMethod.UPLOAD)
+        val shuffled = listOf(chat[2], chat[0], chat[3], chat[1])   // the file order does not matter, the timestamps do
+        assertEquals(ImportResult.OK, import(json(shuffled).toByteArray(), "message_1.json").result)
+        val scorer = FakeScorer(); assertEquals(1, runBatch(scorer).scored)
+        val p = scorer.prompts.single()
+        val at = promptOrder(p, "child: hi Bea", "other: did you finish the maths?", "child: ok, bring the notes", "other: see you tomorrow")
+        assertEquals(at.sorted(), at)
+    }
+    @Test fun thePromptListsACapturedConversationOldestFirst() {
+        activate(ScoresMethod.CAPTURE)
+        // The newest message is read first and the oldest last, as when several notifications arrive together.
+        GuardEngine.captureMessages(ctx, listOf(note("Pal", "fourth message", "incoming", 1000), note("Pal", "third message", "outgoing", 2000)))
+        GuardEngine.captureMessages(ctx, listOf(note("Pal", "second message", "incoming", 3000), note("Pal", "first message", "outgoing", 4000)))
+        val scorer = FakeScorer(); assertEquals(1, runBatch(scorer).scored)
+        val at = promptOrder(scorer.prompts.single(), "first message", "second message", "third message", "fourth message")
+        assertEquals(at.sorted(), at)
+    }
 }
