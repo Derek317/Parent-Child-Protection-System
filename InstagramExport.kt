@@ -357,6 +357,8 @@ internal object InstagramImport {
             val cutoff = now - RiskLimits.DAYS * 86_400_000L
             var stored = 0
             var conversations = 0
+            // The parse can be long: a wipe, pause, withdrawal or method change meanwhile must win, so permission is checked again under the session lock.
+            val stillAllowed = GuardEngine.withSessionLock { if (!allowed(app)) false else {
             FamilyEvidence(app).use { db ->
                 val sql = db.writableDatabase
                 sql.beginTransaction()
@@ -379,6 +381,8 @@ internal object InstagramImport {
                     sql.setTransactionSuccessful()
                 } finally { sql.endTransaction() }
             }
+            true } }
+            if (!stillAllowed) return ImportSummary(ImportResult.NOT_ALLOWED)
             try { RiskScoringSchedule.sync(app) } catch (_: RuntimeException) {}
             ImportSummary(ImportResult.OK, conversations, parsed.groups, stored)
         } catch (_: Exception) {

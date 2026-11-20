@@ -218,6 +218,22 @@ class InstagramImportTest {
         assertTrue(RiskLocal.withdraw(ctx)); assertEquals(ImportResult.NOT_ALLOWED, import(bytes).result); assertEquals(0, count("risk_store"))
         assertEquals(0, count("risk_store"))
     }
+    @Test fun anImportThatLosesPermissionWhileParsingStoresNothing() {
+        val bytes = json(chat).toByteArray()
+        val changes = listOf<Pair<String, () -> Unit>>("withdrawn" to { assertTrue(RiskLocal.withdraw(ctx)) }, "paused" to { assertTrue(RiskLocal.pause(ctx)) },
+            "method changed" to { RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.CAPTURE); assertTrue(RiskLocal.accept(ctx)) },
+            "switched off" to { RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false) })
+        for ((name, change) in changes) {
+            reset(); activate(ScoresMethod.UPLOAD)
+            // The change lands after allowed() was checked, in the middle of reading the file.
+            val input = object : java.io.FilterInputStream(ByteArrayInputStream(bytes)) {
+                var done = false
+                override fun read(b: ByteArray, off: Int, len: Int): Int { if (!done) { done = true; change() }; return super.read(b, off, len) }
+            }
+            assertEquals(name, ImportResult.NOT_ALLOWED, InstagramImport.run(ctx, input, "message_1.json").result)
+            assertEquals(name, 0, count("risk_store"))
+        }
+    }
     @Test fun importedTextIsNeverLoggedAndNeverQueuedForTheRelay() {
         activate(ScoresMethod.UPLOAD)
         val messages = listOf(M(friend, "$secret one", 1), M(teen, "$secret two", 2))
