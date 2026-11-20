@@ -1461,16 +1461,17 @@ object GuardEngine {
 
     /**
      * Parent: sends the signed scores-mode policy. Enabling is refused (false) unless the child's last report says the model is valid.
-     * Every new enabling uses a new policy id; enabling again while already enabled resends the same id. Disabling is always allowed.
-     * False also if the record could not be queued; the saved policy then stays as it was.
+     * Every new enabling uses a new policy id, and so does a change of [method]; enabling again with the same method while already enabled
+     * resends the same id. Disabling is always allowed. False also for an unknown method, or if the record could not be queued; the saved policy then stays as it was.
      */
-    fun sendScoresModePolicy(ctx: Context, enabled: Boolean): Boolean = synchronized(pollLock) {
+    fun sendScoresModePolicy(ctx: Context, enabled: Boolean, method: String = ScoresMethod.CAPTURE): Boolean = synchronized(pollLock) {
         check(isParentMode(ctx))
+        if (!ScoresMethod.valid(method)) return@synchronized false
         val token = getOrCreateFamilyToken(ctx);val topic = getChannelTopicForToken(token)
         val current = RiskLocal.parentPolicy(ctx)
-        val resend = enabled && current?.enabled == true
+        val resend = enabled && current?.enabled == true && current.method == method
         if (enabled && !resend && FamilyEvidence(ctx).use { it.scoresModeState(topic) }?.model != "valid") return@synchronized false
-        postScoresPolicy(ctx, topic, token, if (resend) current!!.policyId else UUID.randomUUID().toString(), enabled)
+        postScoresPolicy(ctx, topic, token, if (resend) current!!.policyId else UUID.randomUUID().toString(), enabled, method)
     }
 
     /** Parent: sends the CURRENT policy again (same id, same value, fresh signature and time). For a manual "send again". */
@@ -1478,14 +1479,16 @@ object GuardEngine {
         check(isParentMode(ctx))
         val current = RiskLocal.parentPolicy(ctx) ?: return@synchronized false
         val token = getOrCreateFamilyToken(ctx)
-        postScoresPolicy(ctx, getChannelTopicForToken(token), token, current.policyId, current.enabled)
+        postScoresPolicy(ctx, getChannelTopicForToken(token), token, current.policyId, current.enabled, current.method)
     }
 
-    private fun postScoresPolicy(ctx: Context, topic: String, token: String, id: String, enabled: Boolean): Boolean {
+    private fun postScoresPolicy(ctx: Context, topic: String, token: String, id: String, enabled: Boolean, method: String): Boolean {
         val now = System.currentTimeMillis()
         val payload = JSONObject().put("type", "scores_mode_policy").put("policy_id", id).put("enabled", enabled).put("ts_ms", now)
+        // No field means capture, so a capture policy is byte-compatible with what builds before this one send and read.
+        if (method != ScoresMethod.CAPTURE) payload.put("method", method)
         if (postControlChecked(ctx, topic, token, payload) == null) return false
-        return RiskLocal.saveParentPolicy(ctx, id, enabled, now)
+        return RiskLocal.saveParentPolicy(ctx, id, enabled, now, method)
     }
 
     /** A policy the child has not applied (it was rejected as too old, or lost): re-post it, at most once an hour. */
@@ -1746,7 +1749,7 @@ object GuardEngine {
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
             }
-            "scores_mode_policy" -> if(role=="child")RiskLocal.receivePolicy(ctx,inner.getString("policy_id"),inner.getBoolean("enabled"))
+            "scores_mode_policy" -> if(role=="child")RiskLocal.receivePolicy(ctx,inner.getString("policy_id"),inner.getBoolean("enabled"),inner.optString("method",ScoresMethod.CAPTURE))
             "scores_mode_report" -> if(role=="parent") {
                 val received=System.currentTimeMillis();val topic=getChannelTopicForToken(token)
                 val report=ScoresReportCodec.parse(inner,topic,received)

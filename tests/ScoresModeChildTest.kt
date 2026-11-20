@@ -549,6 +549,56 @@ class ScoresModeChildTest {
         }
     }
 
+    // ---------- collection method ----------
+    private fun receiptJson() = JSONObject(LocalVault.open(ctx, "scores_consent_receipt", ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).getString("receipt", "")!!))
+    private fun methodPolicy(method: String?, enabled: Boolean = true) = UUID.randomUUID().toString().also { id ->
+        RiskLocal.receivePolicy(ctx, id, enabled, method ?: "capture")
+    }
+    @Test fun aSignedPolicyMayCarryOnlyCaptureOrUploadAndAbsentMeansCapture() {
+        val id = UUID.randomUUID().toString()
+        assertEquals(RelayConsumption.CONSUMED, receiveSigned(policyCommand(id, true).put("method", "upload")))
+        assertEquals("upload", RiskLocal.policyMethod(ctx)); assertEquals(id, RiskLocal.policyId(ctx))
+        val other = UUID.randomUUID().toString()
+        assertEquals(RelayConsumption.CONSUMED, receiveSigned(policyCommand(other, true)))
+        assertEquals("capture", RiskLocal.policyMethod(ctx))
+        for (bad in listOf<Any>("scrape", "", "UPLOAD", 1, JSONObject.NULL, true)) {
+            val before = RiskLocal.policyId(ctx)
+            assertNotEquals("method=$bad", RelayConsumption.CONSUMED, receiveSigned(policyCommand(UUID.randomUUID().toString(), true).put("method", bad)))
+            assertEquals(before, RiskLocal.policyId(ctx))
+        }
+    }
+    @Test fun noMethodTakesEffectBeforeTheChildAgreesAndTheReceiptRecordsIt() {
+        assertTrue(installModel()); methodPolicy("upload")
+        assertNull("nothing agreed yet", RiskLocal.agreedMethod(ctx)); assertEquals("upload", RiskLocal.policyMethod(ctx))
+        assertEquals("the earlier behaviour continues until the child agrees", RiskCapture.NORMAL, RiskLocal.captureMode(ctx))
+        assertTrue(RiskLocal.pendingPolicy(ctx)); assertFalse(RiskLocal.active(ctx))
+        assertTrue(RiskLocal.accept(ctx))
+        assertEquals("upload", receiptJson().getString("method")); assertEquals("upload", RiskLocal.agreedMethod(ctx))
+    }
+    @Test fun aMethodChangeAsksAgainAndTheAgreedMethodStaysInEffectMeanwhile() {
+        activate(); capture(obs(text(1))); runBatch()
+        val agreedPolicy = RiskLocal.policyId(ctx); assertEquals("capture", receiptJson().getString("method"))
+        val upload = methodPolicy("upload")
+        assertEquals("accepted", RiskLocal.consentState(ctx)); assertTrue("the child is asked again", RiskLocal.pendingPolicy(ctx))
+        assertEquals("capture", RiskLocal.agreedMethod(ctx)); assertEquals(RiskCapture.ACTIVE, RiskLocal.captureMode(ctx)); assertTrue(RiskLocal.active(ctx))
+        assertEquals("the parent keeps seeing a report about the policy the child has answered", agreedPolicy, reports().last().getJSONObject("state").getString("policy_id"))
+        assertEquals(1, count("risk_store"))
+        assertTrue(RiskLocal.accept(ctx))
+        assertEquals("upload", receiptJson().getString("method")); assertEquals(upload, receiptJson().getString("policy_id")); assertFalse(RiskLocal.pendingPolicy(ctx))
+        assertEquals("a method change deletes the chat text", 0, count("risk_store")); assertEquals(0, count("risk_results"))
+        assertTrue("queued score reports stay", reports().any { it.getJSONArray("conversations").length() > 0 })
+        assertEquals(upload, reports().last().getJSONObject("state").getString("policy_id"))
+        // The same method under a new id is no change.
+        methodPolicy("upload"); assertFalse(RiskLocal.pendingPolicy(ctx)); assertEquals("accepted", RiskLocal.consentState(ctx))
+    }
+    @Test fun anOlderReceiptWithoutAMethodMeansCaptureAndOnlyAMethodChangeAsksAgain() {
+        activate()
+        val old = receiptJson(); old.remove("method")
+        ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).edit().putString("receipt", LocalVault.seal(ctx, "scores_consent_receipt", old.toString())).commit()
+        assertEquals("capture", RiskLocal.agreedMethod(ctx)); methodPolicy("capture"); assertFalse(RiskLocal.pendingPolicy(ctx))
+        methodPolicy("upload"); assertTrue(RiskLocal.pendingPolicy(ctx))
+    }
+
     // ---------- review fixes ----------
     private fun assertTextFree(vararg messages: CapturedText) {
         capture(*messages)

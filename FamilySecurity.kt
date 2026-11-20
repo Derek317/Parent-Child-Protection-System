@@ -287,7 +287,7 @@ object FamilySecurity {
         return when (type) {
             "capture_policy" -> command.optInt("schema_version")==2 && command.optString("mode")=="full_visible_conversation" &&
                 try { UUID.fromString(command.getString("policy_id")).toString()==command.getString("policy_id") } catch(_:Exception){false}
-            "scores_mode_policy" -> command.opt("enabled") is Boolean &&
+            "scores_mode_policy" -> command.opt("enabled") is Boolean && (!command.has("method") || ScoresMethod.valid(command.opt("method"))) &&
                 try { UUID.fromString(command.getString("policy_id")).toString()==command.getString("policy_id") } catch(_:Exception){false}
             "unlock_code" -> validCode(command.optString("code")) && command.optLong("exp") in (now + 1)..(timestamp + 15 * 60_000L)
             "alert_receipt" -> command.optString("event_id").matches(Regex("[A-Za-z0-9:_-]{1,160}")) && command.optString("outcome") in setOf("stored","discarded")

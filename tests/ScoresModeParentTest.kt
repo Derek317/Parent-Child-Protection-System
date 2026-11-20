@@ -157,6 +157,21 @@ class ScoresModeParentTest {
         assertTrue(GuardEngine.sendScoresModePolicy(ctx, false))
         assertFalse(GuardEngine.scoresModePolicy(ctx)!!.enabled); assertNotEquals(first.policyId, GuardEngine.scoresModePolicy(ctx)!!.policyId)
     }
+    @Test fun theMethodIsSignedStoredAndAMethodChangeIsANewPolicy() {
+        GuardEngine.relayPublicKey(ctx)
+        deliver(report(state = state("valid")))
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)); val capture = GuardEngine.scoresModePolicy(ctx)!!
+        assertEquals("capture", capture.method); assertFalse("an absent method means capture", queuedPolicies().single().has("method"))
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true, "upload")); val upload = GuardEngine.scoresModePolicy(ctx)!!
+        assertEquals("upload", upload.method); assertNotEquals(capture.policyId, upload.policyId)
+        assertEquals("upload", queuedPolicies().single { it.getString("policy_id") == upload.policyId }.getString("method"))
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true, "upload")); assertEquals("the same method resends the same policy", upload.policyId, GuardEngine.scoresModePolicy(ctx)!!.policyId)
+        assertTrue(GuardEngine.resendScoresModePolicy(ctx)); assertEquals("upload", queuedPolicies().last { it.getString("policy_id") == upload.policyId }.getString("method"))
+        assertTrue(GuardEngine.sendScoresModePolicy(ctx, true, "capture")); assertNotEquals(upload.policyId, GuardEngine.scoresModePolicy(ctx)!!.policyId)
+        assertEquals("capture", GuardEngine.scoresModePolicy(ctx)!!.method)
+        val before = GuardEngine.scoresModePolicy(ctx)!!.policyId
+        assertFalse("an unknown method is refused", GuardEngine.sendScoresModePolicy(ctx, true, "scrape")); assertEquals(before, GuardEngine.scoresModePolicy(ctx)!!.policyId)
+    }
     @Test fun aReportIsStaleAfterSeventyTwoHours() {
         deliver(report())
         assertFalse(childState()!!.stale)

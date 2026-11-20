@@ -53,8 +53,15 @@ data class ScoresModeState(
     val active: Boolean = false
 )
 
-/** What the parent last asked for. */
-data class ScoresModePolicy(val policyId: String, val enabled: Boolean, val sentAt: Long)
+/** How the child's chats reach the analysis: `capture` (notifications and screen, today's behaviour) or `upload` (the teen imports Instagram's own export). */
+internal object ScoresMethod {
+    const val CAPTURE = "capture"
+    const val UPLOAD = "upload"
+    fun valid(method: Any?) = method == CAPTURE || method == UPLOAD
+}
+
+/** What the parent last asked for. [method] is `capture` when the command carried none. */
+data class ScoresModePolicy(val policyId: String, val enabled: Boolean, val sentAt: Long, val method: String = ScoresMethod.CAPTURE)
 
 internal data class RiskReportRow(val thread: String, val label: String, val score: Double?, val reason: String?, val scoredAt: Long, val changed: Boolean = false) {
     fun signature() = "$score|$reason|$scoredAt"
@@ -235,6 +242,7 @@ internal object RiskLocal {
     private const val RECEIPT_PURPOSE = "scores_consent_receipt"
     private const val POLICY_ID = "scores_policy_id"
     private const val POLICY_ENABLED = "scores_policy_enabled"
+    private const val POLICY_METHOD = "scores_policy_method"
     private const val PAUSED_AT = "scores_paused_at_ms"
     private const val LAST_RUN = "scores_last_run_ms"
     private const val LAST_SCORED = "scores_last_scored"
@@ -247,6 +255,7 @@ internal object RiskLocal {
     internal const val REPORT_DUE = "scores_report_due"
     private const val PARENT_POLICY_ID = "scores_parent_policy_id"
     private const val PARENT_POLICY_ENABLED = "scores_parent_policy_enabled"
+    private const val PARENT_POLICY_METHOD = "scores_parent_policy_method"
     private const val PARENT_POLICY_AT = "scores_parent_policy_at_ms"
     private const val POLICY_REPOST = "scores_policy_repost_ms"
     private val messageReasons = setOf("stranger_message", "sexual_or_grooming_content", "flagged_contact_follow_up")
@@ -257,6 +266,8 @@ internal object RiskLocal {
     // ---------------- gates ----------------
     fun policyId(ctx: Context): String = prefs(ctx).getString(POLICY_ID, "") ?: ""
     fun policyEnabled(ctx: Context): Boolean = prefs(ctx).getBoolean(POLICY_ENABLED, false) && policyId(ctx).isNotEmpty()
+    /** The method the parent's current policy asks for. It takes effect only once the child has agreed to it: see [agreedMethod]. */
+    fun policyMethod(ctx: Context): String = prefs(ctx).getString(POLICY_METHOD, null)?.takeIf { ScoresMethod.valid(it) } ?: ScoresMethod.CAPTURE
     fun pausedAt(ctx: Context): Long = prefs(ctx).getLong(PAUSED_AT, 0L)
     fun paused(ctx: Context): Boolean = pausedAt(ctx) > 0
 
@@ -277,6 +288,21 @@ internal object RiskLocal {
         // Agreement to older wording does not count ("reconsent"): ask again (pending), while alerts stay content-free in the meantime.
         return if (json.optString("version") == WORDING_VERSION) "accepted" else "reconsent"
     }
+
+    /**
+     * The method the child agreed to (a receipt without one means capture), or null with no readable receipt. This, not the parent's
+     * latest request, is what the phone does: a method change waits for the child's agreement.
+     */
+    fun agreedMethod(ctx: Context): String? {
+        val r = receipt(ctx) ?: return null
+        return r.optString("method").takeIf { ScoresMethod.valid(it) } ?: ScoresMethod.CAPTURE
+    }
+
+    /** The child agreed and the parent has since asked for another method. */
+    private fun methodChangePending(ctx: Context): Boolean = consentState(ctx) == "accepted" && agreedMethod(ctx) != policyMethod(ctx)
+
+    /** The policy id this phone has answered: the receipt's while a method change is waiting for agreement, so the parent sees "waiting". */
+    fun answeredPolicyId(ctx: Context): String = if (methodChangePending(ctx)) receipt(ctx)?.optString("policy_id").orEmpty() else policyId(ctx)
 
     /** Any receipt, whatever its wording version, keeps the phone content-free until the parent switches the mode off. */
     fun contentFree(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && GuardEngine.isChildMode(ctx) && policyEnabled(ctx) && receiptPrefs(ctx).contains("receipt")
@@ -409,8 +435,8 @@ internal object RiskLocal {
         wipeData(ctx)
         // The family ended: its queued reports could never be delivered. The chat text is already gone, so a failure here leaves nothing private behind.
         retrying("report") { RiskReporter.purgeQueued(ctx, GuardEngine.getChannelTopic(ctx)) }
-        prefs(ctx).edit().remove(POLICY_ID).remove(POLICY_ENABLED).remove(PAUSED_AT).remove(LAST_RUN).remove(BASELINE)
-            .remove(PARENT_POLICY_ID).remove(PARENT_POLICY_ENABLED).remove(PARENT_POLICY_AT).remove(CHANGE_NOTICE).remove(POLICY_REPOST).commit()
+        prefs(ctx).edit().remove(POLICY_ID).remove(POLICY_ENABLED).remove(POLICY_METHOD).remove(PAUSED_AT).remove(LAST_RUN).remove(BASELINE)
+            .remove(PARENT_POLICY_ID).remove(PARENT_POLICY_ENABLED).remove(PARENT_POLICY_METHOD).remove(PARENT_POLICY_AT).remove(CHANGE_NOTICE).remove(POLICY_REPOST).commit()
         receiptPrefs(ctx).edit().clear().commit()
         try { RiskScoringSchedule.sync(ctx) } catch (_: RuntimeException) {}
     }
@@ -443,7 +469,7 @@ internal object RiskLocal {
         return when (consentState(ctx)) {
             "none", "reconsent" -> true
             "withdrawn" -> receipt(ctx)?.let { it.optString("policy_id") != policyId(ctx) } ?: false
-            else -> false
+            else -> methodChangePending(ctx)
         }
     }
 
@@ -452,10 +478,11 @@ internal object RiskLocal {
      * content-free mode: it deletes the store, the pause and the consent receipt. A new id while enabled keeps an
      * accepted consent (no gap); after a withdrawal it makes [pendingPolicy] true again.
      */
-    fun receivePolicy(ctx: Context, id: String, enabled: Boolean) {
+    fun receivePolicy(ctx: Context, id: String, enabled: Boolean, method: String = ScoresMethod.CAPTURE) {
+        require(ScoresMethod.valid(method))
         val wasEnabled = prefs(ctx).getBoolean(POLICY_ENABLED, false)
         if (policyId(ctx) == id && wasEnabled == enabled) return
-        val editor = prefs(ctx).edit().putString(POLICY_ID, id).putBoolean(POLICY_ENABLED, enabled)
+        val editor = prefs(ctx).edit().putString(POLICY_ID, id).putBoolean(POLICY_ENABLED, enabled).putString(POLICY_METHOD, method)
         if (!enabled) {
             editor.remove(PAUSED_AT).commit()
             receiptPrefs(ctx).edit().clear().commit()
@@ -505,12 +532,16 @@ internal object RiskLocal {
     fun accept(ctx: Context): Boolean = GuardEngine.withSessionLock {
         if (!pendingPolicy(ctx)) return@withSessionLock false
         val now = System.currentTimeMillis()
-        val receipt = JSONObject().put("version", WORDING_VERSION).put("policy_id", policyId(ctx)).put("accepted_at", now).put("withdrawn_at", 0L)
+        val method = policyMethod(ctx)
+        val methodChanged = agreedMethod(ctx)?.let { it != method } ?: false
+        val receipt = JSONObject().put("version", WORDING_VERSION).put("policy_id", policyId(ctx)).put("method", method).put("accepted_at", now).put("withdrawn_at", 0L)
         LocalVault.preferences(ctx)
         if (!receiptPrefs(ctx).edit().putString("receipt", LocalVault.seal(ctx, RECEIPT_PURPOSE, receipt.toString())).commit()) return@withSessionLock false
         // Only queued records that can carry message text go; tamper, unlock, pairing, heartbeat and control records stay.
         val token = GuardEngine.getOrCreateFamilyToken(ctx)
         FamilyEvidence(ctx).use { db -> db.discardPendingMatching(GuardEngine.getChannelTopic(ctx)) { wire -> carriesText(token, wire) } }
+        // Text kept for the earlier method must not mix with the new one's: a method change deletes it (queued score reports stay).
+        if (methodChanged) wipeData(ctx)
         prefs(ctx).edit().putString(CHANGE_NOTICE, "on").remove(RECONSENT_WIPED).commit()
         prefs(ctx).edit().remove(PAUSED_AT).putLong(BASELINE, now).commit()
         changed(ctx)
@@ -607,15 +638,16 @@ internal object RiskLocal {
     // ---------------- parent policy bookkeeping ----------------
     fun parentPolicy(ctx: Context): ScoresModePolicy? {
         val id = prefs(ctx).getString(PARENT_POLICY_ID, "") ?: ""
-        return if (id.isEmpty()) null else ScoresModePolicy(id, prefs(ctx).getBoolean(PARENT_POLICY_ENABLED, false), prefs(ctx).getLong(PARENT_POLICY_AT, 0L))
+        return if (id.isEmpty()) null else ScoresModePolicy(id, prefs(ctx).getBoolean(PARENT_POLICY_ENABLED, false), prefs(ctx).getLong(PARENT_POLICY_AT, 0L),
+            prefs(ctx).getString(PARENT_POLICY_METHOD, null)?.takeIf { ScoresMethod.valid(it) } ?: ScoresMethod.CAPTURE)
     }
     /** Parent: true (and recorded) at most once an hour, for the automatic re-post of an unapplied policy. */
     fun repostDue(ctx: Context, now: Long = System.currentTimeMillis()): Boolean {
         if (now - prefs(ctx).getLong(POLICY_REPOST, 0L) < 3_600_000L) return false
         return prefs(ctx).edit().putLong(POLICY_REPOST, now).commit()
     }
-    fun saveParentPolicy(ctx: Context, id: String, enabled: Boolean, at: Long): Boolean =
-        prefs(ctx).edit().putString(PARENT_POLICY_ID, id).putBoolean(PARENT_POLICY_ENABLED, enabled).putLong(PARENT_POLICY_AT, at).commit()
+    fun saveParentPolicy(ctx: Context, id: String, enabled: Boolean, at: Long, method: String = ScoresMethod.CAPTURE): Boolean =
+        prefs(ctx).edit().putString(PARENT_POLICY_ID, id).putBoolean(PARENT_POLICY_ENABLED, enabled).putString(PARENT_POLICY_METHOD, method).putLong(PARENT_POLICY_AT, at).commit()
 }
 
 /** Message text on its way into a prompt. */
@@ -639,7 +671,7 @@ internal object RiskReporter {
     fun stateJson(ctx: Context, unknownThreads: Int): JSONObject {
         val paused = RiskLocal.pausedAt(ctx).takeIf { it > 0 }
         val last = RiskLocal.lastRun(ctx).takeIf { it > 0 }
-        return JSONObject().put("policy_id", RiskLocal.policyId(ctx).ifEmpty { null } ?: JSONObject.NULL)
+        return JSONObject().put("policy_id", RiskLocal.answeredPolicyId(ctx).ifEmpty { null } ?: JSONObject.NULL)
             .put("model", RiskModelStore.state(ctx).wire).put("consent", RiskLocal.consentState(ctx)).put("active", RiskLocal.active(ctx))
             .put("paused", paused != null).put("paused_at_ms", paused ?: JSONObject.NULL).put("last_run_ms", last ?: JSONObject.NULL)
             .put("scored_count", RiskLocal.scoredCount(ctx)).put("unknown_threads", unknownThreads)
