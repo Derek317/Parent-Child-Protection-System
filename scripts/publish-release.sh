@@ -36,7 +36,13 @@ run_url="${GITHUB_SERVER_URL:-https://github.com}/$release_repo/actions/runs/${G
 release_assets=()
 shopt -s nullglob
 if [[ "${BUILD_RESULT:-}" = success && "${ARTIFACT_NAME:-}" = ig-guard-signed-apk &&
-      "${APK_VERIFIED:-}" = true && "${DOWNLOAD_RESULT:-}" = success ]]; then
+      "${APK_VERIFIED:-}" = true && "${MODEL_PACKAGED:-}" != true ]]; then
+  # A signed build must have packaged the model; never publish a model-free APK or quietly fall back to notes.
+  echo "::error::The build produced a verified signed APK but no APK with the analysis model. Nothing was published."
+  exit 1
+fi
+if [[ "${BUILD_RESULT:-}" = success && "${ARTIFACT_NAME:-}" = ig-guard-signed-apk &&
+      "${APK_VERIFIED:-}" = true && "${MODEL_PACKAGED:-}" = true && "${DOWNLOAD_RESULT:-}" = success ]]; then
   candidates=(release-artifacts/*.apk)
   if [[ "${#candidates[@]}" = 1 && -s "${candidates[0]}" ]]; then
     apk_name="IG-Guard-$release_tag.apk"
@@ -50,7 +56,7 @@ if [ "$hotfix" = true ] && [ "${#release_assets[@]}" = 0 ]; then
   exit 1
 fi
 if [[ "${#release_assets[@]}" -gt 0 ]]; then
-  printf '\n## Build artifact\nSigned APK verified by the build job; SHA256SUMS accompanies the download.\n\nWorkflow: %s\n' "$run_url" >> "$release_notes"
+  printf '\n## Build artifact\nSigned APK verified by the build job; SHA256SUMS accompanies the download.\n\nThe APK includes the analysis model (about 1.1 GB). The source repository does not contain the model file.\n\nWorkflow: %s\n' "$run_url" >> "$release_notes"
 else
   printf '\n## Build artifact\nSigned APK unavailable for this run. This publication contains the update log; existing release assets, if any, are unchanged.\n\nBuild result: %s. Workflow: %s\n' "${BUILD_RESULT:-unknown}" "$run_url" >> "$release_notes"
 fi

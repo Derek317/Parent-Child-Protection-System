@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build ONE installable IG Guard APK that carries the local risk model, on the owner's own PC.
 
-Run this on the machine that holds the model. Nothing is uploaded and nothing is downloaded. The output contains the model
-(trained partly on real conversations): never commit it, upload it, attach it to a release or share it. See
-docs/local-model-package.md for the steps.
+Run this on the machine that holds the model. Nothing is uploaded and nothing is downloaded. The output contains the model:
+never commit it or the model file to the git repository. The public release is built by the release workflow; a package built
+here and signed with another key cannot update an install signed with the release key. See docs/local-model-package.md.
 
 What it does, in order:
   1. reads the pinned model name, size and SHA-256 from RiskModel.kt (the one source of truth) and refuses a model that differs;
@@ -437,7 +437,8 @@ def report(result: dict) -> None:
         say("         To install this APK the old app must be uninstalled first, and the app's data on that phone is lost.")
         say("         If you meant to keep the existing installation, sign with the same keystore as the GitHub release.")
     say()
-    say("This package contains the model. Never upload, commit, attach or share it.")
+    say("This package contains the model. Never commit it or the model file to the git repository.")
+    say("The public release is built by the release workflow. A package signed here with another key cannot update an install signed with the release key.")
 
 
 def read_password(env_name: str, prompt: str, fallback: Optional[str] = None) -> str:

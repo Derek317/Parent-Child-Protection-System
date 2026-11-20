@@ -122,9 +122,13 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
+      # The one place the release model is fetched from (uploaded by hand to the `model-beacon` release; never in git).
+      # Its last path segment must equal RiskModelSpec.FILE_NAME in RiskModel.kt; the packaging step checks that.
+      MODEL_URL: https://github.com/Derek317/Parent-Child-Protection-System/releases/download/model-beacon/qwen3-1.7b-beacon-Q4_K_M.gguf
     outputs:
       artifact_name: ${{ steps.package_signed.outputs.artifact_name || steps.package_unsigned.outputs.artifact_name }}
       signed_verified: ${{ steps.verify.outputs.signed_verified }}
+      model_packaged: ${{ steps.package_model.outputs.model_packaged }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -236,7 +240,7 @@ jobs:
                   minSdk 26
                   targetSdk 34
                   versionCode $VER_CODE
-                  versionName "4.9-beta.4"
+                  versionName "5.0"
               }
 
               signingConfigs {
@@ -479,7 +483,7 @@ jobs:
             test "$certificate" = "0eb6f30787c2d6dc23136a28cfd7a08a7956e5fe0565ba142f6711be38ca3f0e"
             "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
             grep -q "name='app.family.igguard'" "$RUNNER_TEMP/apk-badging.txt"
-            grep -q "versionName='4.9-beta.4'" "$RUNNER_TEMP/apk-badging.txt"
+            grep -q "versionName='5.0'" "$RUNNER_TEMP/apk-badging.txt"
             code="$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" "$RUNNER_TEMP/apk-badging.txt" | head -1)"
             test "$code" -gt 150
             unzip -p "$apk" assets/ig-guard-terms-of-service.md > "$RUNNER_TEMP/apk-terms.md"
@@ -500,6 +504,70 @@ jobs:
           overwrite: true
           retention-days: 7
 
+      # Version tags only: the released APK carries the model. The keystore stays in this job (decoded to $RUNNER_TEMP again,
+      # passwords only through the environment). Any failure fails the build, so the release never gets a model-free APK.
+      - name: Package release APK with the model
+        id: package_model
+        if: needs.plan.outputs.protected == 'true' && startsWith(github.ref, 'refs/tags/') && steps.verify.outputs.signed_verified == 'true'
+        env:
+          APK_KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
+          IG_GUARD_KEYSTORE_PASSWORD: ${{ secrets.APK_KEYSTORE_PASSWORD }}
+          APK_KEY_ALIAS: ${{ secrets.APK_KEY_ALIAS }}
+          IG_GUARD_KEY_PASSWORD: ${{ secrets.APK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Release APK with the model::$1"; exit 1; }
+          spec="$(python3 -c 'import sys; sys.path.insert(0, "tools"); import package_with_model as p; s = p.load_spec(); print(s.file_name, s.size, p.pinned_certificate() or "-")')" || fail "Cannot read the pinned model from RiskModel.kt."
+          read -r model_name model_bytes pinned <<< "$spec"
+          if [ "${MODEL_URL##*/}" != "$model_name" ]; then
+            fail "MODEL_URL ends in ${MODEL_URL##*/} but RiskModel.kt pins $model_name. Upload the new model to the model-beacon release and update MODEL_URL."
+          fi
+          apks=(app/build/outputs/apk/release/*.apk)
+          if [ "${#apks[@]}" != 1 ] || [ ! -s "${apks[0]}" ]; then fail "Expected exactly one verified signed APK to package."; fi
+          umask 077
+          model="$RUNNER_TEMP/model/$model_name"
+          keystore="$(mktemp "$RUNNER_TEMP/ig-guard-key.XXXXXX")"
+          trap 'rm -f "$keystore" "$model"' EXIT
+          mkdir -p "$RUNNER_TEMP/model" "$RUNNER_TEMP/release-apk"
+          df -h "$RUNNER_TEMP"
+          if ! curl --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --retry 5 --retry-all-errors --output "$model" "$MODEL_URL"; then
+            fail "Could not download the model from $MODEL_URL. Check that the model-beacon release and its asset exist. No release APK without the model is published."
+          fi
+          if ! printf '%s' "$APK_KEYSTORE_BASE64" | base64 --decode > "$keystore"; then
+            fail "[SIGNING_BASE64] APK_KEYSTORE_BASE64 is not valid Base64."
+          fi
+          unset APK_KEYSTORE_BASE64
+          out="$RUNNER_TEMP/release-apk/IG-Guard-with-model.apk"
+          # The script checks the model's size and SHA-256 against RiskModel.kt, signs v2+v3 and verifies; stdin is not a terminal, so it never prompts.
+          if ! python3 tools/package_with_model.py --apk "${apks[0]}" --model "$model" --out "$out" --keystore "$keystore" \
+              --ks-alias "$APK_KEY_ALIAS" --build-tools "$ANDROID_HOME/build-tools/34.0.0" < /dev/null; then
+            fail "tools/package_with_model.py could not package the model (see the ERROR above). No release APK without the model is published."
+          fi
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$out" > "$RUNNER_TEMP/model-apk-certificate.txt" || fail "apksigner could not verify the packaged APK."
+          certificate="$(sed -nE 's/^(Signer #1|V3\.0 Signer:) certificate SHA-256 digest: //p' "$RUNNER_TEMP/model-apk-certificate.txt" | head -1)"
+          # Same pinned digest as "Verify signed APK" (read from that step's test line by package_with_model.pinned_certificate).
+          if [ "$pinned" = - ] || [ "$certificate" != "$pinned" ]; then
+            fail "The packaged APK is not signed with the pinned release certificate."
+          fi
+          python3 - "$out" "assets/risk/$model_name" "$model_bytes" <<'PY' || fail "The packaged APK does not contain assets/risk/$model_name uncompressed with the pinned size."
+          import sys, zipfile
+          apk, entry, size = sys.argv[1], sys.argv[2], int(sys.argv[3])
+          info = zipfile.ZipFile(apk).getinfo(entry)
+          sys.exit(0 if info.compress_type == zipfile.ZIP_STORED and info.file_size == info.compress_size == size else 1)
+          PY
+          echo "model_packaged=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release APK with the model
+        if: steps.package_model.outputs.model_packaged == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ig-guard-release-apk
+          path: ${{ runner.temp }}/release-apk/*.apk
+          if-no-files-found: error
+          compression-level: 0
+          # The release asset is the durable copy; this 1.1 GB artifact only carries it to the release job.
+          retention-days: 1
+
   release:
     needs: [plan, relay-test, relay-deploy, build]
     # A tag whose build FAILED still publishes the documented notes-only release (docs/releases/4.7.md),
@@ -516,13 +584,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download verified signed APK
+      # Only the verified signed APK WITH the model is ever downloaded here; the model-free artifact never reaches a release.
+      - name: Download verified signed APK with the model
         id: download
-        if: needs.build.result == 'success' && needs.build.outputs.artifact_name == 'ig-guard-signed-apk' && needs.build.outputs.signed_verified == 'true'
+        if: needs.build.result == 'success' && needs.build.outputs.artifact_name == 'ig-guard-signed-apk' && needs.build.outputs.signed_verified == 'true' && needs.build.outputs.model_packaged == 'true'
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ig-guard-signed-apk
+          name: ig-guard-release-apk
           path: release-artifacts
 
       - name: Publish release or notes-only fallback
@@ -531,5 +600,6 @@ jobs:
           BUILD_RESULT: ${{ needs.build.result }}
           ARTIFACT_NAME: ${{ needs.build.outputs.artifact_name }}
           APK_VERIFIED: ${{ needs.build.outputs.signed_verified }}
+          MODEL_PACKAGED: ${{ needs.build.outputs.model_packaged }}
           DOWNLOAD_RESULT: ${{ steps.download.outcome }}
         run: bash scripts/publish-release.sh

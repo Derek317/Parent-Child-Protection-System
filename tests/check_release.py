@@ -51,7 +51,7 @@ if args[:2]==['release','upload'] and os.environ.get('FAKE_UPLOAD_FAIL')=='1':sy
                    GITHUB_REPOSITORY='example/family', GITHUB_SHA=self.sha,
                    GITHUB_REF_NAME='4.7', GITHUB_SERVER_URL='https://github.com', GITHUB_RUN_ID='123',
                    BUILD_RESULT='success', ARTIFACT_NAME='ig-guard-signed-apk',
-                   APK_VERIFIED='true', DOWNLOAD_RESULT='success', FAKE_GH_LOG=str(self.log))
+                   APK_VERIFIED='true', MODEL_PACKAGED='true', DOWNLOAD_RESULT='success', FAKE_GH_LOG=str(self.log))
         env.update(overrides)
         result = subprocess.run(['bash', str(SCRIPT)], cwd=self.root, env=env, text=True, capture_output=True)
         rows = [json.loads(x) for x in self.log.read_text().splitlines()] if self.log.exists() else []
@@ -68,6 +68,17 @@ if args[:2]==['release','upload'] and os.environ.get('FAKE_UPLOAD_FAIL')=='1':sy
         payload = bytes.fromhex(upload['assets']['IG-Guard-4.7.apk'])
         checksum = bytes.fromhex(upload['assets']['SHA256SUMS']).decode()
         self.assertEqual(hashlib.sha256(payload).hexdigest()+'  IG-Guard-4.7.apk\n', checksum)
+        self.assertIn('includes the analysis model (about 1.1 GB)', create['notes'])
+        self.assertIn('repository does not contain the model file', create['notes'])
+
+    def test_signed_build_without_the_model_fails_before_any_github_mutation(self):
+        for value in ('', 'false'):
+            with self.subTest(MODEL_PACKAGED=value):
+                if self.log.exists(): self.log.unlink()
+                result, rows = self.publish(MODEL_PACKAGED=value)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn('::error::', result.stdout)
+                self.assertEqual([], rows)
 
     def test_beta_release_is_prerelease_and_never_latest(self):
         self.git('tag','4.9-beta.1')
