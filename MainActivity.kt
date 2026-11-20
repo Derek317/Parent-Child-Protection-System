@@ -810,7 +810,8 @@ object GuardEngine {
         val editor = prefs(ctx).edit()
         for (key in listOf("family_uuid_token", "parent_command_public_key", "parent_password_verifier", "control_state_json", "last_control_ts_ms",
             "pending_rotation_json", "capture_policy_id", "capture_local_ack_id", "capture_child_ack_id", "capture_sequence",
-            "trusted_csv", "flagged_offenders_csv", "child_self_handle", "sent_setup_ok", "next_heartbeat_at_ms")) editor.remove(key)
+            "trusted_csv", "flagged_offenders_csv", "child_self_handle", "sent_setup_ok", "next_heartbeat_at_ms",
+            "synced_15m_code", "synced_15m_exp", "synced_15m_rt", "synced_15m_start_rt", "synced_15m_boot")) editor.remove(key)
         check(editor.commit())
         relayGeneration++
         CloudRelay.disconnect()
@@ -4094,13 +4095,15 @@ class MainActivity : Activity() {
     private fun showCompromiseRecovery(t: ThemeColors) {
         showSheet("重新安全配對") { dialog ->
             addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對及核對完整安全代碼。已被複製的舊資料無法收回。 目前的中繼不能刪除房間；中繼上未被取走的舊密文最多保留 7 天。",14f,t.textSecondary,bottomPad=18))
-            fun create(resetSent: Boolean) {
+            fun create(resetSent: Boolean, roomDeleted: Boolean = false) {
                     try {
                         GuardEngine.createFreshFamilyForRecovery(this@MainActivity)
                         parentAccess.authenticated(GuardEngine.captureRelaySession(this@MainActivity))
                         dialog.dismiss();syncRoleServices();renderUi();showPairingInvite(currentTheme())
                     } catch(_:Exception){
-                        val message = if (resetSent) "子女手機可能已收到解除指令並變成未設定狀態，但此手機沒有完成重新配對；原有家庭資料已保留。請重試「重新安全配對」，或用目前的邀請重新配對子女手機。"
+                        // After a deletion the current invite points at a room that no longer exists: only a fresh pairing helps.
+                        val message = if (roomDeleted) "舊中繼房間已刪除，但此手機沒有完成重新配對；原有本機資料已保留。舊邀請已不能使用，請重試「重新安全配對」以建立新配對。"
+                            else if (resetSent) "子女手機可能已收到解除指令並變成未設定狀態，但此手機沒有完成重新配對；原有家庭資料已保留。請重試「重新安全配對」，或用目前的邀請重新配對子女手機。"
                             else "未能完成；原有資料已保留。請重試或聯絡支援。"
                         val failure = AlertDialog.Builder(this@MainActivity).setTitle("未能完成重新配對").setMessage(message).setPositiveButton("知道了", null).create()
                         trackDialog(failure); failure.show()
@@ -4117,7 +4120,7 @@ class MainActivity : Activity() {
                     val expected=GuardEngine.captureRelaySession(this@MainActivity)
                     CloudRelay.retireRoom(this@MainActivity){ok,message->runOnUiThread{
                         if(isDestroyed || !parentUnlocked() || GuardEngine.captureRelaySession(this@MainActivity)!=expected)return@runOnUiThread
-                        if(ok)create(resetSent)
+                        if(ok)create(resetSent,roomDeleted=true)
                         else Toast.makeText(this@MainActivity,if(resetSent)"$message 子女手機如已解除，請用目前的邀請重新配對。" else message,Toast.LENGTH_LONG).show()
                     }}
                 }
