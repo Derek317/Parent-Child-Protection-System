@@ -379,15 +379,13 @@ internal object RiskLocal {
 
     // ---------------- wipes ----------------
     /**
-     * Empties the message store, results, unsent scores and unknown-thread counters, and deletes any scores report
-     * still waiting in the outbox. A failed wipe leaves a persisted flag that the daily maintenance retries.
+     * Empties the message store, results and unknown-thread counters. Scores reports already queued are kept: they hold
+     * no message text and the parent has not received them yet; only [resetFamily] deletes them. A failed wipe leaves a
+     * persisted flag that the daily maintenance retries.
      */
     fun wipeData(ctx: Context) {
         prefs(ctx).edit().putBoolean(WIPE_PENDING, true).commit()
-        // The chat text goes first and must not wait on anything else: a queued score report holds no message text,
-        // so failing to delete one must never leave the messages behind.
         wipeStore(ctx)
-        retrying("report") { RiskReporter.purgeQueued(ctx, GuardEngine.getChannelTopic(ctx)) }
     }
 
     /** Another thread can hold the database for a moment: wait briefly on a lock before leaving it to the daily retry. */
@@ -409,6 +407,8 @@ internal object RiskLocal {
     /** Leaving the child role, a new family, or a remote reset: data plus all mode state and the consent receipt. */
     fun resetFamily(ctx: Context) {
         wipeData(ctx)
+        // The family ended: its queued reports could never be delivered. The chat text is already gone, so a failure here leaves nothing private behind.
+        retrying("report") { RiskReporter.purgeQueued(ctx, GuardEngine.getChannelTopic(ctx)) }
         prefs(ctx).edit().remove(POLICY_ID).remove(POLICY_ENABLED).remove(PAUSED_AT).remove(LAST_RUN).remove(BASELINE)
             .remove(PARENT_POLICY_ID).remove(PARENT_POLICY_ENABLED).remove(PARENT_POLICY_AT).remove(CHANGE_NOTICE).remove(POLICY_REPOST).commit()
         receiptPrefs(ctx).edit().clear().commit()
@@ -517,7 +517,7 @@ internal object RiskLocal {
         true
     }
 
-    /** Deletes the store and unsent scores and tells the parent. Alerts stay text-free until the parent switches the mode off. */
+    /** Deletes the stored chat text (queued score reports stay) and tells the parent. Alerts stay text-free until the parent switches the mode off. */
     fun withdraw(ctx: Context): Boolean = GuardEngine.withSessionLock {
         if (consentState(ctx) != "accepted" && consentState(ctx) != "reconsent") return@withSessionLock false
         val sealed = receiptPrefs(ctx).getString("receipt", null) ?: return@withSessionLock false
@@ -660,6 +660,9 @@ internal object RiskReporter {
         (0 until array.length()).map { array.getString(it).substringBefore('|') to array.getString(it).substringAfter('|') }
     } catch (_: Exception) { emptyList() }
 
+    /** Event ids of the scores reports this phone queued for [scope] (they may already be delivered). */
+    fun queuedEventIds(ctx: Context, scope: String): List<String> = tracked(ctx).filter { it.first == scope }.map { "control:${it.second}" }
+
     /** Deletes scores reports that are still waiting in the outbox. True if any was found. */
     fun purgeQueued(ctx: Context, scope: String, within: FamilyEvidence? = null): Boolean {
         val entries = tracked(ctx)
@@ -688,8 +691,11 @@ internal object RiskReporter {
         val app = ctx.applicationContext
         if (!GuardEngine.transferAllowed(app) || !GuardEngine.isChildMode(app)) return@withSessionLock false
         val scope = GuardEngine.getChannelTopic(app)
-        val discarded = purgeQueued(app, scope) || prefs(app).getBoolean(RiskLocal.REPORT_DUE, false)
         FamilyEvidence(app).use { db ->
+            // An older queued report is replaced only by one that carries rows again. With no rows to carry (after a wipe, or
+            // without consent) it stays queued, so the scores it holds still reach the parent.
+            val replacing = RiskLocal.consentState(app) == "accepted" && db.riskReportRows(scope, now).isNotEmpty()
+            val discarded = (replacing && purgeQueued(app, scope, db)) || prefs(app).getBoolean(RiskLocal.REPORT_DUE, false)
             if (discarded) db.resetRiskSent(scope)
             val merged = if (RiskLocal.consentState(app) == "accepted") merge(db.riskReportRows(scope, now)).filter { it.changed } else emptyList()
             val unknown = db.riskUnknownCount(scope, now)

@@ -347,7 +347,7 @@ internal object ScoresChildCopy {
     const val WHAT = "分析什麼？ / What is analysed?"
     const val WITHDRAW = "撤回同意 / Withdraw"
     const val WITHDRAW_TITLE = "撤回並刪除？ / Withdraw and delete?"
-    const val WITHDRAW_BODY = "分析會停止，這部手機上儲存的訊息和尚未送出的分數會被刪除，家長會被告知。已傳給家長的分數仍留在家長手機。之後如要再用，需要重新同意。\nAnalysis stops. The messages stored on this phone and unsent scores are deleted, and your parent is told. Scores already sent stay on your parent's phone. To use it again you must agree again."
+    const val WITHDRAW_BODY = "分析會停止，這部手機上儲存的訊息會被刪除，家長會被告知。已經算出的分數（不含訊息文字）仍會傳給家長，並留在家長手機。之後如要再用，需要重新同意。\nAnalysis stops. The messages stored on this phone are deleted, and your parent is told. Scores already worked out (they contain no message text) are still sent to your parent and stay on your parent's phone. To use it again you must agree again."
     const val WITHDRAW_CONFIRM = "撤回並刪除 / Withdraw and delete"
     const val CANCEL = "取消 / Cancel"
 

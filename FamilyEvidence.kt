@@ -794,15 +794,17 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     // A manual first attempt must never cancel an issued backoff or a parent-receipt wait.
     fun retryNow(scope: String) { writableDatabase.execSQL("UPDATE outbox SET retry_at=0 WHERE scope=? AND accepted=0 AND attempts=0",arrayOf(scope)) }
     fun discardPending(scope:String) { discardPendingRows(scope,null,null) }
+    /** Like [discardPending], but the events in [keep] (queued score reports, which hold no message text) stay queued. */
+    fun discardPendingExcept(scope:String,keep:Collection<String>) { discardPendingRows(scope,null,null,keep) }
     fun discardPending(scope:String,role:String) { discardPendingRows(scope,role,null) }
     fun discardPending(scope:String,role:String,kind:String) { discardPendingRows(scope,role,kind) }
-    private fun discardPendingRows(scope:String,role:String?,kind:String?) {
+    private fun discardPendingRows(scope:String,role:String?,kind:String?,keep:Collection<String> = emptyList()) {
         require(role==null || role in setOf("parent","child"))
         require(kind==null || kind in setOf("data","urgent","receipt","control"))
         val db=writableDatabase;db.beginTransaction()
         try {
-            val where="scope=?"+(if(role==null)"" else " AND role=?")+(if(kind==null)"" else " AND relay_kind=?")
-            val args=(listOf(scope)+listOfNotNull(role,kind)).toTypedArray()
+            val where="scope=?"+(if(role==null)"" else " AND role=?")+(if(kind==null)"" else " AND relay_kind=?")+(if(keep.isEmpty())"" else " AND event_id NOT IN (${keep.joinToString(","){"?"}})")
+            val args=(listOf(scope)+listOfNotNull(role,kind)+keep).toTypedArray()
             db.execSQL("INSERT OR IGNORE INTO capture_seen(scope,id) SELECT scope,event_id FROM outbox WHERE $where",args)
             db.execSQL("INSERT OR IGNORE INTO seen(scope,id) SELECT scope,event_id FROM outbox WHERE $where AND relay_kind IN ('data','urgent')",args)
             db.execSQL("UPDATE outbox_lifetimes SET blocked=1 WHERE scope=? AND id IN (SELECT event_id FROM outbox WHERE $where)",arrayOf(scope)+args)

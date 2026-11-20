@@ -507,27 +507,45 @@ class ScoresModeChildTest {
 
     // ---------- withdraw, wipes ----------
     private fun assertNoQueuedScores() { for (r in reports()) assertEquals("an unsent report still carries scores", 0, r.getJSONArray("conversations").length()) }
-    @Test fun withdrawDeletesTheStoreAndUnsentScoresAndNeedsFreshConsent() {
+    private fun assertChatTextGone() { for (t in listOf("risk_store", "risk_results", "risk_threads", "risk_unknown")) assertEquals(t, 0, count(t)) }
+    private fun assertScoreReportKept(what: String) {
+        assertTrue("$what: the queued score report was deleted", reports().any { it.getJSONArray("conversations").length() > 0 })
+        assertNoPrivateText()
+    }
+    @Test fun withdrawDeletesChatTextButKeepsQueuedScoreReportsAndNeedsFreshConsent() {
         activate(); capture(obs(text(1))); runBatch()
         capture(obs(text(2), conversation = "second")); runBatch()
         assertTrue(count("risk_store") > 0 && count("risk_results") > 0)
         // The scores report is still waiting in the outbox (nothing clears it here).
         assertTrue(reports().any { it.getJSONArray("conversations").length() > 0 })
         assertTrue(RiskLocal.withdraw(ctx))
-        for (t in listOf("risk_store", "risk_results", "risk_threads", "risk_unknown")) assertEquals(t, 0, count(t))
-        assertNoQueuedScores()
+        assertChatTextGone(); assertScoreReportKept("withdraw")
         assertEquals("withdrawn", reports().last().getJSONObject("state").getString("consent"))
         assertFalse(RiskLocal.active(ctx)); assertFalse(RiskLocal.pendingPolicy(ctx))
         assertFalse(RiskLocal.accept(ctx))
         enablePolicy(); assertTrue(RiskLocal.pendingPolicy(ctx)); assertEquals("withdrawn", RiskLocal.consentState(ctx))
         assertTrue(RiskLocal.accept(ctx)); assertTrue(RiskLocal.active(ctx))
     }
-    @Test fun otherWipesAlsoDeleteQueuedReports() {
-        val wipes = listOf<() -> Unit>({ enablePolicy(false) }, { RiskLocal.removeModel(ctx) }, { GuardEngine.withdrawCollection(ctx) }, { GuardEngine.setRole(ctx, "unconfigured") })
-        for (wipe in wipes) {
+    @Test fun ordinaryWipesDeleteChatTextAndKeepQueuedScoreReports() {
+        val wipes = listOf<Pair<String, () -> Unit>>("mode off" to { enablePolicy(false) }, "model removed" to { RiskLocal.removeModel(ctx) },
+            "collection stopped" to { GuardEngine.withdrawCollection(ctx) }, "family rotation" to { GuardEngine.setFamilyToken(ctx, UUID.randomUUID().toString(), preserveFamilyHistory = true) })
+        for ((name, wipe) in wipes) {
             reset(); activate(); capture(obs(text(1))); runBatch()
             assertTrue(reports().any { it.getJSONArray("conversations").length() > 0 })
-            wipe(); assertNoQueuedScores()
+            wipe(); assertChatTextGone(); assertScoreReportKept(name)
+        }
+    }
+    @Test fun whenTheFamilyEndsQueuedScoreReportsAreDeletedToo() {
+        val ends = listOf<Pair<String, () -> Unit>>("role change" to { GuardEngine.setRole(ctx, "unconfigured") },
+            "new family" to { GuardEngine.setFamilyToken(ctx, UUID.randomUUID().toString()) }, "reset" to { RiskLocal.resetFamily(ctx) })
+        for ((name, end) in ends) {
+            reset(); activate(); capture(obs(text(1))); runBatch()
+            assertTrue(reports().any { it.getJSONArray("conversations").length() > 0 })
+            val old = scope; val oldToken = token
+            end(); assertChatTextGone()
+            val left = FamilyEvidence(ctx).use { db -> db.readableDatabase.rawQuery("SELECT wire FROM outbox WHERE scope=?", arrayOf(old)).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } } }
+                .mapNotNull { GuardEngine.decryptPayload(oldToken, it) }.filter { it.optBoolean("relay_control") }.map { it.getJSONObject("envelope") }.filter { it.optString("type") == "scores_mode_report" }
+            assertTrue("$name: a score report survived", left.none { it.getJSONArray("conversations").length() > 0 })
         }
     }
 

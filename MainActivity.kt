@@ -209,14 +209,19 @@ object GuardEngine {
         check(isChildMode(ctx))
         check(prefs(ctx).edit().putBoolean("collection_withdrawn", true).remove("capture_local_ack_id").commit())
         relayGeneration++; CloudRelay.disconnect()
-        if(discardPending) FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx)) }
+        if(discardPending) discardPendingKeepingScores(ctx)
         RiskLocal.wipeData(ctx); try{RiskScoringSchedule.sync(ctx)}catch(_:RuntimeException){}
         refreshMonitoringDisclosure(ctx)
+    }
+    /** Everything queued goes except score reports, which hold no message text and stay unless the family ends. */
+    private fun discardPendingKeepingScores(ctx: Context) {
+        val scope = getChannelTopic(ctx)
+        FamilyEvidence(ctx).use { it.discardPendingExcept(scope, RiskReporter.queuedEventIds(ctx, scope)) }
     }
     /** Resuming is an explicit fresh start: held old-scope records are not silently resent. */
     fun resumeCollection(ctx: Context) = synchronized(pollLock) {
         check(isChildMode(ctx))
-        FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx)) }
+        discardPendingKeepingScores(ctx)
         check(prefs(ctx).edit().putBoolean("collection_withdrawn", false).remove("capture_local_ack_id").commit())
         relayGeneration++; CloudRelay.disconnect(); refreshMonitoringDisclosure(ctx)
     }
