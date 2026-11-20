@@ -56,7 +56,11 @@ export class FamilyRoom extends DurableObject {
     if (this.schemaReady) return true;
     const present = this.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata'").toArray().length > 0;
     // Never cache while the registration transaction runs: it may still roll back.
-    if (present && !this.registering) this.schemaReady = true;
+    if (present && !this.registering) {
+      // Rooms registered before lifetimes existed have storage but not this table; a room with no storage still gets nothing.
+      this.sql.exec('CREATE TABLE IF NOT EXISTS packet_lifetimes (id TEXT PRIMARY KEY, digest TEXT NOT NULL, kind TEXT NOT NULL, expires INTEGER NOT NULL) WITHOUT ROWID');
+      this.schemaReady = true;
+    }
     return present;
   }
 

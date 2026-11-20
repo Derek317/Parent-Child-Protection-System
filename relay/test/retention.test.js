@@ -206,3 +206,17 @@ test('legacy owners without lifecycle metadata still authenticate child access a
     assert.equal((await connection(mf, f, 'child')).response.status, 410);
   } finally { await mf.dispose(); }
 });
+
+test('a room created by the previous relay, without a lifetime table, keeps working after the upgrade', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ig-retention-'));
+  let mf = runtime(directory);
+  try {
+    const f = family(), p = await connection(mf, f); p.close();
+    await sql(mf, f.room, 'DROP TABLE packet_lifetimes');
+    await mf.dispose(); mf = runtime(directory); // a deploy restarts the room with the new code
+    const c = await connection(mf, f, 'child'); assert.equal(c.response.status, 101);
+    assert.equal((await publish(c, 'pre-upgrade-room')).type, 'accepted');
+    const parent = await connection(mf, f); assert.equal(parent.response.status, 101);
+    await parent.next(m => m.type === 'message');
+  } finally { await mf.dispose(); await rm(directory, { recursive: true, force: true }); }
+});
