@@ -34,7 +34,7 @@ internal data class ScoresPageModel(
 internal object ScoresEngineBridge {
     var sendPolicy: (Context, Boolean, String) -> Boolean = { c, enabled, method -> GuardEngine.sendScoresModePolicy(c, enabled, method) }
     var resendPolicy: (Context) -> Boolean = { c -> GuardEngine.resendScoresModePolicy(c) }
-    var accept: (Context) -> Boolean = { RiskLocal.accept(it) }
+    var accept: (Context, String, String) -> Boolean = { c, id, method -> RiskLocal.accept(c, id, method) }
     var pause: (Context) -> Boolean = { RiskLocal.pause(it) }
     var resume: (Context) -> Boolean = { RiskLocal.resume(it) }
     var withdraw: (Context) -> Boolean = { RiskLocal.withdraw(it) }
@@ -45,7 +45,7 @@ internal object ScoresEngineBridge {
     fun reset() {
         sendPolicy = { c, enabled, method -> GuardEngine.sendScoresModePolicy(c, enabled, method) }
         resendPolicy = { c -> GuardEngine.resendScoresModePolicy(c) }
-        accept = { RiskLocal.accept(it) }; pause = { RiskLocal.pause(it) }; resume = { RiskLocal.resume(it) }; withdraw = { RiskLocal.withdraw(it) }
+        accept = { c, id, method -> RiskLocal.accept(c, id, method) }; pause = { RiskLocal.pause(it) }; resume = { RiskLocal.resume(it) }; withdraw = { RiskLocal.withdraw(it) }
         pendingNotice = { RiskLocal.pendingChangeNotice(it) }; acknowledgeNotice = { c, _ -> RiskLocal.acknowledgeChangeNotice(c) }
         activeOf = { it.active }
     }

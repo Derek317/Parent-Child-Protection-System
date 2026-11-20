@@ -67,6 +67,16 @@ class ScoresMethodChildUiTest {
             assertTrue(UiSupport.all(c.get().window.decorView).any { it.tag == "scores_agree" })
         } finally { c.pause().stop().destroy() }
     }
+    @Test fun agreeingOnAPageThatWentStaleConsentsToNothingAndRedrawsIt() {
+        installModel(); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD)
+        val c = launch("scores_consent")
+        try {
+            RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.CAPTURE)   // arrives while the upload page is open
+            UiSupport.all(c.get().window.decorView).single { it.tag == "scores_agree" }.performClick()
+            assertEquals("none", RiskLocal.consentState(ctx)); assertNull(RiskLocal.agreedMethod(ctx)); assertTrue(RiskLocal.pendingPolicy(ctx))
+            assertTrue("the page is drawn again for what is now asked", screen(c).contains("Terms of Use"))
+        } finally { c.pause().stop().destroy() }
+    }
     @Test fun theConsentPageForCaptureRepeatsAShortenedWarning() {
         installModel(); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.CAPTURE)
         val c = launch("scores_consent")

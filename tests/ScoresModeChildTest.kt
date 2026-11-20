@@ -599,6 +599,14 @@ class ScoresModeChildTest {
         methodPolicy("upload"); assertTrue(RiskLocal.pendingPolicy(ctx))
     }
 
+    @Test fun aConsentIsBoundToThePolicyAndMethodThePageShowed() {
+        assertTrue(installModel())
+        val shown = methodPolicy("upload"); val newer = methodPolicy("capture")   // the parent changed it after the page was drawn
+        assertFalse(RiskLocal.accept(ctx, shown, "upload")); assertFalse(RiskLocal.accept(ctx, newer, "upload")); assertFalse(RiskLocal.accept(ctx, shown, "capture"))
+        assertEquals("nothing was agreed", "none", RiskLocal.consentState(ctx)); assertNull(RiskLocal.agreedMethod(ctx)); assertTrue(RiskLocal.pendingPolicy(ctx))
+        assertTrue(RiskLocal.accept(ctx, newer, "capture"))
+        assertEquals(newer, receiptJson().getString("policy_id")); assertEquals("capture", receiptJson().getString("method"))
+    }
     @Test fun anUnreadableReceiptFailsClosedInsteadOfReEnablingCapture() {
         val receipts = ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE)
         for (method in listOf("upload", "capture")) {

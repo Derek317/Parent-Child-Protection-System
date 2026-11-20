@@ -536,12 +536,14 @@ internal object RiskLocal {
     }
 
     /**
-     * The child agrees. Queued records that carry message text are discarded so none reaches the parent.
+     * The child agrees to the policy [shownPolicyId] and method [shownMethod] the consent page showed; false (nothing written) if either is no longer the pending one. Queued records that carry message text are discarded so none reaches the parent.
      * Runs under the session lock on the caller's thread: a few small SQLite statements, one sealed preference and a
      * locally queued report (no network I/O), so it is short enough for a button handler; the return value is synchronous.
      */
-    fun accept(ctx: Context): Boolean = GuardEngine.withSessionLock {
+    fun accept(ctx: Context, shownPolicyId: String, shownMethod: String): Boolean = GuardEngine.withSessionLock {
         if (!pendingPolicy(ctx)) return@withSessionLock false
+        // The child agrees to what the page showed: a policy or method that changed since is not agreed to.
+        if (policyId(ctx) != shownPolicyId || policyMethod(ctx) != shownMethod) return@withSessionLock false
         val now = System.currentTimeMillis()
         val method = policyMethod(ctx)
         val methodChanged = agreedMethod(ctx)?.let { it != method } ?: false

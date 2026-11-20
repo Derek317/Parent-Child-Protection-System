@@ -4162,6 +4162,7 @@ class MainActivity : Activity() {
         heading(ScoresChildCopy.CONSENT_TITLE, "", t)
         // To decide: the method the parent asks for. To read again: the one the child agreed to.
         val method = if (decide) RiskLocal.policyMethod(this) else RiskLocal.agreedMethod(this) ?: RiskLocal.policyMethod(this)
+        val shownPolicyId = RiskLocal.policyId(this)
         for ((title, body) in ScoresChildCopy.consentPoints(RiskLocal.consentState(this) == "reconsent", method)) {
             rootContainer.addView(label(title, 16f, t.textPrimary, true, topPad = 14, bottomPad = 6))
             rootContainer.addView(label(body, 14f, t.textSecondary))
@@ -4170,8 +4171,8 @@ class MainActivity : Activity() {
             // No pre-ticked box: the agree button is the only thing that accepts.
             rootContainer.addView(label("", 12f, t.textMuted, bottomPad = 8))
             rootContainer.addView(actionButton(ScoresChildCopy.AGREE, t.btnPrimaryBg, t.btnPrimaryText) {
-                if (ScoresEngineBridge.accept(this)) navigateTo(if (ScoresEngineBridge.pendingNotice(this) == "on") "scores_change" else "overview")
-                else Toast.makeText(this, ScoresChildCopy.ACCEPT_FAILED, Toast.LENGTH_LONG).show()
+                if (ScoresEngineBridge.accept(this, shownPolicyId, method)) navigateTo(if (ScoresEngineBridge.pendingNotice(this) == "on") "scores_change" else "overview")
+                else { Toast.makeText(this, ScoresChildCopy.ACCEPT_FAILED, Toast.LENGTH_LONG).show(); renderUi() }   // the page may be stale: draw what is asked now
             }.apply { tag = "scores_agree" })
             rootContainer.addView(actionButton(ScoresChildCopy.NOT_NOW, t.btnSecondaryBg, t.btnSecondaryText) { navigateTo("overview") }.apply { tag = "scores_not_now" })
         } else rootContainer.addView(actionButton("返回 / Back", t.btnPrimaryBg, t.btnPrimaryText) { navigateTo("overview") }.apply { tag = "scores_back" })

@@ -1002,7 +1002,7 @@ class ScoresChildUiTest {
         val c = launch()
         try {
             tag(c, "scores_consent_open").single().performClick()
-            ScoresEngineBridge.accept = { false }
+            ScoresEngineBridge.accept = { _, _, _ -> false }
             tag(c, "scores_agree").single().performClick()
             assertEquals(ScoresChildCopy.ACCEPT_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
             assertEquals("none", RiskLocal.consentState(ctx)); assertEquals(1, tag(c, "scores_agree").size)
