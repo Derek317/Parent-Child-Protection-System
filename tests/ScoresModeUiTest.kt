@@ -518,7 +518,7 @@ class ScoresParentUiTest {
     }
     @Test fun turningOnAndOffHaveTheirOwnFailureMessages() {
         report(policyId = null)
-        ScoresEngineBridge.sendPolicy = { _, _ -> false }
+        ScoresEngineBridge.sendPolicy = { _, _, _ -> false }
         try {
             var c = launch()
             try {
@@ -526,7 +526,7 @@ class ScoresParentUiTest {
                 UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).first { it.tag == "scores_on_confirm" }.performClick()
                 assertEquals(ScoresUi.SEND_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
             } finally { c.pause().stop().destroy() }
-            reset(); enable(); ScoresEngineBridge.sendPolicy = { _, _ -> false }
+            reset(); enable(); ScoresEngineBridge.sendPolicy = { _, _, _ -> false }
             c = launch()
             try {
                 family(c).single { it.tag == "scores_mode_switch" }.performClick()

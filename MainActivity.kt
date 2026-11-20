@@ -4366,25 +4366,81 @@ class MainActivity : Activity() {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO; tag = "scores_mode_switch_view"
         })
         rootContainer.addView(line, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(8)) })
+        if (on) {
+            val method = policy!!.method
+            rootContainer.addView(label(ScoresUi.methodLine(method), 13f, t.textSecondary, bottomPad = 4).apply { tag = "scores_method_line" })
+            if (method == ScoresMethod.UPLOAD) rootContainer.addView(label(ScoresUi.METHOD_UPLOAD_BODY, 13f, t.textSecondary, bottomPad = 4).apply { tag = "scores_method_note" })
+            rootContainer.addView(textAction(ScoresUi.METHOD_CHANGE) { showScoresMethodChange(t, method) }.apply { tag = "scores_method_change" })
+        }
         rootContainer.addView(textAction("查看對話風險分數") { navigateTo("scores") })
     }
     private fun showScoresOnPage(t: ThemeColors) {
         showSheet(ScoresUi.PARENT_ON_TITLE) { dialog ->
             for (point in ScoresUi.PARENT_ON_POINTS) addView(label(point, 14f, t.textSecondary, bottomPad = 12))
-            addView(actionButton("確認並開啟 / Confirm and turn on", t.btnPrimaryBg, t.btnPrimaryText) {
-                dialog.dismiss()
-                if (ScoresEngineBridge.sendPolicy(this@MainActivity, true)) {
-                    Toast.makeText(this@MainActivity, "已送出。子女同意後才會開始。", Toast.LENGTH_LONG).show()
-                } else Toast.makeText(this@MainActivity, ScoresUi.SEND_FAILED, Toast.LENGTH_LONG).show()
-                renderUi()
-            }.apply { tag = "scores_on_confirm" })
+            addMethodChooser(this, dialog, t, ScoresMethod.UPLOAD, "確認並開啟 / Confirm and turn on", null)
             addView(actionButton("取消 / Cancel", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() }.apply { tag = "scores_on_cancel" })
         }
+    }
+    /** The parent already has the mode on and asks for the other method: the child must agree again. */
+    private fun showScoresMethodChange(t: ThemeColors, current: String) {
+        showSheet(ScoresUi.METHOD_CHANGE_TITLE) { dialog ->
+            addView(label(ScoresUi.METHOD_CHANGE_POINTS, 14f, t.textSecondary, bottomPad = 12))
+            addMethodChooser(this, dialog, t, if (current == ScoresMethod.UPLOAD) ScoresMethod.CAPTURE else ScoresMethod.UPLOAD, ScoresUi.METHOD_SEND, current)
+            addView(actionButton("取消 / Cancel", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() }.apply { tag = "scores_method_cancel" })
+        }
+    }
+    /**
+     * Method choice for the parent's sheets. Automatic capture shows the warning and an unticked box, and nothing is sent until it is ticked.
+     * [current] is the method already in force (null when the mode is off); changing it needs a fresh device authentication, and so does choosing capture.
+     */
+    private fun addMethodChooser(box: LinearLayout, dialog: Dialog, t: ThemeColors, initial: String, confirmLabel: String, current: String?) {
+        var method = initial
+        var acked = false
+        val choice = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        var confirm: Button? = null
+        fun allowed() = (method != ScoresMethod.CAPTURE || acked) && method != current
+        fun draw() {
+            choice.removeAllViews()
+            choice.addView(label(ScoresUi.METHOD_TITLE, 15f, t.textPrimary, true, bottomPad = 6))
+            for (m in listOf(ScoresMethod.UPLOAD, ScoresMethod.CAPTURE)) {
+                val selected = m == method
+                choice.addView(actionButton((if (selected) "● " else "○ ") + ScoresUi.methodName(m), if (selected) t.btnPrimaryBg else t.btnSecondaryBg, if (selected) t.btnPrimaryText else t.btnSecondaryText) {
+                    method = m; acked = false; draw()
+                }.apply { tag = "scores_method_$m"; contentDescription = ScoresUi.methodName(m) + if (selected) "，已選" else "" })
+            }
+            choice.addView(label(if (method == ScoresMethod.UPLOAD) ScoresUi.METHOD_UPLOAD_BODY else ScoresUi.METHOD_CAPTURE_BODY, 14f, t.textSecondary, topPad = 4, bottomPad = 12).apply { tag = "scores_method_body" })
+            if (method == ScoresMethod.CAPTURE) {
+                choice.addView(label(ScoresUi.WARNING_ZH_TITLE, 15f, t.warmCoral, true, bottomPad = 4).apply { tag = "scores_capture_warning" })
+                choice.addView(label(ScoresUi.WARNING_ZH_BODY, 14f, t.textPrimary, bottomPad = 10))
+                choice.addView(label(ScoresUi.WARNING_EN_TITLE, 15f, t.warmCoral, true, bottomPad = 4))
+                choice.addView(label(ScoresUi.WARNING_EN_BODY, 14f, t.textPrimary, bottomPad = 10))
+                choice.addView(CheckBox(this).apply {
+                    text = ScoresUi.WARNING_ACK; tag = "scores_capture_ack"; setTextColor(color(t.textPrimary)); isChecked = false
+                    setOnCheckedChangeListener { _, on -> acked = on; confirm?.isEnabled = allowed() }
+                })
+            }
+            confirm?.isEnabled = allowed()
+        }
+        box.addView(choice)
+        val confirmButton = actionButton(confirmLabel, t.btnPrimaryBg, t.btnPrimaryText) {
+            if (!allowed()) return@actionButton
+            val chosen = method
+            val send = {
+                dialog.dismiss()
+                if (ScoresEngineBridge.sendPolicy(this, true, chosen)) Toast.makeText(this, "已送出。子女同意後才會開始。", Toast.LENGTH_LONG).show()
+                else Toast.makeText(this, if (current != null) ScoresUi.METHOD_FAILED else ScoresUi.SEND_FAILED, Toast.LENGTH_LONG).show()
+                renderUi()
+            }
+            if (current != null || chosen == ScoresMethod.CAPTURE) requireFreshParentAuth(send) else send()
+        }.apply { tag = "scores_on_confirm" }
+        confirm = confirmButton
+        box.addView(confirmButton)
+        draw()
     }
     private fun confirmScoresOff() {
         alert().setTitle(ScoresUi.PARENT_OFF_TITLE).setMessage(ScoresUi.PARENT_OFF_BODY).setNegativeButton("取消 / Cancel", null)
             .setPositiveButton("確認關閉 / Turn off") { _, _ ->
-                if (!ScoresEngineBridge.sendPolicy(this, false)) Toast.makeText(this, ScoresUi.OFF_FAILED, Toast.LENGTH_LONG).show()
+                if (!ScoresEngineBridge.sendPolicy(this, false, GuardEngine.scoresModePolicy(this)?.method ?: ScoresMethod.CAPTURE)) Toast.makeText(this, ScoresUi.OFF_FAILED, Toast.LENGTH_LONG).show()
                 renderUi()
             }.show()
     }

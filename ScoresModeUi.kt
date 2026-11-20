@@ -32,7 +32,7 @@ internal data class ScoresPageModel(
  * refusal. Where the engine API is still being added the fallback is marked.
  */
 internal object ScoresEngineBridge {
-    var sendPolicy: (Context, Boolean) -> Boolean = { c, enabled -> GuardEngine.sendScoresModePolicy(c, enabled) }
+    var sendPolicy: (Context, Boolean, String) -> Boolean = { c, enabled, method -> GuardEngine.sendScoresModePolicy(c, enabled, method) }
     var resendPolicy: (Context) -> Boolean = { c -> GuardEngine.resendScoresModePolicy(c) }
     var accept: (Context) -> Boolean = { RiskLocal.accept(it) }
     var pause: (Context) -> Boolean = { RiskLocal.pause(it) }
@@ -43,7 +43,7 @@ internal object ScoresEngineBridge {
     /** Whether the child's phone says analysis is actually running; null when the report does not say. */
     var activeOf: (ScoresModeState) -> Boolean? = { it.active }
     fun reset() {
-        sendPolicy = { c, enabled -> GuardEngine.sendScoresModePolicy(c, enabled) }
+        sendPolicy = { c, enabled, method -> GuardEngine.sendScoresModePolicy(c, enabled, method) }
         resendPolicy = { c -> GuardEngine.resendScoresModePolicy(c) }
         accept = { RiskLocal.accept(it) }; pause = { RiskLocal.pause(it) }; resume = { RiskLocal.resume(it) }; withdraw = { RiskLocal.withdraw(it) }
         pendingNotice = { RiskLocal.pendingChangeNotice(it) }; acknowledgeNotice = { c, _ -> RiskLocal.acknowledgeChangeNotice(c) }
@@ -262,6 +262,26 @@ internal object ScoresUi {
     const val RESEND = "再次送出設定"
     const val RESEND_HINT = "子女手機一直沒有回覆這項設定。你可以再送出一次；子女手機收到相同的設定時不會要求重新同意。"
     const val NO_TEXT_PLAIN = "此提醒沒有附帶文字。"
+
+    // ---------------- collection method (parent) ----------------
+    const val METHOD_TITLE = "收集方式 / How chats reach the analysis"
+    const val METHOD_UPLOAD = "手動上載 / Manual upload"
+    const val METHOD_CAPTURE = "自動擷取 / Automatic capture"
+    fun methodName(method: String) = if (method == ScoresMethod.UPLOAD) METHOD_UPLOAD else METHOD_CAPTURE
+    const val METHOD_UPLOAD_BODY = "子女自己從 Instagram 下載資料（「下載你的資料」），再在自己的手機匯入。本 App 不讀取 Instagram 的通知或畫面，所以沒有即時的關鍵字提醒，也沒有陌生人提醒。你仍然只會收到分數。\nYour child downloads their own data from Instagram (\"Download your information\") and imports it on their own phone. This app reads nothing from Instagram notifications or screens, so there are no real-time keyword alerts and no unapproved-contact alerts. You still receive scores only."
+    const val METHOD_CAPTURE_BODY = "本 App 讀取子女手機上的 Instagram 通知及對話畫面（現有方式）。你仍然只會收到分數。\nThis app reads Instagram notifications and conversation screens on your child's phone (the current way). You still receive scores only."
+    /** The warning, word for word as Derek read it (docs/superpowers/specs/2026-11-20-collection-method-design.md). */
+    const val WARNING_ZH_TITLE = "自動擷取可能違反 Instagram 使用條款"
+    const val WARNING_ZH_BODY = "此方式會讀取子女手機上的 Instagram 通知及對話畫面。Instagram 的使用條款禁止未經其許可以自動方式取得資料。子女的 Instagram 帳戶可能因此被限制或停用。IG Guard 與 Meta 無關，亦未獲 Meta 批准。選擇此方式即表示你明白上述風險，並由你自行決定及承擔使用此方式的責任。如不接受，請改用「手動上載」。"
+    const val WARNING_EN_TITLE = "Automatic capture may breach Instagram's Terms of Use"
+    const val WARNING_EN_BODY = "This method reads Instagram notifications and conversation screens on your child's phone. Instagram's Terms of Use prohibit collecting information in an automated way without its permission. Your child's Instagram account could be restricted or disabled as a result. IG Guard is independent of Meta and has no Meta approval. By choosing this method you confirm that you understand this risk and that the decision to use it, and the responsibility for it, are yours. If you do not accept this, choose Manual upload."
+    const val WARNING_ACK = "我明白上述風險，並自行決定及承擔選擇自動擷取的責任。\nI understand the risk above, and the decision and the responsibility are mine."
+    const val METHOD_CHANGE = "更改收集方式 / Change method"
+    const val METHOD_CHANGE_TITLE = "更改收集方式？ / Change the method?"
+    const val METHOD_CHANGE_POINTS = "子女要在自己的手機上再次同意；在此之前維持原來的收集方式，你不能代替子女同意。子女同意後，手機上為分析儲存的訊息會被刪除。\nYour child must agree again on their own phone. Until then the earlier method stays in effect, and you cannot agree for them. When they agree, the messages stored for analysis on their phone are deleted."
+    const val METHOD_SEND = "確認並送出 / Confirm and send"
+    const val METHOD_FAILED = "未能更改收集方式，設定沒有改變。請稍後重試。"
+    fun methodLine(method: String) = "收集方式：${methodName(method)}\nMethod: ${if (method == ScoresMethod.UPLOAD) "Manual upload" else "Automatic capture"}"
 }
 
 /** Child-side wording, bilingual in the style of the first-launch consent page. */
