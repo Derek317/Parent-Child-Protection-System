@@ -142,3 +142,51 @@ Invented sets, risk flagged · benign flagged:
 - **Derek chose v7 as the shipped model on 19 November 2026.** v3 and v4 files are kept.
 
 Limits: 10 real grooming chats per split, from overlapping conversations and one language; the ordinary chats are adult conversations; the real testing splits were used to compare v5, v6 and v7, so they are not a fresh test; the third-style and handoff sets were reused again; one training run each; v7 was not run on the sealed set. The d1 head edit refitted with the real grooming chats flags 9 of 10 real grooming testing chats but also 36 of 36 benign chats in the handoff 90-chat set, so it was dropped.
+
+## Beacon: research data added, repeat runs and a blind test (20 November 2026)
+
+Model names replace version numbers from here on. **Beacon** is the v4 recipe trained on four sources. Only the first is in this repository; **the other three must never be added to it**, so Beacon cannot be rebuilt from the repository alone.
+
+| Source | Rows | In the repository |
+| --- | --- | --- |
+| `train-mixed-v3-restyled.jsonl` (invented chats) | 2,097 | Yes |
+| Real grooming transcripts supplied by Derek, fuller text version, training split (10 chats, each repeated ten times) | 100 | No |
+| PAN-12 research corpus, windows built from its official test half, training split (a third English, a third Cantonese, a third mixed; translated by a local Gemma 4 12B model with keyword-flagged lines dropped) | 261 | No |
+| Derek's own ordinary Instagram chats, training split | 64 | No |
+
+- File: `qwen3-1.7b-beacon-Q4_K_M.gguf`, 1,107,408,736 bytes, SHA-256 `5b873dbfa4c36fff10372f8c1cf28ae84182d6d41604bf8f8b83f21966debb5c`.
+- PAN-12 windows: a risk window is 30 messages of a predator's chat holding at least three lines the organisers marked suspicious; an ordinary window is the first 30 messages of a two-person chat with no predator and no keyword hit. Splits keep each predator in one split. Risk windows are trained as "2 or 3".
+
+Three runs of Beacon, same data and settings, different seeds (risk flagged · ordinary flagged):
+
+| Set | Run 1 (shipped file) | Run 2 | Run 3 | v7 |
+| --- | --- | --- | --- | --- |
+| Real grooming transcripts, testing | 7/10 | 7/10 | 7/10 | 6/10 (earlier text version) |
+| PAN-12 testing | 132/141 · 7/117 | 132/141 · 3/117 | 137/141 · 2/117 | 40/141 · 7/117 |
+| Derek's ordinary chats, testing | 0/37 | 0/37 | 0/37 | 0/37 |
+| Check | 89/90 · 0/45 | 85/90 · 0/45 | 89/90 · 0/45 | 87/90 · 0/45 |
+| Third-style test | 112/120 · 9/55 | 107/120 · 3/55 | 114/120 · 7/55 | 102/120 · 2/55 |
+| Handoff 90-chat | 30/36 · 1/36 | 26/36 · 0/36 | 30/36 · 4/36 | 27/36 · 5/36 |
+| Handoff 60-chat | 18/24 · 3/12 | 21/24 · 1/12 | 19/24 · 2/12 | 17/24 · 2/12 |
+
+Run-to-run spread is three to seven chats on the small sets, so differences of that size between models are not evidence.
+
+Blind test: 500 conversations from PAN-12's official training half, which no model here was trained, tuned or tested on (200 from 102 predators none of which appear in the used half, 150 with sexual wording and no predator, 150 general). This half has no line-level marks, so a conversation counts as flagged if any of its overlapping 30-message windows is flagged.
+
+| Model | Predator | Sexual look-alike | General |
+| --- | --- | --- | --- |
+| v4 | 111/200 | 60/150 | 26/150 |
+| v7 | 106/200 | 59/150 | 18/150 |
+| Beacon run 1 | 176/200 | 78/150 | 14/150 |
+| Beacon run 2 | 169/200 | 78/150 | 11/150 |
+| Beacon run 3 | 175/200 | 73/150 | 14/150 |
+
+333 of those conversations were also translated to Cantonese or mixed by Claude Opus, which left about a sixth of the longer lines in English (mostly sexual lines in predator chats). On those 333, Beacon run 1 flags 115/133 predator and 11/100 general conversations in English, and 116/133 and 11/100 translated.
+
+- **Derek chose Beacon (run 1) as the shipped model on 20 November 2026.** Earlier files are kept.
+- **No model here separates adults' sexual chat from grooming**: about half of the look-alike conversations are flagged by every model.
+- **The written instruction does not describe what PAN-12 taught.** `instruction-v1.txt` defines risk as pressure, conditional favours and threats and says a topic alone is not evidence; PAN-12's risk windows are mostly sexual approaches with no refusal or threat. Beacon flags them because of its training. The instruction and the level descriptions shown to parents should be brought into line before the next retrain.
+
+Limits: the blind set is from the same source and era as Beacon's PAN-12 training data, so it shows generalisation to new predators of the same kind, not to another platform or to Hong Kong teenagers today; PAN-12 window labels are rough; the Cantonese is machine-translated and unreviewed; the third-style and handoff sets have been reused many times; the Zenodo record for PAN-12 lists no licence and its maintainers' derived-data repository warns against using models trained on it in practice; consent for the real transcripts and for Derek's contacts' chats is an open item for the Hong Kong privacy lawyer.
+
+Memory on a desktop processor (not a phone): with the engine's resident memory hard-capped at 300 MB, below the 1.1 GB file, Beacon gave identical answers about a third slower, so the memory-mapped model file can be streamed from storage. Non-reclaimable working memory was about 1.7 GB at a 4,096-token context and about 1.2 GB at 2,048 with the prompt cache off; these figures include desktop-build overhead.
