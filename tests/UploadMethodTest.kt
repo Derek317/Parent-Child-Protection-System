@@ -164,10 +164,57 @@ class UploadMethodTest {
         assertTrue(RiskLocal.accept(ctx)); assertEquals(RiskCapture.UPLOAD, RiskLocal.captureMode(ctx))
         assertTrue(GuardEngine.captureMessages(ctx, listOf(note("Pal", "not any more $secret", "incoming", 1000))).isEmpty())
     }
-    @Test fun switchingTheMethodOffOrBackToCaptureRestoresTheRightBehaviour() {
+    @Test fun switchingTheModeOffAfterCaptureRestoresTheEarlierBehaviourOnlyWhenNothingIsHeld() {
+        activate(ScoresMethod.CAPTURE)
+        RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false)   // capture was agreed: the earlier behaviour applies again, as before
+        assertEquals(RiskCapture.NORMAL, RiskLocal.captureMode(ctx)); assertNull(RiskLocal.agreedMethod(ctx)); assertFalse(RiskLocal.captureHeld(ctx)); assertFalse(RiskLocal.uploadOnly(ctx))
+        // No receipt at all, and an upload request nobody agreed to: nothing is held either.
+        reset(); assertTrue(installModel()); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD)
+        RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false)
+        assertFalse(RiskLocal.captureHeld(ctx)); assertEquals(RiskCapture.NORMAL, RiskLocal.captureMode(ctx))
+    }
+    @Test fun afterUploadWasAgreedSwitchingTheModeOffKeepsCaptureOffUntilTheChildAgrees() {
         activate(ScoresMethod.UPLOAD)
-        RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false)   // the parent turns the mode off: the earlier behaviour applies again
-        assertEquals(RiskCapture.NORMAL, RiskLocal.captureMode(ctx)); assertNull(RiskLocal.agreedMethod(ctx))
+        RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false)
+        assertTrue(RiskLocal.captureHeld(ctx)); assertEquals("off", RiskLocal.pendingChangeNotice(ctx))
+        assertEquals(RiskCapture.UPLOAD, RiskLocal.captureMode(ctx)); assertTrue(RiskLocal.uploadOnly(ctx))
+        val before = nonReportRecords().size
+        assertTrue(GuardEngine.captureMessages(ctx, listOf(note("Pal", "hello $secret", "incoming", 3000), screen("from the screen $secret", "incoming"))).isEmpty())
+        val service = Robolectric.buildService(IgNotificationListener::class.java).create()
+        try { service.get().onNotificationPosted(posted("send nudes $secret")) } finally { service.destroy() }
+        assertEquals(0, count("risk_store")); assertEquals(before, nonReportRecords().size); assertTrue(outbox().none { it.toString().contains(secret) })
+        assertFalse("the screen service does not touch Instagram while held", screenServiceConnects())
+        // Ignoring or declining changes nothing; the flag is read fresh each time (it is persisted, not cached).
+        RiskLocal.acknowledgeChangeNotice(ctx); assertTrue(RiskLocal.captureHeld(ctx)); assertEquals(RiskCapture.UPLOAD, RiskLocal.captureMode(ctx))
+        // Only the child's explicit agreement releases it.
+        RiskLocal.releaseCaptureHold(ctx)
+        assertFalse(RiskLocal.captureHeld(ctx)); assertEquals(RiskCapture.NORMAL, RiskLocal.captureMode(ctx)); assertFalse(RiskLocal.uploadOnly(ctx))
+        assertTrue(GuardEngine.captureMessages(ctx, listOf(note("Pal", "read again", "incoming", 1000))).isNotEmpty())
+        assertTrue("capture works again on the screen", screenServiceConnects())
+    }
+    @Test fun theHoldSurvivesALaterPolicyUntilNormalConsentAndIsClearedByAFamilyReset() {
+        activate(ScoresMethod.UPLOAD); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false); assertTrue(RiskLocal.captureHeld(ctx))
+        RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.CAPTURE)   // asked again, not yet agreed
+        assertTrue(RiskLocal.captureHeld(ctx)); assertEquals(RiskCapture.UPLOAD, RiskLocal.captureMode(ctx))
+        assertTrue(RiskLocal.accept(ctx)); assertFalse(RiskLocal.captureHeld(ctx)); assertEquals(RiskCapture.ACTIVE, RiskLocal.captureMode(ctx))
+        reset(); activate(ScoresMethod.UPLOAD); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false); assertTrue(RiskLocal.captureHeld(ctx))
+        RiskLocal.resetFamily(ctx); assertFalse(RiskLocal.captureHeld(ctx))
+    }
+    @Test fun theSwitchOffNoticeNoLongerPromisesTheEarlierModeWhileCaptureIsHeld() {
+        fun noticeText(): String { val n = org.robolectric.Shadows.shadowOf(ctx.getSystemService(android.app.NotificationManager::class.java)).getNotification(7002)
+            return n.extras.getCharSequence(Notification.EXTRA_TEXT).toString() + n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT) }
+        activate(ScoresMethod.UPLOAD); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false)
+        val held = noticeText(); assertFalse(held, held.contains("earlier mode applies")); assertTrue(held, held.contains("Instagram"))
+        reset(); activate(ScoresMethod.CAPTURE); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false)
+        assertTrue(noticeText().contains("earlier mode applies"))
+    }
+    private fun screenServiceConnects(): Boolean {
+        GuardEngine.cpAccConnected = false
+        val service = Robolectric.buildService(IgAccessibilityService::class.java).create()
+        try {
+            service.get().onAccessibilityEvent(android.view.accessibility.AccessibilityEvent.obtain(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply { packageName = GuardEngine.INSTAGRAM_PKG })
+            return GuardEngine.cpAccConnected
+        } finally { service.destroy() }
     }
     @Test fun withNotificationAccessOffTheHeartbeatIsNotATamperAlertInUploadMethod() {
         activate(ScoresMethod.UPLOAD)

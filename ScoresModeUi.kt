@@ -408,6 +408,12 @@ internal object ScoresChildCopy {
     const val CHANGE_CARD_TITLE = "有一項改變需要你知道 / A change you should know about"
     const val CHANGE_CARD_ACTION = "查看改變 / See what changes"
     const val CHANGE_DONE = "我知道了 / Got it"
+    const val CHANGE_OFF_HELD_BODY = "分析已停止，這部手機上為分析儲存的訊息已刪除。因為你之前選擇手動上載，本 App 不會自行再讀取 Instagram，要先得到你的同意。\nAnalysis has stopped and the messages stored here for it were deleted. Because you had chosen manual upload, this app will not read Instagram again on its own: it needs your agreement first."
+    // asked while capture is held after a switch-off that followed manual upload
+    const val HOLD_TITLE = "IG Guard 暫時不會讀取 Instagram\nIG Guard is not reading Instagram"
+    const val HOLD_BODY = "家長已關閉 AI 分析。你之前選擇手動上載，所以本 App 不會讀取 Instagram 的通知或對話畫面，除非你同意。你不作回應，就會維持不讀取。\nYour parent switched AI analysis off. You had chosen manual upload, so IG Guard reads no Instagram notifications or conversation screens unless you agree. If you do nothing, it stays off."
+    const val HOLD_ASK = "是否允許 IG Guard 再次讀取 Instagram 的通知和對話畫面？\nMay IG Guard read Instagram notifications and conversation screens again?"
+    const val HOLD_ALLOW = "允許讀取 / Allow reading"
 
     // model import
     const val IMPORT_TITLE = "分析模型檔 / Analysis model file"

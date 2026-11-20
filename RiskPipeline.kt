@@ -254,6 +254,8 @@ internal object RiskLocal {
     private const val WIPE_PENDING = "scores_wipe_pending"
     private const val LAST_FAILURE = "scores_last_failure_ms"
     private const val CHANGE_NOTICE = "scores_change_notice"
+    /** Set when the parent switches the mode off after the child had agreed to manual upload: capture stays off until the child agrees to it. */
+    private const val CAPTURE_HELD = "scores_capture_held"
     private const val RECONSENT_WIPED = "scores_reconsent_wiped"
     internal const val REPORT_DUE = "scores_report_due"
     private const val PARENT_POLICY_ID = "scores_parent_policy_id"
@@ -328,11 +330,15 @@ internal object RiskLocal {
         return captureModeNow(ctx)
     }
     private fun captureModeNow(ctx: Context): RiskCapture =
-        if (!contentFree(ctx)) RiskCapture.NORMAL else if (readsNothing(ctx)) RiskCapture.UPLOAD
+        if (captureHeld(ctx)) RiskCapture.UPLOAD else if (!contentFree(ctx)) RiskCapture.NORMAL else if (readsNothing(ctx)) RiskCapture.UPLOAD
         else if (active(ctx)) RiskCapture.ACTIVE else RiskCapture.CONTENT_FREE
 
     /** The child agreed to manual upload and the mode is on: the notification listener and the screen service read nothing. */
-    fun uploadOnly(ctx: Context): Boolean = contentFree(ctx) && readsNothing(ctx)
+    fun uploadOnly(ctx: Context): Boolean = captureHeld(ctx) || (contentFree(ctx) && readsNothing(ctx))
+
+    /** Capture is held off (behaves as the upload method) until the child agrees on the card; survives restarts, cleared by [resetFamily] and by a normal consent in [accept]. */
+    fun captureHeld(ctx: Context): Boolean = prefs(ctx).getBoolean(CAPTURE_HELD, false)
+    fun releaseCaptureHold(ctx: Context) { prefs(ctx).edit().remove(CAPTURE_HELD).commit(); changed(ctx) }
 
     /** Only meaningful once [contentFree] holds, i.e. a receipt is present: no agreed method then means the receipt cannot be read, which must fail closed (read nothing) rather than re-enable capture. */
     private fun readsNothing(ctx: Context): Boolean = agreedMethod(ctx).let { it == null || it == ScoresMethod.UPLOAD }
@@ -447,7 +453,7 @@ internal object RiskLocal {
         // The family ended: its queued reports could never be delivered. The chat text is already gone, so a failure here leaves nothing private behind.
         retrying("report") { RiskReporter.purgeQueued(ctx, GuardEngine.getChannelTopic(ctx)) }
         prefs(ctx).edit().remove(POLICY_ID).remove(POLICY_ENABLED).remove(POLICY_METHOD).remove(PAUSED_AT).remove(LAST_RUN).remove(BASELINE)
-            .remove(PARENT_POLICY_ID).remove(PARENT_POLICY_ENABLED).remove(PARENT_POLICY_METHOD).remove(PARENT_POLICY_AT).remove(CHANGE_NOTICE).remove(POLICY_REPOST).commit()
+            .remove(PARENT_POLICY_ID).remove(PARENT_POLICY_ENABLED).remove(PARENT_POLICY_METHOD).remove(PARENT_POLICY_AT).remove(CHANGE_NOTICE).remove(CAPTURE_HELD).remove(POLICY_REPOST).commit()
         receiptPrefs(ctx).edit().clear().commit()
         try { RiskScoringSchedule.sync(ctx) } catch (_: RuntimeException) {}
     }
@@ -494,13 +500,16 @@ internal object RiskLocal {
         val wasEnabled = prefs(ctx).getBoolean(POLICY_ENABLED, false)
         if (policyId(ctx) == id && wasEnabled == enabled) return
         val editor = prefs(ctx).edit().putString(POLICY_ID, id).putBoolean(POLICY_ENABLED, enabled).putString(POLICY_METHOD, method)
+        // Manual upload was agreed: switching the mode off must not hand Instagram back to capture without the child agreeing (read before the receipt is cleared).
+        val hold = !enabled && agreedMethod(ctx) == ScoresMethod.UPLOAD
+        if (hold) editor.putBoolean(CAPTURE_HELD, true)
         if (!enabled) {
             editor.remove(PAUSED_AT).commit()
             receiptPrefs(ctx).edit().clear().commit()
             wipeData(ctx)
             if (wasEnabled) {
                 prefs(ctx).edit().putString(CHANGE_NOTICE, "off").commit()
-                postSwitchOffNotice(ctx)
+                postSwitchOffNotice(ctx, hold || captureHeld(ctx))
             }
         } else editor.commit()
         changed(ctx)
@@ -511,16 +520,18 @@ internal object RiskLocal {
     fun acknowledgeChangeNotice(ctx: Context) { prefs(ctx).edit().remove(CHANGE_NOTICE).commit() }
 
     /** One notification at the moment the parent's switch-off applies, on the monitoring-disclosure channel. */
-    private fun postSwitchOffNotice(ctx: Context) {
+    private fun postSwitchOffNotice(ctx: Context, held: Boolean) {
         try {
             val manager = ctx.getSystemService(android.app.NotificationManager::class.java) ?: return
             manager.createNotificationChannel(android.app.NotificationChannel("child_disclosure", "子女模式監察提示", android.app.NotificationManager.IMPORTANCE_LOW))
             if (Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) return
             val open = android.app.PendingIntent.getActivity(ctx, 7002, Intent(ctx, MainActivity::class.java), android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+            val text = if (held) "你之前選擇手動上載，IG Guard 不會讀取 Instagram 的通知或對話畫面，除非你在 App 內同意。\nYou chose manual upload, so IG Guard reads no Instagram notifications or conversation screens unless you agree in the app."
+                else "先前的模式再次適用：如已啟用完整擷取，訊息會再傳送給家長。\nThe earlier mode applies again: if full capture is on, messages are sent to your parent again."
             val notice = android.app.Notification.Builder(ctx, "child_disclosure").setSmallIcon(android.R.drawable.ic_lock_idle_lock)
                 .setContentTitle("IG Guard · 家長已關閉「只傳分數」模式 (scores-only mode turned off)")
-                .setContentText("先前的模式再次適用：如已啟用完整擷取，訊息會再傳送給家長。 The earlier mode applies again: if full capture is on, messages are sent to your parent again.")
-                .setStyle(android.app.Notification.BigTextStyle().bigText("先前的模式再次適用：如已啟用完整擷取，訊息會再傳送給家長。\nThe earlier mode applies again: if full capture is on, messages are sent to your parent again."))
+                .setContentText(text.replace("\n", " "))
+                .setStyle(android.app.Notification.BigTextStyle().bigText(text))
                 .setContentIntent(open).setAutoCancel(true).build()
             manager.notify(7002, notice)
         } catch (_: RuntimeException) { /* The notice is best effort; the persisted change flag is the record. */ }
@@ -555,7 +566,7 @@ internal object RiskLocal {
         FamilyEvidence(ctx).use { db -> db.discardPendingMatching(GuardEngine.getChannelTopic(ctx)) { wire -> carriesText(token, wire) } }
         // Text kept for the earlier method must not mix with the new one's: a method change deletes it (queued score reports stay).
         if (methodChanged) wipeData(ctx)
-        prefs(ctx).edit().putString(CHANGE_NOTICE, "on").remove(RECONSENT_WIPED).commit()
+        prefs(ctx).edit().putString(CHANGE_NOTICE, "on").remove(RECONSENT_WIPED).remove(CAPTURE_HELD).commit()
         prefs(ctx).edit().remove(PAUSED_AT).putLong(BASELINE, now).commit()
         changed(ctx)
         true

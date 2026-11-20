@@ -4082,6 +4082,14 @@ class MainActivity : Activity() {
 
     private fun renderScoresChildBlocks(t: ThemeColors) {
         val s = RiskLocal.status(this)
+        if (RiskLocal.captureHeld(this)) {
+            val card = noticeCard(t, true, "scores_hold_card")
+            card.addView(label(ScoresChildCopy.HOLD_TITLE, 16f, t.textPrimary, true, bottomPad = 6))
+            card.addView(label(ScoresChildCopy.HOLD_BODY, 14f, t.textSecondary, bottomPad = 8))
+            card.addView(label(ScoresChildCopy.HOLD_ASK, 14f, t.textPrimary, true, bottomPad = 8))
+            card.addView(actionButton(ScoresChildCopy.HOLD_ALLOW, t.btnSecondaryBg, t.btnSecondaryText) { RiskLocal.releaseCaptureHold(this); ScoresEngineBridge.acknowledgeNotice(this, "off"); renderUi() }.apply { tag = "scores_hold_agree" })
+            rootContainer.addView(card)
+        }
         ScoresEngineBridge.pendingNotice(this)?.let {
             val card = noticeCard(t, true, "scores_change_card")
             card.addView(label(ScoresChildCopy.CHANGE_CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 6))
@@ -4180,7 +4188,7 @@ class MainActivity : Activity() {
     private fun renderScoresChange(t: ThemeColors) {
         val kind = ScoresEngineBridge.pendingNotice(this)
         heading(if (kind == "off") ScoresChildCopy.CHANGE_OFF_TITLE else ScoresChildCopy.CHANGE_ON_TITLE, "", t)
-        rootContainer.addView(label(if (kind == "off") ScoresChildCopy.CHANGE_OFF_BODY else if (kind == "on") ScoresChildCopy.CHANGE_ON_BODY else "目前沒有新的改變。\nNothing has changed.", 15f, t.textSecondary, bottomPad = 18))
+        rootContainer.addView(label(if (kind == "off") (if (RiskLocal.captureHeld(this)) ScoresChildCopy.CHANGE_OFF_HELD_BODY else ScoresChildCopy.CHANGE_OFF_BODY) else if (kind == "on") ScoresChildCopy.CHANGE_ON_BODY else "目前沒有新的改變。\nNothing has changed.", 15f, t.textSecondary, bottomPad = 18))
         // Only this button acknowledges the notice; leaving with Back keeps it on the overview.
         rootContainer.addView(actionButton(ScoresChildCopy.CHANGE_DONE, t.btnPrimaryBg, t.btnPrimaryText) {
             if (kind != null) ScoresEngineBridge.acknowledgeNotice(this, kind)

@@ -77,6 +77,25 @@ class ScoresMethodChildUiTest {
             assertTrue("the page is drawn again for what is now asked", screen(c).contains("Terms of Use"))
         } finally { c.pause().stop().destroy() }
     }
+    @Test fun whileCaptureIsHeldTheChildIsAskedAndOnlyAgreeingReleasesIt() {
+        installModel(); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD); assertTrue(RiskLocal.accept(ctx))
+        RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false)
+        var c = launch("overview")
+        try {
+            val text = screen(c)
+            assertTrue(UiSupport.all(c.get().window.decorView).any { it.tag == "scores_hold_card" }); assertTrue(text.contains(ScoresChildCopy.HOLD_TITLE.lineSequence().first()))
+            UiSupport.nav(c.get(), "scores_change")
+            val change = screen(c)
+            assertFalse("the earlier behaviour is not promised", change.contains(ScoresChildCopy.CHANGE_OFF_BODY.lineSequence().first())); assertTrue(change.contains(ScoresChildCopy.CHANGE_OFF_HELD_BODY.lineSequence().first()))
+            assertTrue("looking at it changes nothing", RiskLocal.captureHeld(ctx))
+        } finally { c.pause().stop().destroy() }
+        c = launch("overview")
+        try {
+            UiSupport.all(c.get().window.decorView).single { it.tag == "scores_hold_agree" }.performClick()
+            assertFalse(RiskLocal.captureHeld(ctx)); assertEquals(RiskCapture.NORMAL, RiskLocal.captureMode(ctx)); assertNull(RiskLocal.pendingChangeNotice(ctx))
+            assertTrue(UiSupport.all(c.get().window.decorView).none { it.tag == "scores_hold_card" })
+        } finally { c.pause().stop().destroy() }
+    }
     @Test fun theConsentPageForCaptureRepeatsAShortenedWarning() {
         installModel(); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.CAPTURE)
         val c = launch("scores_consent")
