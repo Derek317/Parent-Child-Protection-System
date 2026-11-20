@@ -18,7 +18,9 @@ enum class RelayConsumption { CONSUMED, REJECTED, RETRY }
 
 /** One authenticated session; SQLite on the phones owns unconfirmed evidence. */
 object CloudRelay {
-    data class PublishResult(val accepted:Boolean,val message:String,val contextFull:Boolean=false)
+    data class PublishResult(val accepted:Boolean,val message:String,val contextFull:Boolean=false,val expired:Boolean=false)
+    private const val ROOM_RETIRED="中繼房間已刪除或已停用 · 請兩部手機重新配對"
+    private const val DAY_MS=24*60*60_000L
     private val executor=ScheduledThreadPoolExecutor(1){task->Thread(task,"ig-guard-relay").apply{isDaemon=true}}.apply{removeOnCancelPolicy=true}
     private val client=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(0,TimeUnit.SECONDS)
         .pingInterval(60,TimeUnit.SECONDS).build()
@@ -162,7 +164,9 @@ object CloudRelay {
                     override fun onFailure(ws:WebSocket,error:Throwable,response:Response?){executor.execute{
                         if(socket!==ws){response?.close();return@execute}
                         val delay=if(response?.code in listOf(401,403))300_000L else response?.header("Retry-After")?.toLongOrNull()?.times(1000)
-                        fail("連線未完成 · ${response?.code?.let{"HTTPS $it"}?:error.javaClass.simpleName} · 記錄保留",delay)
+                        // A retired room stays retired for months: say so, and ask at most daily in case it was re-registered.
+                        if(response?.code==410)fail(ROOM_RETIRED,DAY_MS)
+                        else fail("連線未完成 · ${response?.code?.let{"HTTPS $it"}?:error.javaClass.simpleName} · 記錄保留",delay)
                         response?.close()
                     }}
                     override fun onClosing(ws:WebSocket,code:Int,reason:String){ws.close(code,"")}
@@ -245,10 +249,17 @@ object CloudRelay {
                         if(!current())stop()
                     }
                     "peer" -> if(message.optBoolean("online")){ws.send("{\"type\":\"replay\"}");GuardEngine.retryPendingAlerts(ctx)}
+                    "retired" -> fail(ROOM_RETIRED,DAY_MS)
                     "error" -> {
                         val code=message.optString("code").takeIf{it.matches(Regex("[a-z_]{1,40}"))}?:"relay_unavailable"
                         val id=message.optString("id")
                         val item=pending[id]
+                        // The relay will never take this id again. Keep the record, back it off, and let later alerts through.
+                        if(code=="expired" && item!=null) {
+                            pending.remove(id);item.timeout?.cancel(false)
+                            item.callback(PublishResult(false,"中繼已不再接受這項逾期記錄 · 其他提醒仍可傳送",expired=true))
+                            sendNext();return
+                        }
                         if(code=="queue_full" && item?.json?.optString("kind")=="data") {
                             pending.remove(id);item.timeout?.cancel(false)
                             item.callback(PublishResult(false,"一般對話暫存已滿 · 已留在手機，緊急提醒仍可傳送",contextFull=true))

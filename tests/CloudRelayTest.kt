@@ -143,4 +143,63 @@ class CloudRelayTest {
             assertTrue("A short hint is a minimum, not permission to reset backoff",retryAt-completedAt>=1900)
         }finally{connection.close();server.shutdown()}
     }
+    @Test fun anExpiredRecordDoesNotDisconnectOrBlockTheNextAlert() {
+        val server=MockWebServer();val oldDone=CountDownLatch(1);val urgentDone=CountDownLatch(1)
+        var expired=false;var oldAccepted=true;var urgentAccepted=false
+        server.enqueue(MockResponse().withWebSocketUpgrade(object:WebSocketListener(){
+            override fun onOpen(webSocket:WebSocket,response:Response){webSocket.send("{\"type\":\"ready\",\"protocol\":1}")}
+            override fun onMessage(webSocket:WebSocket,text:String){
+                val p=JSONObject(text)
+                if(p.optString("type")=="publish")webSocket.send(if(p.getString("id")=="old:0")
+                    JSONObject().put("type","error").put("id","old:0").put("code","expired").put("retry_after_ms",0).toString()
+                    else JSONObject().put("type","accepted").put("id",p.getString("id")).put("mode","buffered").toString())
+            }
+            override fun onClosing(webSocket:WebSocket,code:Int,reason:String){webSocket.close(code,reason)}
+        }));server.start()
+        val token=GuardEngine.getOrCreateFamilyToken(ctx)
+        val connection=CloudRelay.Connection(ctx,GuardEngine.captureRelaySession(ctx),token,server.url("/").toString())
+        try {
+            publish(connection,"old:0",GuardEngine.encryptPayload(token,"{}"),"urgent"){expired=it.expired;oldAccepted=it.accepted;oldDone.countDown()}
+            assertTrue(oldDone.await(5,TimeUnit.SECONDS));assertTrue(expired);assertFalse(oldAccepted)
+            publish(connection,"urgent:0",GuardEngine.encryptPayload(token,"{}"),"urgent"){urgentAccepted=it.accepted;urgentDone.countDown()}
+            assertTrue(urgentDone.await(5,TimeUnit.SECONDS));assertTrue(urgentAccepted)
+            assertEquals("An expired record must not cost a reconnect",1,server.requestCount)
+            assertTrue("The refused record stays on the phone",FamilyEvidence(ctx).use{it.pendingEvent(GuardEngine.getChannelTopicForToken(token),"old:0")})
+        }finally{connection.close();server.shutdown()}
+    }
+    private fun awaitCooldown(room:String):Long {
+        val deadline=System.currentTimeMillis()+5000
+        while(System.currentTimeMillis()<deadline){val at=LocalVault.preferences(ctx).getLong("relay_cooldown_child_$room",0);if(at>0)return at;Thread.sleep(20)}
+        return 0
+    }
+    @Test fun aRetiredRoomIsNamedPlainlyAndAskedAgainNoMoreThanDaily() {
+        val server=MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(410).setHeader("Retry-After","7776000").setBody("{\"error\":{\"code\":\"room_retired\"}}"));server.start()
+        val token=GuardEngine.getOrCreateFamilyToken(ctx);val started=System.currentTimeMillis()
+        val connection=CloudRelay.Connection(ctx,GuardEngine.captureRelaySession(ctx),token,server.url("/").toString())
+        try {
+            connection.start()
+            val retryAt=awaitCooldown(FamilyRelay.room(authority.publicKey,GuardEngine.getChannelTopic(ctx)))
+            assertTrue("A retired room is not retried within the day",retryAt-started>=23*60*60_000L)
+            assertTrue(GuardEngine.cpLastPollStatus,GuardEngine.cpLastPollStatus.contains("重新配對"))
+            assertFalse(GuardEngine.cpLastPollStatus.contains("HTTPS 410"))
+        }finally{connection.close();server.shutdown()}
+    }
+    @Test fun aRetiredFrameOnALiveSocketIsHandledLikeARetiredRoom() {
+        val server=MockWebServer()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object:WebSocketListener(){
+            override fun onOpen(webSocket:WebSocket,response:Response){webSocket.send("{\"type\":\"ready\",\"protocol\":1}");webSocket.send("{\"type\":\"retired\"}")}
+            override fun onClosing(webSocket:WebSocket,code:Int,reason:String){webSocket.close(code,reason)}
+        }));server.start()
+        val token=GuardEngine.getOrCreateFamilyToken(ctx);val started=System.currentTimeMillis()
+        val connection=CloudRelay.Connection(ctx,GuardEngine.captureRelaySession(ctx),token,server.url("/").toString())
+        try {
+            connection.start()
+            val room=FamilyRelay.room(authority.publicKey,GuardEngine.getChannelTopic(ctx))
+            // "ready" clears the cooldown; wait for the one "retired" sets afterwards.
+            var retryAt=0L;val deadline=System.currentTimeMillis()+5000
+            while(System.currentTimeMillis()<deadline && retryAt-started<23*60*60_000L){retryAt=LocalVault.preferences(ctx).getLong("relay_cooldown_child_$room",0);Thread.sleep(20)}
+            assertTrue(retryAt-started>=23*60*60_000L);assertTrue(GuardEngine.cpLastPollStatus.contains("重新配對"))
+        }finally{connection.close();server.shutdown()}
+    }
 }

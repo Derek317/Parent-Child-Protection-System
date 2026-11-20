@@ -1545,7 +1545,7 @@ object GuardEngine {
                             if(!result.accepted || !frame.waitForReceipt || stillPending)cpLastHttpStatus=result.message
                             addCheckpointLog(app,if(result.accepted)"CP3-RELAY" else "CP3-ERR",if(result.accepted)"Encrypted packet accepted; parent receipt is separate" else result.message)
                         }
-                        if(!result.accepted){if(result.contextFull)continue@deliveryLoop else break@deliveryLoop}
+                        if(!result.accepted){if(result.contextFull || result.expired)continue@deliveryLoop else break@deliveryLoop}
                     }
                 }
             } finally {
