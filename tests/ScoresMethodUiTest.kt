@@ -38,7 +38,6 @@ class ScoresMethodUiTest {
         RuntimeEnvironment.setFontScale(1f)
         ctx.deleteDatabase("family_evidence.db"); LocalVault.preferences(ctx).edit().clear().commit()
         GuardEngine.setFamilyToken(ctx, UUID.randomUUID().toString()); GuardEngine.setRole(ctx, "parent")
-        shadowOf(ctx.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).setIsDeviceSecure(true)
         original = original ?: ProxySelector.getDefault()
         ProxySelector.setDefault(object : ProxySelector() {
             override fun select(u: URI) = if (u.host == "ntfy.sh") listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", 9))) else original?.select(u) ?: listOf(Proxy.NO_PROXY)
@@ -52,7 +51,8 @@ class ScoresMethodUiTest {
         val state = ChildScoresState(policyId, "valid", "accepted", false, null, sent - 100, 0, 0, true)
         FamilyEvidence(ctx).use { it.storeScoresReport(scope, ParsedScoresReport(UUID.randomUUID().toString(), sent, state, emptyList()), System.currentTimeMillis()) }
     }
-    private fun launch(): ActivityController<MainActivity> = Robolectric.buildActivity(MainActivity::class.java).setup().also { UiSupport.nav(it.get(), "family") }
+    /** The device lock is set after the start: a secure lock at start-up makes the Robolectric looper spin here. */
+    private fun launch(): ActivityController<MainActivity> = Robolectric.buildActivity(MainActivity::class.java).setup().also { shadowOf(ctx.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).setIsDeviceSecure(true); UiSupport.nav(it.get(), "family") }
     private fun dialogViews(): List<View> = UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView)
     private fun tagged(tag: String) = dialogViews().filter { it.tag == tag }
     private fun openSwitch(c: ActivityController<MainActivity>) { UiSupport.all(c.get().window.decorView).single { it.tag == "scores_mode_switch" }.performClick() }
@@ -72,10 +72,33 @@ class ScoresMethodUiTest {
             assertTrue(tagged("scores_capture_ack").isEmpty()); assertTrue(UiSupport.texts(ShadowDialog.getLatestDialog().window!!.decorView).none { it.contains(ScoresUi.WARNING_EN_TITLE) })
             assertTrue(tagged("scores_method_upload").single().contentDescription.toString().contains("已選"))
             assertTrue(tagged("scores_on_confirm").single().isEnabled)
-            tagged("scores_on_confirm").single().performClick()
+            tagged("scores_on_confirm").single().performClick(); answer(c.get(), true)
             val policy = GuardEngine.scoresModePolicy(ctx)!!
             assertTrue(policy.enabled); assertEquals(ScoresMethod.UPLOAD, policy.method)
             assertEquals(ScoresMethod.UPLOAD, queuedPolicies().single().getString("method"))
+        } finally { c.pause().stop().destroy() }
+    }
+
+    @Test fun uploadFromOffNeedsAFreshAuthenticationToo() {
+        validReport()
+        val c = launch()
+        try {
+            openSwitch(c)
+            tagged("scores_on_confirm").single().performClick()
+            assertTrue(promptedForAuth(c.get())); assertNull("nothing is sent before the authentication", GuardEngine.scoresModePolicy(ctx))
+            answer(c.get(), true)
+            assertEquals(ScoresMethod.UPLOAD, GuardEngine.scoresModePolicy(ctx)!!.method)
+        } finally { c.pause().stop().destroy() }
+    }
+
+    @Test fun turningOffNeedsAFreshAuthentication() {
+        validReport(); assertTrue(GuardEngine.sendScoresModePolicy(ctx, true, ScoresMethod.UPLOAD)); validReport()
+        val c = launch()
+        try {
+            openSwitch(c)
+            org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(android.os.Looper.getMainLooper()).idle()
+            assertTrue(promptedForAuth(c.get())); assertEquals("nothing is sent before the authentication", true, GuardEngine.scoresModePolicy(ctx)!!.enabled)
+            answer(c.get(), true); assertEquals(false, GuardEngine.scoresModePolicy(ctx)!!.enabled)
         } finally { c.pause().stop().destroy() }
     }
 

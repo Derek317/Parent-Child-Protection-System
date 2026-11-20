@@ -4467,7 +4467,7 @@ class MainActivity : Activity() {
                 else Toast.makeText(this, if (current != null) ScoresUi.METHOD_FAILED else ScoresUi.SEND_FAILED, Toast.LENGTH_LONG).show()
                 renderUi()
             }
-            if (current != null || chosen == ScoresMethod.CAPTURE) requireFreshParentAuth(send) else send()
+            requireFreshParentAuth(send)
         }.apply { tag = "scores_on_confirm" }
         confirm = confirmButton
         box.addView(confirmButton)
@@ -4476,8 +4476,10 @@ class MainActivity : Activity() {
     private fun confirmScoresOff() {
         alert().setTitle(ScoresUi.PARENT_OFF_TITLE).setMessage(ScoresUi.PARENT_OFF_BODY).setNegativeButton("取消 / Cancel", null)
             .setPositiveButton("確認關閉 / Turn off") { _, _ ->
-                if (!ScoresEngineBridge.sendPolicy(this, false, GuardEngine.scoresModePolicy(this)?.method ?: ScoresMethod.CAPTURE)) Toast.makeText(this, ScoresUi.OFF_FAILED, Toast.LENGTH_LONG).show()
-                renderUi()
+                requireFreshParentAuth {
+                    if (!ScoresEngineBridge.sendPolicy(this, false, GuardEngine.scoresModePolicy(this)?.method ?: ScoresMethod.CAPTURE)) Toast.makeText(this, ScoresUi.OFF_FAILED, Toast.LENGTH_LONG).show()
+                    renderUi()
+                }
             }.show()
     }
 

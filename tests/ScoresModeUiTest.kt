@@ -85,9 +85,16 @@ class ScoresParentUiTest {
         FamilyEvidence(ctx).use { it.storeScoresReport(scope, ParsedScoresReport(UUID.randomUUID().toString(), sent, state, rows), receivedAt) }
     }
     private fun enable() { report(policyId = null); assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)) }
-    private fun launch() = Robolectric.buildActivity(MainActivity::class.java).setup().also { UiSupport.nav(it.get(), "overview") }
+    private fun launch() = Robolectric.buildActivity(MainActivity::class.java).setup().also { secureDevice(); UiSupport.nav(it.get(), "overview") }
     private fun page(c: org.robolectric.android.controller.ActivityController<MainActivity>): List<View> { UiSupport.nav(c.get(), "scores"); return UiSupport.views(c.get(), "scores_loading") }
     private fun tagged(v: List<View>, tag: String) = v.filter { it.tag == tag }
+    /** Every policy change the parent starts asks for a fresh device authentication first: this answers it as approved. */
+    private fun secureDevice() = shadowOf(ctx.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager).setIsDeviceSecure(true)
+    private fun approveFreshAuth(c: org.robolectric.android.controller.ActivityController<MainActivity>) {
+        assertEquals(9031, shadowOf(c.get()).nextStartedActivityForResult?.requestCode)
+        MainActivity::class.java.getDeclaredMethod("onActivityResult", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Intent::class.java).apply { isAccessible = true }
+            .invoke(c.get(), 9031, android.app.Activity.RESULT_OK, null)
+    }
 
     @Test fun theParentIsToldThatTheChildMustAgreeAgainWithoutPromisingTheEarlierMode() {
         enable(); report(consent = "reconsent", active = false)
@@ -264,7 +271,7 @@ class ScoresParentUiTest {
             UiSupport.all(dialog.window!!.decorView).first { it.tag == "scores_on_cancel" }.performClick()
             assertNull(GuardEngine.scoresModePolicy(ctx))
             family(c).single { it.tag == "scores_mode_switch" }.performClick()
-            UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).first { it.tag == "scores_on_confirm" }.performClick()
+            UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).first { it.tag == "scores_on_confirm" }.performClick(); approveFreshAuth(c)
             assertEquals(true, GuardEngine.scoresModePolicy(ctx)?.enabled)
             assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("等待子女同意") })
         } finally { c.pause().stop().destroy() }
@@ -277,7 +284,7 @@ class ScoresParentUiTest {
             assertTrue(sw.createAccessibilityNodeInfo().isChecked)
             sw.performClick()
             assertEquals(true, GuardEngine.scoresModePolicy(ctx)?.enabled)
-            ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle()
+            ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle(); approveFreshAuth(c)
             assertEquals(false, GuardEngine.scoresModePolicy(ctx)?.enabled)
         } finally { c.pause().stop().destroy() }
     }
@@ -288,7 +295,7 @@ class ScoresParentUiTest {
             family(c).single { it.tag == "scores_mode_switch" }.performClick()
             // The child's report disappears between opening the page and confirming.
             ctx.deleteDatabase("family_evidence.db")
-            UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).first { it.tag == "scores_on_confirm" }.performClick()
+            UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).first { it.tag == "scores_on_confirm" }.performClick(); approveFreshAuth(c)
             assertNull(GuardEngine.scoresModePolicy(ctx))
             assertEquals(ScoresUi.SEND_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
         } finally { c.pause().stop().destroy() }
@@ -523,14 +530,14 @@ class ScoresParentUiTest {
             var c = launch()
             try {
                 family(c).single { it.tag == "scores_mode_switch" }.performClick()
-                UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).first { it.tag == "scores_on_confirm" }.performClick()
+                UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).first { it.tag == "scores_on_confirm" }.performClick(); approveFreshAuth(c)
                 assertEquals(ScoresUi.SEND_FAILED, org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
             } finally { c.pause().stop().destroy() }
             reset(); enable(); ScoresEngineBridge.sendPolicy = { _, _, _ -> false }
             c = launch()
             try {
                 family(c).single { it.tag == "scores_mode_switch" }.performClick()
-                ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle()
+                ShadowAlertDialog.getLatestAlertDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick(); shadowOf(Looper.getMainLooper()).idle(); approveFreshAuth(c)
                 val said = org.robolectric.shadows.ShadowToast.getTextOfLatestToast()
                 assertEquals(ScoresUi.OFF_FAILED, said); assertFalse(said.contains("模型"))
                 assertEquals(true, GuardEngine.scoresModePolicy(ctx)?.enabled)
