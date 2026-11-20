@@ -31,7 +31,7 @@ test('the schema appears only after a verified parent registration', async () =>
     assert.equal((await connection(mf, f, 'child')).response.status, 409);
     assert.deepEqual(await tables(mf, f.room), []);
     const parent = await connection(mf, f); assert.equal(parent.response.status, 101);
-    assert.deepEqual((await tables(mf, f.room)).sort(), ['child_inbox', 'metadata', 'parent_inbox']);
+    assert.deepEqual((await tables(mf, f.room)).sort(), ['child_inbox', 'metadata', 'packet_lifetimes', 'parent_inbox']);
     parent.close();
   } finally { await mf.dispose(); }
 });

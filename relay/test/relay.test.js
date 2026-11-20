@@ -132,11 +132,11 @@ test('expired cloud copies are removed on reconnect and duplicates do not extend
     await publish(child, 'pending:0');
     assert.equal((await sql(mf, f.room, 'SELECT expires FROM parent_inbox'))[0].expires, before[0].expires);
     await sql(mf, f.room, 'UPDATE parent_inbox SET expires=?', Date.now() - 1000);
+    await sql(mf, f.room, 'UPDATE packet_lifetimes SET expires=?', Date.now() - 1000);
     const parent = await connection(mf, f); await parent.next(m => m.type === 'ready');
     assert.equal((await sql(mf, f.room, 'SELECT COUNT(*) AS count FROM parent_inbox'))[0].count, 0);
-    // Source phone is still free to resubmit its retained unconfirmed record.
-    assert.equal((await publish(child, 'pending:0')).type, 'accepted');
-    assert.equal((await parent.next(m => m.type === 'message')).wire, wire('pending:0'));
+    assert.equal((await publish(child, 'pending:0')).code, 'expired');
+    assert.equal((await sql(mf, f.room, 'SELECT COUNT(*) AS count FROM parent_inbox'))[0].count, 0);
     parent.close(); child.close();
   } finally { await mf.dispose(); }
 });
