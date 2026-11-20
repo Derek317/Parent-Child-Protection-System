@@ -62,7 +62,7 @@ This project compiles directly in the cloud via **GitHub Actions** with zero loc
 * `.github/workflows/build-apk.yml`: Assembles the Android Gradle project, uses private signing credentials from GitHub Actions Secrets when configured, and auto-increments `versionCode` so future updates install in-place without uninstalling the previous version.
 * `ui-res/`: Native fonts, vector icons, light/dark themes and sheet animations used by the role-first family interface; copied into the generated Android project by the workflow. See [asset licences](UI_ASSET_LICENSES.md).
 
-The app opens with role choice and retains existing protection until an authorised role change. Parent and child each have four navigation sections. Charts, alerts, connection states and family settings use real stored data; new installations have an empty trust list.
+Role choice is a one-time page: a phone with no role opens on it, while a phone that already has a role opens on its normal first screen, and existing protection is retained until an authorised role change. Parent and child each have four navigation sections. Charts, alerts, connection states and family settings use real stored data; new installations have an empty trust list.
 
 * `FamilySecurity.kt`: Native password-verifier and parent-command authentication primitives; no third-party runtime dependency.
 * `SecurityControls.kt`: Parent UI authorization state and sensitive clipboard handling; background delivery is independent of the UI lock.

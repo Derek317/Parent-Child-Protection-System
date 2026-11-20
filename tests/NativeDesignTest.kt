@@ -45,7 +45,8 @@ class NativeDesignTest {
         GuardEngine.setRole(ctx,"child")
         val c=Robolectric.buildActivity(MainActivity::class.java).create()
         val a=c.get()
-        // Render the entry screen without starting background network polling in this unit test.
+        // A configured phone no longer opens on role choice; open it deliberately via the role-change control, without background polling.
+        invoke(a,"navigateTo","role")
         MainActivity::class.java.getDeclaredMethod("renderUi",Boolean::class.javaPrimitiveType).apply{isAccessible=true}.invoke(a,false)
         assertTrue(text(a).contains("我是家長"))
         invoke(a,"selectEntryRole","parent")

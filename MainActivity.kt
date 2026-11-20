@@ -2829,7 +2829,7 @@ class MainActivity : Activity() {
           catch (_: android.database.sqlite.SQLiteException) { showStorageFailure(); return }
         val restoredState=try{restoreParentUiState(savedInstanceState)}catch(_:Exception){showStorageFailure();return}
         GuardEngine.syncChildComponents(this)
-        section = restoredState?.getString("section") ?: "role"
+        section = restoredState?.getString("section") ?: if (GuardEngine.getRole(this) == "unconfigured") "role" else "overview" // role page is one-time
         renderedRole = restoredState?.getString("rendered_role") ?: GuardEngine.getRole(this)
         selectedEntryRole = restoredState?.getString("entry_role") ?: ""
         chartMode = restoredState?.getString("chart_mode") ?: "trend"
