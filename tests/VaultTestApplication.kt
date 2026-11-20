@@ -21,6 +21,8 @@ import javax.crypto.SecretKey
 class VaultTestApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        // A leftover animation makes Robolectric's looper draw frames for ever in a later test's setup(); the app skips its animations when they are off.
+        android.animation.ValueAnimator::class.java.getMethod("setDurationScale", Float::class.javaPrimitiveType).invoke(null, 0f)
         TestKeyStore.failReads = false
         TestKeyStore.failEcGeneration = false
         TestKeyStore.failEcImport = false
