@@ -130,6 +130,32 @@ class PairingGuardTest {
         assertTrue(GuardEngine.applyPairing(ctx,foreignInvite()))
         assertEquals("child",GuardEngine.getRole(ctx))
     }
+    private fun deliverReset(first:FamilySecurity.Invite,purge:Boolean) {
+        val key=FamilySecurity.loadOrCreateParentIdentity(ctx,null,first.parentPublicKey).privateKey
+        val command=org.json.JSONObject().put("type","remote_reset_child").put("scope",GuardEngine.getChannelTopic(ctx))
+            .put("command_id",UUID.randomUUID().toString()).put("ts_ms",System.currentTimeMillis())
+        if(purge)command.put("purge_family",true)
+        val wire=GuardEngine.encryptPayload(GuardEngine.getOrCreateFamilyToken(ctx),FamilySecurity.signCommand(command,key).toString())
+        val line=org.json.JSONObject().put("event","message").put("id",UUID.randomUUID().toString()).put("message",wire)
+        assertEquals(RelayConsumption.CONSUMED,GuardEngine.processIncomingRelayLine(ctx,line.toString(),"child",null))
+        assertEquals("unconfigured",GuardEngine.getRole(ctx))
+    }
+    @Test fun aSignedRoomDeletionResetPurgesTheChildsKeysAndUnsentRecords() {
+        val first=pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx);val scope=GuardEngine.getChannelTopicForToken(token)
+        FamilyEvidence(ctx).use{it.enqueue(scope,"unsent:0","cipher")}
+        deliverReset(first,purge=true)
+        assertEquals("Nothing queued for a deleted room may stay",0,FamilyEvidence(ctx).use{it.pendingCount(scope)})
+        assertNull(prefs.getString("parent_command_public_key",null));assertNull(prefs.getString("parent_password_verifier",null))
+        assertNotEquals("The deleted room's secret must not survive on the child",token,GuardEngine.getOrCreateFamilyToken(ctx))
+        assertTrue(GuardEngine.applyPairing(ctx,foreignInvite()))
+    }
+    @Test fun anOrdinarySignedResetKeepsUnsentRecordsAndTheFamilySecret() {
+        val first=pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx);val scope=GuardEngine.getChannelTopicForToken(token)
+        FamilyEvidence(ctx).use{it.enqueue(scope,"unsent:0","cipher")}
+        deliverReset(first,purge=false)
+        assertEquals(1,FamilyEvidence(ctx).use{it.pendingCount(scope)})
+        assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
+    }
     @Test fun deepLinkConfirmationRepairsOnlyWithTheRightPassword() {
         pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx);val other=foreignInvite()
         val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,link(other))).setup()

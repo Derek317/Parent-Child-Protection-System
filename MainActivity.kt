@@ -722,7 +722,7 @@ object GuardEngine {
     }
 
     // ================= 4. REMOTE KEY ROTATION & REMOTE CHILD UNLOCK/RESET =================
-    fun rotateKeyAndNotifyChild(ctx: Context, resetChildToUnconfigured: Boolean, onComplete: ((Boolean) -> Unit)? = null): String = synchronized(pollLock) {
+    fun rotateKeyAndNotifyChild(ctx: Context, resetChildToUnconfigured: Boolean, purgeFamily: Boolean = false, onComplete: ((Boolean) -> Unit)? = null): String = synchronized(pollLock) {
         val session = captureRelaySession(ctx)
         check(session.first == "parent")
         val pending = try { JSONObject(prefs(ctx).getString("pending_rotation_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
@@ -734,6 +734,8 @@ object GuardEngine {
         val command = if(queued)JSONObject(oldCommand.toString()) else JSONObject().put("type", if (resetChildToUnconfigured) "remote_reset_child" else "key_rotated")
             .put("new_token", newToken).put("new_pin", parentPasswordVerifier(ctx))
             .put("command_id",UUID.randomUUID().toString()).put("ts_ms", System.currentTimeMillis()).put("time", nowDateTimeStr())
+        // Sent just before the parent deletes the relay room: the child must not keep that room's secrets or unsent records.
+        if (resetChildToUnconfigured && purgeFamily && !queued) command.put("purge_family", true)
         if (resetChildToUnconfigured) lastResetEvent = getChannelTopicForToken(oldToken) to "control:" + command.getString("command_id")
         if (!resetChildToUnconfigured) check(prefs(ctx).edit().putString("pending_rotation_json",
             JSONObject().put("old_token", oldToken).put("new_token", newToken).put("command",command).toString()).commit())
@@ -802,11 +804,22 @@ object GuardEngine {
         pendingRotation(ctx).optString("new_token").let { FamilySecurity.validToken(it) && it == getOrCreateFamilyToken(ctx) } -> ReleaseOutcome.SENT_UNSURE
         else -> ReleaseOutcome.SENT
     }
-    fun releaseChildBeforeLeaving(ctx: Context, waitMs: Long): ReleaseOutcome {
+    /** The parent deleted this family's relay room for good: nothing queued for it can be delivered and its secrets must not outlive it. */
+    private fun purgeChildFamily(ctx: Context, token: String) {
+        FamilyEvidence(ctx).use { it.discardPending(getChannelTopicForToken(token)) }
+        val editor = prefs(ctx).edit()
+        for (key in listOf("family_uuid_token", "parent_command_public_key", "parent_password_verifier", "control_state_json", "last_control_ts_ms",
+            "pending_rotation_json", "capture_policy_id", "capture_local_ack_id", "capture_child_ack_id", "capture_sequence",
+            "trusted_csv", "flagged_offenders_csv", "child_self_handle", "sent_setup_ok", "next_heartbeat_at_ms")) editor.remove(key)
+        check(editor.commit())
+        relayGeneration++
+        CloudRelay.disconnect()
+    }
+    fun releaseChildBeforeLeaving(ctx: Context, waitMs: Long, purgeFamily: Boolean = false): ReleaseOutcome {
         releaseOverride?.let { return it(ctx, waitMs) }
         if (!isParentMode(ctx)) return ReleaseOutcome.NOT_SENT
         val done = java.util.concurrent.CountDownLatch(1); var accepted = false
-        try { rotateKeyAndNotifyChild(ctx, true) { ok -> accepted = ok; done.countDown() } } catch (_: Exception) { return ReleaseOutcome.NOT_SENT }
+        try { rotateKeyAndNotifyChild(ctx, true, purgeFamily) { ok -> accepted = ok; done.countDown() } } catch (_: Exception) { return ReleaseOutcome.NOT_SENT }
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
             try { done.await(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
@@ -1693,6 +1706,7 @@ object GuardEngine {
                 if (role == "child") {
                     grantTemporaryUnlock(ctx, 10 * 60_000L)
                     setRole(ctx, "unconfigured")
+                    if (inner.optBoolean("purge_family")) purgeChildFamily(ctx, token)
                     addCheckpointLog(ctx, "CP4-RESET", "Parent remotely unlocked & reset Child Phone")
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
@@ -4038,7 +4052,7 @@ class MainActivity : Activity() {
      * Before the parent password and signing key disappear: show the password, and by default send a signed reset so the paired
      * child becomes unconfigured. The parent is told plainly what was and was not confirmed.
      */
-    private fun releaseChildSheet(title: String, intro: String, proceed: (resetSent: Boolean) -> Unit) {
+    private fun releaseChildSheet(title: String, intro: String, purgeFamily: Boolean = false, proceed: (resetSent: Boolean) -> Unit) {
         val t = currentTheme(); val password = GuardEngine.getPin(this)
         showSheet(title) { dialog ->
             addView(label(intro, 14f, t.textSecondary, bottomPad = 14))
@@ -4061,7 +4075,7 @@ class MainActivity : Activity() {
                 if (!send.isChecked) { finished("你選擇不送出解除指令。子女手機仍受保護，請記下上面的主密碼。", false); return@actionButton }
                 status.text = "正在送出解除指令…"
                 thread {
-                    val outcome = GuardEngine.releaseChildBeforeLeaving(this@MainActivity, 8_000L)
+                    val outcome = GuardEngine.releaseChildBeforeLeaving(this@MainActivity, 8_000L, purgeFamily)
                     runOnUiThread {
                         if (isDestroyed) return@runOnUiThread
                         when (outcome) {
@@ -4080,9 +4094,7 @@ class MainActivity : Activity() {
     private fun showCompromiseRecovery(t: ThemeColors) {
         showSheet("重新安全配對") { dialog ->
             addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對及核對完整安全代碼。已被複製的舊資料無法收回。 目前的中繼不能刪除房間；中繼上未被取走的舊密文最多保留 7 天。",14f,t.textSecondary,bottomPad=18))
-            fun fresh() {
-                if(!parentUnlocked())return
-                releaseChildSheet("重新安全配對","新的家庭秘密不經舊通道傳送；子女手機須解除舊配對後才能重新配對。") { resetSent ->
+            fun create(resetSent: Boolean) {
                     try {
                         GuardEngine.createFreshFamilyForRecovery(this@MainActivity)
                         parentAccess.authenticated(GuardEngine.captureRelaySession(this@MainActivity))
@@ -4093,14 +4105,22 @@ class MainActivity : Activity() {
                         val failure = AlertDialog.Builder(this@MainActivity).setTitle("未能完成重新配對").setMessage(message).setPositiveButton("知道了", null).create()
                         trackDialog(failure); failure.show()
                     }
-                }
+            }
+            fun fresh() {
+                if(!parentUnlocked())return
+                releaseChildSheet("重新安全配對","新的家庭秘密不經舊通道傳送；子女手機須解除舊配對後才能重新配對。") { resetSent -> create(resetSent) }
             }
             addView(actionButton("嘗試刪除舊中繼房間，再建立新配對",t.warningButtonBg,t.warningButtonText){requireFreshParentAuth {
-                val expected=GuardEngine.captureRelaySession(this@MainActivity)
-                CloudRelay.retireRoom(this@MainActivity){ok,message->runOnUiThread{
-                    if(isDestroyed || !parentUnlocked() || GuardEngine.captureRelaySession(this@MainActivity)!=expected)return@runOnUiThread
-                    if(ok)fresh() else Toast.makeText(this@MainActivity,message,Toast.LENGTH_LONG).show()
-                }}
+                if(!parentUnlocked())return@requireFreshParentAuth
+                // The signed release must leave before the room does: a deleted room delivers nothing.
+                releaseChildSheet("刪除舊中繼房間","先向子女手機送出已簽署的解除指令，然後刪除舊中繼房間。子女手機收到後會清除舊配對的金鑰及未傳送記錄；若它離線，需當面重新配對。",purgeFamily=true) { resetSent ->
+                    val expected=GuardEngine.captureRelaySession(this@MainActivity)
+                    CloudRelay.retireRoom(this@MainActivity){ok,message->runOnUiThread{
+                        if(isDestroyed || !parentUnlocked() || GuardEngine.captureRelaySession(this@MainActivity)!=expected)return@runOnUiThread
+                        if(ok)create(resetSent)
+                        else Toast.makeText(this@MainActivity,if(resetSent)"$message 子女手機如已解除，請用目前的邀請重新配對。" else message,Toast.LENGTH_LONG).show()
+                    }}
+                }
             }})
             addView(actionButton("只建立新配對（不刪除中繼資料）",t.btnSecondaryBg,t.btnSecondaryText){
                 alert(critical = true).setTitle("未確認中繼刪除，仍要繼續？").setMessage("新秘密不會經舊通道傳送，但舊密文可能仍留在中繼直到到期。子女手機需離線停止舊擷取，然後在安全裝置重新配對；已送達或被複製資料不會刪除。")
