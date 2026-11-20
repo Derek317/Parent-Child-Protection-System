@@ -3911,6 +3911,7 @@ class MainActivity : Activity() {
         else "僅供符合 Instagram 最低年齡要求（至少 13 歲或當地更高要求）的家庭使用。此版本不讀取未送出草稿。通知與可見 DM 擷取可能不完整；警報會加密轉傳至配對家長。可在「擷取範圍與停止」停止擷取及待傳送；Android 權限可另行關閉，已送達副本需另行刪除。"
     private fun childCaptureStatus():String=when {
         !GuardEngine.collectionAllowed(this)->"已停止擷取及傳送；Android 權限不會自動移除。"
+        RiskLocal.captureHeld(this)->ScoresChildCopy.HELD_STATUS
         scoresContentFree()->ScoresChildCopy.MODE_CAPTURE_STATUS
         GuardEngine.fullCaptureEnabled(this)->GuardEngine.captureScopeSummary(this)
         GuardEngine.pendingCapturePolicy(this).isNotEmpty()->"只擷取傳入警報 · 已收到家長設定，點按此處閱讀及確認雙向範圍。"
@@ -4120,7 +4121,7 @@ class MainActivity : Activity() {
         card.addView(label(ScoresChildCopy.TITLE, 16f, t.textPrimary, true, bottomPad = 4))
         card.addView(iconLine(st.icon, if (st == ScoresChildCopy.StatusState.ON) t.accentSeafoam else if (st == ScoresChildCopy.StatusState.PAUSED || st == ScoresChildCopy.StatusState.WAITING || st == ScoresChildCopy.StatusState.RECONSENT) t.warmHoney else t.warmCoral, st.label, t, 15f, "scores_state_label"))
         // Each state says only what is true in that state; the "parent does not see your messages" line is for ON alone.
-        for ((i, line) in ScoresChildCopy.statusLines(st, s.consent).withIndex()) card.addView(label(line, 13f, if (i == 0 && st != ScoresChildCopy.StatusState.ON) t.textPrimary else t.textSecondary, i == 0 && st != ScoresChildCopy.StatusState.ON, bottomPad = 8).apply { tag = "scores_status_line" })
+        for ((i, line) in ScoresChildCopy.statusLines(st, s.consent, RiskLocal.captureHeld(this)).withIndex()) card.addView(label(line, 13f, if (i == 0 && st != ScoresChildCopy.StatusState.ON) t.textPrimary else t.textSecondary, i == 0 && st != ScoresChildCopy.StatusState.ON, bottomPad = 8).apply { tag = "scores_status_line" })
         if (s.consent == "accepted" && s.agreedMethod == ScoresMethod.UPLOAD) {
             card.addView(label(ScoresChildCopy.UPLOAD_ON_TITLE, 14f, t.textPrimary, true, bottomPad = 4))
             card.addView(label(ScoresChildCopy.UPLOAD_ON_NOTE, 13f, t.textSecondary, bottomPad = 8).apply { tag = "scores_upload_note" })

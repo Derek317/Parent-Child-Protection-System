@@ -363,21 +363,24 @@ internal object ScoresChildCopy {
         else -> StatusState.NOT_RUNNING
     }
     const val UNTIL_AGREE_AGAIN = "說明文字已更新，需要你再次同意。你同意之前，不會儲存或分析任何內容，也不會把你的訊息文字傳給家長。你也可以撤回同意。\nThe explanation was updated, so we need you to agree again. Until you do, nothing is stored or analysed and no message text is sent to your parent. You can also withdraw."
+    /** While capture is held after a switch-off that followed manual upload: for the ongoing notice and the child's status line. */
+    const val HELD_STATUS = "IG Guard 暫時不讀取 Instagram：你之前選擇了手動上載，要等你在 App 內同意後才會再讀取，家長暫時不會收到你的訊息。\nIG Guard is not reading Instagram: you had chosen manual upload, so it waits for your agreement in the app. Your parent does not receive your messages meanwhile."
+    private const val UNTIL_AGREE_HELD = "你同意之前，不會儲存或分析任何內容，IG Guard 也不會讀取 Instagram，因為你之前選擇了手動上載。\nUntil you agree, nothing is stored or analysed and capture stays off, because you had chosen manual upload."
     const val UNTIL_AGREE = "你同意之前，不會儲存或分析任何內容，原有的運作方式繼續：你的家長仍會像以往一樣收到訊息。\nUntil you agree, nothing is stored or analysed and the earlier mode continues, so your parent still receives messages as before."
     private const val PARENT_GETS_NO_TEXT = "家長不會收到你的訊息文字，只會收到不含文字的提醒。\nYour parent does not receive your message text, only alerts without text."
     /** What is and is not happening in each state. Never says the parent does not see messages unless that is true. */
-    fun statusLines(st: StatusState, consent: String): List<String> = when (st) {
+    fun statusLines(st: StatusState, consent: String, held: Boolean = false): List<String> = when (st) {
         StatusState.ON -> listOf(STATUS_RUNS, STATUS_PARENT_SEES)
-        StatusState.WAITING -> listOf(UNTIL_AGREE)
+        StatusState.WAITING -> listOf(if (held) UNTIL_AGREE_HELD else UNTIL_AGREE)
         StatusState.RECONSENT -> listOf(UNTIL_AGREE_AGAIN, PARENT_GETS_NO_TEXT)
         StatusState.PAUSED -> listOf("暫停期間不會儲存或分析任何訊息，家長已被告知你暫停了。不含文字的提醒仍會傳給家長，家長不會收到你的訊息文字。\nWhile paused no messages are stored or analysed, and your parent is told you paused. Alerts without text still go to your parent, who does not receive your message text.")
         StatusState.WITHDRAWN -> listOf("你已撤回同意：分析已停止，這部手機上儲存的訊息已刪除，家長已被告知。在家長關閉僅分數模式之前，家長不會收到訊息文字，只會收到不含文字的提醒。\nYou withdrew: analysis stopped, the messages stored on this phone were deleted and your parent is told. Until your parent turns the mode off, they do not receive message text, only alerts without text.")
         StatusState.MODEL_MISSING -> listOf("這部手機沒有有效的模型檔，所以不會儲存或分析任何內容。如果這個 App 內附模型，會自動安裝；否則請到「權限」頁匯入模型檔。\nThere is no valid model file on this phone, so nothing is stored or analysed. If this app includes the model it installs by itself; otherwise import the file in Permissions.", PARENT_GETS_NO_TEXT)
-        StatusState.NOT_AVAILABLE -> listOf("這部手機的記憶體不足或處理器不支援，不能使用這個功能，所以不會儲存或分析任何內容。\nThis phone does not have enough memory or the right processor, so nothing is stored or analysed.") + noteForConsent(consent)
-        StatusState.ENGINE_UNAVAILABLE -> listOf("這個 App 的分析部分未能在這部手機上啟動，所以不會儲存或分析任何內容。更新或重新安裝 App 可能有幫助。\nThe analysis part of this app could not start on this phone, so nothing is stored or analysed. Updating or reinstalling the app may help.") + noteForConsent(consent)
+        StatusState.NOT_AVAILABLE -> listOf("這部手機的記憶體不足或處理器不支援，不能使用這個功能，所以不會儲存或分析任何內容。\nThis phone does not have enough memory or the right processor, so nothing is stored or analysed.") + noteForConsent(consent, held)
+        StatusState.ENGINE_UNAVAILABLE -> listOf("這個 App 的分析部分未能在這部手機上啟動，所以不會儲存或分析任何內容。更新或重新安裝 App 可能有幫助。\nThe analysis part of this app could not start on this phone, so nothing is stored or analysed. Updating or reinstalling the app may help.") + noteForConsent(consent, held)
         StatusState.NOT_RUNNING -> listOf("目前沒有儲存或分析任何內容（擷取已停止，或雙向擷取尚未確認）。\nNothing is being stored or analysed right now (capture is stopped, or two-way capture is not confirmed).", PARENT_GETS_NO_TEXT)
     }
-    private fun noteForConsent(consent: String) = if (consent == "none") listOf("原有的運作方式繼續：你的家長仍會像以往一樣收到訊息。\nThe earlier mode continues, so your parent still receives messages as before.") else listOf(PARENT_GETS_NO_TEXT)
+    private fun noteForConsent(consent: String, held: Boolean) = if (held) listOf(HELD_STATUS) else if (consent == "none") listOf("原有的運作方式繼續：你的家長仍會像以往一樣收到訊息。\nThe earlier mode continues, so your parent still receives messages as before.") else listOf(PARENT_GETS_NO_TEXT)
     fun lastRun(s: RiskChildStatus): String = s.lastRun?.let { "上次運行：${ScoresUi.time(it)} · ${s.scoredCount} 個對話\nLast run: ${ScoresUi.time(it)} · ${s.scoredCount} conversations" }
         ?: "尚未運行\nNot run yet"
     fun unknown(n: Int) = "被視為群組而未分析的聊天：$n 個\nGroup chats set aside, not analysed: $n"

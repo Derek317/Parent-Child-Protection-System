@@ -317,9 +317,14 @@ internal object RiskLocal {
             // Manual upload reads nothing from Instagram, so the confirmed two-way capture scope does not apply to it.
             (GuardEngine.fullCaptureEnabled(ctx) || agreedMethod(ctx) == ScoresMethod.UPLOAD) && policyEnabled(ctx) && consentState(ctx) == "accepted" && !paused(ctx) && RiskModelStore.state(ctx) == RiskModelState.INSTALLED
 
-    /** Old wording was agreed to: nothing may stay stored for it. Wipes the store once, at the first chance, not at daily maintenance. */
+    /**
+     * Old wording was agreed to, or the receipt is present but unreadable (the screens say the stored messages are gone): nothing may stay stored.
+     * Wipes the store once, at the first chance, not at daily maintenance. The flag is cleared by the next agreement.
+     */
     fun enforceWording(ctx: Context) {
-        if (consentState(ctx) != "reconsent" || prefs(ctx).getBoolean(RECONSENT_WIPED, false)) return
+        val state = consentState(ctx)
+        if ((state != "reconsent" && state != "withdrawn") || prefs(ctx).getBoolean(RECONSENT_WIPED, false)) return
+        if (state == "withdrawn" && receipt(ctx) != null) return   // a readable withdrawal wiped the store itself
         wipeStore(ctx)
         prefs(ctx).edit().putBoolean(RECONSENT_WIPED, true).commit()
         changed(ctx)
@@ -650,6 +655,7 @@ internal object RiskLocal {
      * while message text can still reach the parent (the mode is off or the child has not agreed yet).
      */
     fun disclosure(ctx: Context, base: String): String {
+        if (GuardEngine.isChildMode(ctx) && captureHeld(ctx)) return ScoresChildCopy.HELD_STATUS   // before anything that says capture runs
         if (!GuardEngine.isChildMode(ctx) || !policyEnabled(ctx)) return base
         val consent = consentState(ctx)
         return when {
