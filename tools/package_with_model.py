@@ -37,8 +37,9 @@ CHUNK = 1 << 20
 ASSET_DIR = "assets/risk"
 # Old v1 signature files. v2/v3 signatures live in the APK Signing Block, which is not a zip entry and is rebuilt by apksigner.
 SIGNATURE_ENTRY = re.compile(r"^META-INF/[^/]+\.(SF|RSA|DSA|EC)$|^META-INF/MANIFEST\.MF$", re.IGNORECASE)
-# Newer apksigner versions may name the signer by its SDK range: "Signer (minSdkVersion=24, maxSdkVersion=32) certificate ...".
-CERT_LINE = re.compile(r"^Signer (?:#1|\([^)]*\)) certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$", re.MULTILINE)
+# Older apksigner prints "Signer #1 certificate ..."; newer build-tools print "V3.0 Signer: certificate ..." (seen on the GitHub runner)
+# or name the signer by its SDK range.
+CERT_LINE = re.compile(r"^(?:Signer (?:#1|\([^)]*\))|V\d+(?:\.\d+)? Signer:) certificate SHA-256 digest:\s*([0-9a-fA-F]{64})\s*$", re.MULTILINE)
 DEFAULT_KS_PASS_ENV = "IG_GUARD_KEYSTORE_PASSWORD"
 DEFAULT_KEY_PASS_ENV = "IG_GUARD_KEY_PASSWORD"
 # The child names the secrets are passed under to the signing tool; the command line only ever holds "env:<name>".

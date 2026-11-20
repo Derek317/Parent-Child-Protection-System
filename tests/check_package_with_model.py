@@ -306,6 +306,8 @@ class ToolLookup(Dirs):
     def test_certificate_digest_parsing(self):
         self.assertEqual(pkg.parse_cert_digest('x\nSigner #1 certificate SHA-256 digest: ' + 'AB' * 32 + '\n'), 'ab' * 32)
         self.assertEqual(pkg.parse_cert_digest('Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: ' + 'CD' * 32), 'cd' * 32)
+        self.assertEqual(pkg.parse_cert_digest('Number of signers: 1\nV3.0 Signer: certificate DN: CN=test\nV3.0 Signer: certificate SHA-256 digest: ' + 'ef' * 32 + '\n'), 'ef' * 32)
+        self.assertIsNone(pkg.parse_cert_digest('V3.0 Signer: public key SHA-256 digest: ' + 'ef' * 32))
         self.assertIsNone(pkg.parse_cert_digest('nothing'))
 
 
