@@ -520,6 +520,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     fun acknowledgeEvent(scope: String,id: String) { writableDatabase.delete("outbox","scope=? AND event_id=?",arrayOf(scope,id)) }
     fun eventDue(scope: String,id: String,now: Long): Boolean = readableDatabase.rawQuery("SELECT 1 FROM outbox WHERE scope=? AND event_id=? AND accepted=0 AND retry_at<=? AND EXISTS(SELECT 1 FROM outbox_lifetimes l WHERE l.scope=outbox.scope AND l.id=outbox.event_id AND l.expires>? AND l.blocked=0) LIMIT 1",arrayOf(scope,id,now.toString(),System.currentTimeMillis().toString())).use{it.moveToFirst()}
     fun failed(scope: String,id: String,now: Long,role:String="child",kindOnly:String?=null) { writableDatabase.execSQL("UPDATE outbox SET retry_at=?+MIN(900000,30000*(1 << MIN(attempts,5))),attempts=attempts+1 WHERE scope=? AND role=? AND retry_at<=? AND (? IS NULL OR relay_kind=?) AND EXISTS(SELECT 1 FROM outbox WHERE scope=? AND id=?)",arrayOf(now,scope,role,now,kindOnly,kindOnly,scope,id)) }
+    /** The relay refused this one record for good: back off it alone, never the alerts queued behind it. */
+    fun refusedAsExpired(scope: String,id: String,now: Long) { writableDatabase.execSQL("UPDATE outbox SET retry_at=?+900000,attempts=attempts+1 WHERE scope=? AND id=?",arrayOf(now,scope,id)) }
     // A manual first attempt must never cancel an issued backoff or a parent-receipt wait.
     fun retryNow(scope: String) { writableDatabase.execSQL("UPDATE outbox SET retry_at=0 WHERE scope=? AND accepted=0 AND attempts=0",arrayOf(scope)) }
     fun discardPending(scope:String) { discardPendingRows(scope,null,null) }

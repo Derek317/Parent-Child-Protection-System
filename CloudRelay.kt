@@ -255,10 +255,14 @@ object CloudRelay {
                         val id=message.optString("id")
                         val item=pending[id]
                         // The relay will never take this id again. Keep the record, back it off, and let later alerts through.
-                        if(code=="expired" && item!=null) {
-                            pending.remove(id);item.timeout?.cancel(false)
-                            item.callback(PublishResult(false,"中繼已不再接受這項逾期記錄 · 其他提醒仍可傳送",expired=true))
-                            sendNext();return
+                        // A late reply for an id that already timed out must not drop the socket under other publishes.
+                        if(code=="expired") {
+                            if(item!=null) {
+                                pending.remove(id);item.timeout?.cancel(false)
+                                item.callback(PublishResult(false,"中繼已不再接受這項逾期記錄 · 其他提醒仍可傳送",expired=true))
+                            }
+                            if(temporary && pending.isEmpty())stop() else sendNext()
+                            return
                         }
                         if(code=="queue_full" && item?.json?.optString("kind")=="data") {
                             pending.remove(id);item.timeout?.cancel(false)

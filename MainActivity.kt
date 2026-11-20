@@ -1537,6 +1537,7 @@ object GuardEngine {
                         synchronized(pollLock) {
                         if(!transferAllowed(app) || captureRelaySession(app)!=session)return@thread
                         if(result.accepted)recordRelayAcceptance(app,next.second,frame)
+                        else if(result.expired)FamilyEvidence(app).use{it.refusedAsExpired(next.second,frame.id,System.currentTimeMillis())}
                         else FamilyEvidence(app).use{it.failed(next.second,frame.id,System.currentTimeMillis(),session.first,if(result.contextFull)"data" else null)}
                         }
                         if(captureRelaySession(app)==session) {

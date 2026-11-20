@@ -114,4 +114,14 @@ class RelayOutboxTest {
             assertEquals(listOf("urgent:0"),db.due("f",1001).map{it.id})
         }
     }
+    @Test fun aRecordTheRelayRefusedAsExpiredBacksOffAloneAndStaysOnThePhone() {
+        FamilyEvidence(ctx).use{db->
+            db.enqueue("f","old:0","cipher",kind="urgent")
+            db.enqueue("f","urgent:0","cipher",kind="urgent")
+            db.refusedAsExpired("f","old:0",1000)
+            assertEquals("Alerts queued behind a refused record stay due",listOf("urgent:0"),db.due("f",1001).map{it.id})
+            assertEquals(2,db.pendingCount("f"))
+            assertEquals(listOf("old:0","urgent:0"),db.due("f",1000+900_001).map{it.id}.sorted())
+        }
+    }
 }
