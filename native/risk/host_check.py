@@ -141,7 +141,7 @@ def main():
               "The same llama.cpp engine version, driven through the same code that the Android library uses (`risk_core.cpp`: tokenize with add_special=false and parse_special=true, one decode over an empty KV cache, raw logits of ids 15 16 17 18 52), gives the same token ids and the same five-way probabilities as the research harness's llama-server path, on this machine.",
               "", "## What this does not prove", "",
               "- It ran on x86-64, not arm64. The Android build uses different CPU kernels, so small numeric differences on a phone are not excluded and were not measured.",
-              "- It used the base `Qwen3-1.7B-Q8_0.gguf`, not the fine-tuned `qwen3-1.7b-lora-v7-Q4_K_M.gguf` (the file the app ships; it was not host-checked) (same tokenizer and architecture, different weights and quantisation). The base model is not calibrated for the answer format, so these probabilities say nothing about accuracy.",
+              "- It used the base `Qwen3-1.7B-Q8_0.gguf`, not the fine-tuned `qwen3-1.7b-beacon-Q4_K_M.gguf` (the file the app ships; it was not host-checked) (same tokenizer and architecture, different weights and quantisation). The base model is not calibrated for the answer format, so these probabilities say nothing about accuracy.",
               "- It was never run on a device: speed, memory and battery are unmeasured.",
               "- The JNI layer and Kotlin wrapper are not exercised by this check.",
               "- The server's probabilities come from its top-100 candidates, so tokens outside that list are missing there (counted above)."]

@@ -8,7 +8,7 @@ The result is one file you install like any app. On the child's phone the app co
 
 ## What you need (once)
 
-1. **The model file** `qwen3-1.7b-lora-v7-Q4_K_M.gguf` (1,107,408,736 bytes). The script checks its size and SHA-256 against the values written in `RiskModel.kt`; any other file is refused and nothing is written.
+1. **The model file** `qwen3-1.7b-beacon-Q4_K_M.gguf` (1,107,408,736 bytes). The script checks its size and SHA-256 against the values written in `RiskModel.kt`; any other file is refused and nothing is written.
 2. **Python 3.12.** Nothing else to install for the script (it uses only the standard library). On Windows use `py -3.12`.
 3. **A JDK (17 or newer).** Needed by the Android signing tool. Check with `java -version`.
 4. **Android SDK build-tools**, which hold `zipalign` and `apksigner`. If you have Android Studio, open **SDK Manager → SDK Tools → Android SDK Build-Tools** and tick version 34.0.0. Without Android Studio, download "Command line tools only" from developer.android.com, unzip it to `C:\Android\sdk\cmdline-tools\latest`, then run:
@@ -36,7 +36,7 @@ Open PowerShell in the repository folder and run (change the paths):
 ```
 py -3.12 tools\package_with_model.py `
   --apk C:\Users\you\Downloads\ig-guard-signed-apk\app-release.apk `
-  --model D:\models\qwen3-1.7b-lora-v7-Q4_K_M.gguf `
+  --model D:\models\qwen3-1.7b-beacon-Q4_K_M.gguf `
   --out dist\ig-guard-with-model.apk `
   --keystore D:\keys\ig-guard-release.jks `
   --ks-alias igguard `
@@ -52,7 +52,7 @@ py -3.12 tools\package_with_model.py `
 
 The APK plus the model must stay under about 2 GiB (the current build is roughly 1.1 GB plus the APK). Above that the zip format needs zip64 records, which Android may reject, so the script refuses.
 
-It takes a few minutes. It checks the model, copies the APK entry by entry (keeping each entry's compression, dropping the old signature files), adds the model as `assets/risk/qwen3-1.7b-lora-v7-Q4_K_M.gguf` **uncompressed**, runs `zipalign -p -f 4`, signs with `apksigner` (v2 and v3), and verifies the result. At the end it prints the output path, its size and SHA-256, the signing certificate's SHA-256, and writes `dist\ig-guard-with-model.apk.sha256` next to it.
+It takes a few minutes. It checks the model, copies the APK entry by entry (keeping each entry's compression, dropping the old signature files), adds the model as `assets/risk/qwen3-1.7b-beacon-Q4_K_M.gguf` **uncompressed**, runs `zipalign -p -f 4`, signs with `apksigner` (v2 and v3), and verifies the result. At the end it prints the output path, its size and SHA-256, the signing certificate's SHA-256, and writes `dist\ig-guard-with-model.apk.sha256` next to it.
 
 Why those `zipalign` flags: the GitHub build is made with Android Gradle plugin 8.3.2 for Android 8.0 and newer (`minSdk 26`), and the workflow does not change how native libraries are packed. So `libigguard_risk.so` is stored uncompressed and is not extracted at install time. `-p` keeps it page-aligned so it can be loaded straight from the APK, and `4` aligns everything else. Because the minimum Android version is 8.0, the old v1 signature is not needed and the script does not add one.
 

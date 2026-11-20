@@ -4,7 +4,7 @@
 
 Build spec, 19 November 2026. Status: in progress on branch `app/local-risk-scoring`. Not released.
 
-The model was tested mostly on invented chats and on a small number of real ones (see `research/results/stage4-report.md`, section "Retrain with real chats added: v7"). On the real testing chats it flagged 6 of 10 grooming chats and 0 of 37 ordinary chat windows; those chats were also used to choose the model, so this is not a fresh test. It fails the handoff 90-chat set (27/36 risk chats flagged, 5/36 harmless chats flagged). Nothing here shows that it reliably detects real grooming. v7 was trained partly on a small number of real chats that Derek supplied; they are private, are not in the repository, and so v7 cannot be rebuilt from the repository alone. v7 was not run on the sealed set.
+The shipped model is Beacon (see `research/results/stage4-report.md` on the `research/local-risk-model` branch, section "Beacon"). It was trained on invented chats, a small number of real transcripts that Derek supplied, windows from the PAN-12 research corpus and Derek's own ordinary chats. The real chats and the PAN-12 data are private, are not in the repository and must never be added, so Beacon cannot be rebuilt from the repository alone. On the real testing transcripts it flagged 7 of 10 grooming chats and 0 of 37 ordinary chat windows; on the handoff 90-chat set, 30/36 risk chats and 1/36 harmless chats. On a blind set of 500 PAN-12 conversations it flagged 176/200 predator conversations, 14/150 general ones and 78/150 adult sexual conversations with no predator: it does not separate adults' sexual chat from grooming. The blind set is from the same source and era as part of the training data, the small sets have been reused many times, and run-to-run spread is three to seven chats. Nothing here shows that it reliably detects real grooming.
 
 ## Decisions
 
@@ -12,7 +12,7 @@ The model was tested mostly on invented chats and on a small number of real ones
 | --- | --- | --- |
 | Where scoring runs | Derek | On the child's phone. |
 | How the model file arrives | Derek | Either inside a package Derek builds on his own PC (`tools/package_with_model.py`, steps in [local-model-package.md](local-model-package.md)), which the app copies into its own storage on a child phone, or imported by hand with a file picker. No download code, no hosting; the model is never in git or in a GitHub build. |
-| Model | Research | `qwen3-1.7b-lora-v7-Q4_K_M.gguf` (v7, retrained with a small number of real chats added; confirmed by Derek on 19 November 2026; the v3 and v4 files are no longer accepted), 1,107,408,736 bytes, SHA-256 `32c05d65e380072e01ab194021419ec5bb8026a07fdcea5290e773a0995dff60`. Any other file is refused. |
+| Model | Research | `qwen3-1.7b-beacon-Q4_K_M.gguf` (Beacon; chosen by Derek on 20 November 2026; the v3, v4 and v7 files are no longer accepted), 1,107,408,736 bytes, SHA-256 `5b873dbfa4c36fff10372f8c1cf28ae84182d6d41604bf8f8b83f21966debb5c`. Any other file is refused. |
 | Engine | Research | llama.cpp tag `b12503` (commit `4577932fab595eaa8b27ad71734d5de1f3c07d8c`), built for `arm64-v8a` with the NDK. |
 | Keyword detection | Derek | Unchanged. The model is an addition. |
 

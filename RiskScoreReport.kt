@@ -33,10 +33,11 @@ internal class RiskScoreReport private constructor(
         private val conversationId = Regex("C[0-9]{3}")
         private val pinnedRevisions = mapOf(
             "LiquidAI/d1-omni-600M" to "02b55d7076f15129e59ab3f94783f32c4b088674",
-            // Reading a report is harmless, so earlier research reports stay readable; only the v7 file is accepted by the model import.
+            // Reading a report is harmless, so earlier research reports stay readable; only the Beacon file is accepted by the model import.
             "igguard/qwen3-1.7b-lora-v3-Q4_K_M" to "14f2176d569772bcc8e0e0dcd97e59f7ac60d8c4f6e1cb5f6a45159b1892c293",
             "igguard/qwen3-1.7b-lora-v4-Q4_K_M" to "833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314",
-            "igguard/qwen3-1.7b-lora-v7-Q4_K_M" to "32c05d65e380072e01ab194021419ec5bb8026a07fdcea5290e773a0995dff60"
+            "igguard/qwen3-1.7b-lora-v7-Q4_K_M" to "32c05d65e380072e01ab194021419ec5bb8026a07fdcea5290e773a0995dff60",
+            "igguard/qwen3-1.7b-beacon-Q4_K_M" to "5b873dbfa4c36fff10372f8c1cf28ae84182d6d41604bf8f8b83f21966debb5c"
         )
         private val reviewReasons = setOf("insufficient_context", "uncertain_score", "context_too_long")
 

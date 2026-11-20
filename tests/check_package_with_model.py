@@ -61,8 +61,8 @@ class Spec(Dirs):
         self.assertIn(f'"{spec.file_name}"', text)
         self.assertIn(f'"{spec.sha256}"', text)
         self.assertIn(f'{spec.size:,}'.replace(',', '_') + 'L', text)
-        self.assertEqual(spec.file_name, 'qwen3-1.7b-lora-v7-Q4_K_M.gguf')
-        self.assertEqual(pkg.asset_entry_name(spec), 'assets/risk/qwen3-1.7b-lora-v7-Q4_K_M.gguf')
+        self.assertEqual(spec.file_name, 'qwen3-1.7b-beacon-Q4_K_M.gguf')
+        self.assertEqual(pkg.asset_entry_name(spec), 'assets/risk/qwen3-1.7b-beacon-Q4_K_M.gguf')
 
     def test_unreadable_spec_is_an_error(self):
         bad = self.dir / 'RiskModel.kt'

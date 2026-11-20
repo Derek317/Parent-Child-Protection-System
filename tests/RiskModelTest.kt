@@ -111,11 +111,12 @@ class RiskModelTest {
         assertTrue(RiskModelFile.matches(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256))
         assertFalse(RiskModelFile.matches(RiskModelSpec.FILE_BYTES - 1, RiskModelSpec.FILE_SHA256))
         assertFalse(RiskModelFile.matches(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256.replace('a', 'b')))
-        // The pinned file is v7; the earlier v3 and v4 files (same size, different hash) are refused.
-        assertEquals("igguard/qwen3-1.7b-lora-v7-Q4_K_M", RiskModelSpec.MODEL_NAME)
-        assertEquals("qwen3-1.7b-lora-v7-Q4_K_M.gguf", RiskModelSpec.FILE_NAME)
+        // The pinned file is Beacon; the earlier v3, v4 and v7 files (same size, different hash) are refused.
+        assertEquals("igguard/qwen3-1.7b-beacon-Q4_K_M", RiskModelSpec.MODEL_NAME)
+        assertEquals("qwen3-1.7b-beacon-Q4_K_M.gguf", RiskModelSpec.FILE_NAME)
         assertEquals(1_107_408_736L, RiskModelSpec.FILE_BYTES)
-        assertEquals("32c05d65e380072e01ab194021419ec5bb8026a07fdcea5290e773a0995dff60", RiskModelSpec.FILE_SHA256)
+        assertEquals("5b873dbfa4c36fff10372f8c1cf28ae84182d6d41604bf8f8b83f21966debb5c", RiskModelSpec.FILE_SHA256)
+        assertFalse(RiskModelFile.matches(RiskModelSpec.FILE_BYTES, "32c05d65e380072e01ab194021419ec5bb8026a07fdcea5290e773a0995dff60"))
         assertFalse(RiskModelFile.matches(RiskModelSpec.FILE_BYTES, "14f2176d569772bcc8e0e0dcd97e59f7ac60d8c4f6e1cb5f6a45159b1892c293"))
         assertFalse(RiskModelFile.matches(RiskModelSpec.FILE_BYTES, "833efa22ff726b0df4c6461fd61c12409b9dd7eddfee35417c7c342a6a435314"))
     }

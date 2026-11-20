@@ -19,7 +19,7 @@ class RiskContract(unittest.TestCase):
         path = Path(os.environ.get("IGGUARD_STAGE4_REPORT") or ROOT / "research/results/stage4-report.md")
         report = path.read_text(encoding="utf-8")
         kotlin = (ROOT / "RiskModel.kt").read_text(encoding="utf-8")
-        # The report lists each model file it evaluated; the app pins the latest one (v7 from the "Retrain with real chats added: v7" section; the LAST .gguf entry wins).
+        # The report lists each model file it evaluated; the app pins the latest one (Beacon, from the "Beacon" section; the LAST .gguf entry wins).
         entries = re.findall(r"`([\w.\-]+\.gguf)`, ([\d,]+) bytes.*?SHA-256 `([0-9a-f]{64})`", report)
         self.assertTrue(entries, "no .gguf entry in the report")
         name, size, sha = entries[-1]
