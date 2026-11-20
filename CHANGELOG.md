@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.0 — 20 November 2026 (Hong Kong)
+
+Version 5.0 is the first release with the optional scores-only mode (AI risk analysis), the two collection methods with the automatic-capture warning, the capture hold, the 15-minute background check-in, relay room deletion and 90-day room expiry, and the speed fixes found on a real phone; those changes are described in the entries below and in the [5.0 release notes](docs/releases/5.0.md). Bundled Terms revision `2026-11-20-v6`. The Terms have not been reviewed by a lawyer and are not legal advice.
+
+- By the owner's decision of 20 November 2026, the APK published on GitHub Releases for 5.0 carries the Beacon model inside it, and the model file is also published on GitHub Releases as an asset of a separate release (`model-beacon`), so it is publicly downloadable. The git repository still does not contain the model file, and ordinary `main` builds have no model; on them AI risk analysis cannot be used until a model is present. The release workflow step that fetches, checks and packages the model is planned; this entry does not show that it has run.
+- On first start on a child phone the app copies the model into its private storage after checking size, SHA-256 and free space (about 1.1 GB on top of the installed app). Manual import with the file picker is now described as a recovery path only.
+- Terms revision `2026-11-20-v6` (header release line now 5.0): section 2C (both languages) and section 6, the privacy policy and the deletion guide say this, and add that because the model is public, the possibility that it reproduces fragments of its training text (including other people's messages) matters more (a limited developer test found no reproduction of the real training conversations, with one setting and one prompt length and without PAN-12, so it cannot prove the model never does), and a downloaded copy cannot be recalled. Existing users see the one-time 條款已更新 notice; nobody is asked to accept again.
+- Phone test on two real phones: the first-start self-install worked, both collection methods worked end to end, and on a 2018 phone reporting 5.8 GB scoring completed with about 1.7 GB peak app memory (one phone, a few short chats; not a guarantee). Not observed: the 15-minute check-in and the charging-and-idle scoring job running on their own (both were started by hand); the owner's real Instagram export was not imported; only two devices. This supersedes the "nothing has run on a physical phone" and "not verified" lines of the 19 November entry for the items above.
+- Add `THIRD-PARTY-NOTICES.md` for llama.cpp (MIT) and the Qwen3 1.7B base model (Apache-2.0). Whether the APK and the separately published model file carry enough of these notices is listed as open.
+- Note that an APK over 1 GB installs directly but cannot be uploaded to Google Play as a plain APK (Play's limit for APKs is 100 MB); Play would need an app bundle with an asset pack, which is not built.
+- Upgrading keeps data only if the new APK is signed with the same key as the installed app.
+
 ## Terms 2026-11-20-v5: AI risk analysis, collection method and model (20 November 2026, Hong Kong)
 
 No app version is changed by this entry. The text has not been reviewed by a lawyer and is not legal advice.

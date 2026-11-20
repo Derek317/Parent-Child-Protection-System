@@ -1,8 +1,8 @@
 # IG Guard 使用條款 / Terms of Service
 
 更新 / Updated: 20 November 2026（香港 / Hong Kong）
-版本 / Release: 4.9-beta.4
-條款修訂 / Terms revision: 2026-11-20-v5
+版本 / Release: 5.0
+條款修訂 / Terms revision: 2026-11-20-v6
 營運 / Operator: Safe Guard — ppefyp2026@gmail.com
 
 ## 繁體中文
@@ -52,9 +52,9 @@
 
 ### 2C. 模型
 
-模型名為「Beacon」（Qwen3 1.7B 加上經訓練的附加部分，約1.1 GB），由 llama.cpp 在子女手機的處理器上運行。它不在公開儲存庫或 GitHub 版本內；只會隨開發者在本機建立的套件提供，或手動匯入。檔案大小及 SHA-256 不符即被拒絕。記憶體少於約5 GB 或處理器不支援的手機，會顯示此模式不適用；實際上，售賣時標示6 GB 或以上記憶體的手機一般符合。
+模型名為「Beacon」（Qwen3 1.7B 加上經訓練的附加部分，約1.1 GB），由 llama.cpp 在子女手機的處理器上運行。原始碼儲存庫不含模型檔。在儲存庫 GitHub Releases 頁面發佈的 App 已內附模型，模型檔亦作為發佈附件公開，任何人都可以下載。其他版本的 App 沒有模型，未有模型前不能使用 AI 風險分析。子女手機首次啟動時，App 會把模型複製到其私人儲存空間（除已安裝的 App 外，另需約1.1 GB 可用空間）。手動匯入只作補救用途。檔案大小及 SHA-256 不符即被拒絕。記憶體少於約5 GB 或處理器不支援的手機，會顯示此模式不適用；實際上，售賣時標示6 GB 或以上記憶體的手機一般符合。
 
-模型以虛構對話、開發者提供的少量真實對話、PAN-12 研究語料庫（公開的真實聊天研究資料集）的對話，以及開發者自己的普通聊天訓練及測試。這些真實資料不在 App 或儲存庫內，對話亦不是以檔案形式存於模型中；但訓練後的模型有時可能重現訓練文字的片段，這一點未經測試。使用真實對話訓練的合法依據及所需同意，仍是有待香港私隱律師確定的問題。
+模型以虛構對話、開發者提供的少量真實對話、PAN-12 研究語料庫（公開的真實聊天研究資料集）的對話，以及開發者自己的普通聊天訓練及測試。這些真實資料不以檔案形式存於 App 或儲存庫內，對話亦不是以檔案形式存於模型中；但訓練後的模型有時可能重現訓練文字的片段（包括對話中其他人所寫的文字）。開發者做過一次有限度的測試，沒有發現模型重現真實的訓練對話；測試只用一種設定和一種提示長度，沒有包括 PAN-12 對話，也無法檢驗他人能否推斷某段對話曾用於訓練，故不能證明模型絕不會重現訓練文字。由於模型公開讓任何人下載，這個風險更大：取得檔案的人可以嘗試引出這些片段，而已下載的副本無法收回。使用真實對話訓練的合法依據及所需同意，仍是有待香港私隱律師確定的問題。
 
 模型兩個方向都可能出錯，亦不能可靠分辨成年人之間的性對話與誘騙。沒有證據顯示它能可靠偵測真實的誘騙。分數只是訊號，不是結論。如認為子女有即時危險，請致電999（香港）。
 
@@ -82,7 +82,7 @@
 
 ### 6. 服務及查詢
 
-獨立於 Meta，未獲 Meta 批准。擷取、標籤及傳送可不完整、不準確或延遲，無保護保證。GitHub 版本不含模型；模型只在僅分數模式下於子女手機運行（見2C），並不代表已驗證偵測成效。另行進行的合成資料可行性實驗亦不代表已驗證偵測成效。青少年及其他資料涉及者可電郵上述地址申請查閱、更正或刪除，或須核實身分／權限；初次勿附私訊、密碼或金鑰。
+獨立於 Meta，未獲 Meta 批准。擷取、標籤及傳送可不完整、不準確或延遲，無保護保證。在 GitHub Releases 發佈的 App 內附模型（見2C）；模型只在僅分數模式下於子女手機運行（見2C），並不代表已驗證偵測成效。另行進行的合成資料可行性實驗亦不代表已驗證偵測成效。青少年及其他資料涉及者可電郵上述地址申請查閱、更正或刪除，或須核實身分／權限；初次勿附私訊、密碼或金鑰。
 
 ### 7. 三項確認
 
@@ -137,9 +137,9 @@ This warning tells you about a risk. It does not by itself remove anyone else's 
 
 ### 2C. The model
 
-The model is "Beacon" (Qwen3 1.7B with a trained add-on, about 1.1 GB), run by llama.cpp on the child phone's processor. It is not in the public repository or in the GitHub build. It arrives inside a package the developer builds locally, or by manual import, and the app refuses any file whose size and SHA-256 do not match. Phones reporting less than about 5 GB of memory, or with an unsupported processor, show the mode as unavailable; in practice phones sold with 6 GB or more qualify.
+The model is "Beacon" (Qwen3 1.7B with a trained add-on, about 1.1 GB), run by llama.cpp on the child phone's processor. The source repository does not contain the model file. The app released on the repository's GitHub Releases page includes the model, and the model file is also published there as a release asset, so anyone can download it. Other builds of the app have no model; on them AI risk analysis cannot be used until a model is present. On first start on the child's phone the app copies the model into its private storage, which needs about 1.1 GB of free space on top of the installed app. Manual import is a recovery path only. The app refuses any file whose size and SHA-256 do not match. Phones reporting less than about 5 GB of memory, or with an unsupported processor, show the mode as unavailable; in practice phones sold with 6 GB or more qualify.
 
-The model was trained and tested on invented conversations, a small number of real conversations supplied by the developer, conversations from the PAN-12 research corpus (a public research collection of real chats), and the developer's own ordinary chats. None of that real material is in the app or the repository, and the conversations are not stored as files inside the model. A trained model can sometimes reproduce fragments of its training text; this has not been tested. The lawful basis and consent for using real conversations in training is an open question for a Hong Kong privacy lawyer.
+The model was trained and tested on invented conversations, a small number of real conversations supplied by the developer, conversations from the PAN-12 research corpus (a public research collection of real chats), and the developer's own ordinary chats. None of that real material is stored as files in the app or the repository, and the conversations are not stored as files inside the model. A trained model can sometimes reproduce fragments of its training text, including text written by other people in those conversations. A limited test by the developer found no reproduction of the real training conversations; it used one setting and one prompt length, did not include the PAN-12 conversations, cannot show whether someone could tell that a particular conversation was used in training, and cannot prove that the model never reproduces training text. Because the model is published for anyone to download, this risk is greater: anyone with the file can try to draw such fragments out, and a downloaded copy cannot be recalled. The lawful basis and consent for using real conversations in training is an open question for a Hong Kong privacy lawyer.
 
 The model can be wrong in both directions. It cannot reliably tell sexual conversation between adults from grooming, and nothing shows that it reliably detects real grooming. A score is a signal, not a conclusion. If you believe a child is in immediate danger, call 999 (Hong Kong).
 
@@ -167,7 +167,7 @@ Hong Kong Cap. 486, section 52 exempts personal data held by an individual and c
 
 ### 6. Service and requests
 
-Independent of Meta; no Meta approval. Capture, labels and delivery can be incomplete, inaccurate or delayed; no guaranteed protection. The GitHub build contains no model; a model runs on the child's phone only in the scores-only mode (see 2C), and this does not establish detection efficacy. Separate synthetic-data feasibility experiments also do not establish detection efficacy. Teens/others may email above for access/correction/deletion; identity/authority verification may be needed. Initially omit messages/passwords/keys.
+Independent of Meta; no Meta approval. Capture, labels and delivery can be incomplete, inaccurate or delayed; no guaranteed protection. The app released on GitHub Releases includes the model (see 2C); the model runs on the child's phone only in the scores-only mode (see 2C), and this does not establish detection efficacy. Separate synthetic-data feasibility experiments also do not establish detection efficacy. Teens/others may email above for access/correction/deletion; identity/authority verification may be needed. Initially omit messages/passwords/keys.
 
 ### 7. Three confirmations
 

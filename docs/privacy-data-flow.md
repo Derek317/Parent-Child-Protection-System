@@ -2,7 +2,7 @@
 
 Inspection/update date: **16 November 2026 (Hong Kong)**. This document describes **4.9-beta.3**, terms revision **2026-11-16-v1**, and the existing Cloudflare relay. It is not a penetration test or legal opinion. Initial terms acceptance is required separately on both phones; expanded two-way capture additionally requires updated phones, a signed parent request and local acknowledgment on the child device. See the [Privacy Policy](ig-guard-privacy-policy.md), [Terms of Service](ig-guard-terms-of-service.md) and [Data Deletion Instructions](ig-guard-data-deletion.md).
 
-> **Not covered here (added 20 November 2026).** This dated description predates the optional scores-only mode (AI risk analysis), its two collection methods (automatic capture and manual upload of Instagram's own export), the capture hold and the 15-minute background check-in. In that mode no message text reaches the parent. For those, read the Terms (revision 2026-11-20-v5, sections 2A to 2C), the Privacy Policy and the Data Deletion Instructions, which take precedence over this page.
+> **Not covered here (added 20 November 2026).** This dated description predates the optional scores-only mode (AI risk analysis), its two collection methods (automatic capture and manual upload of Instagram's own export), the capture hold and the 15-minute background check-in. In that mode no message text reaches the parent. For those, read the Terms (revision 2026-11-20-v6, sections 2A to 2C), the Privacy Policy and the Data Deletion Instructions, which take precedence over this page.
 
 ## Intended use
 

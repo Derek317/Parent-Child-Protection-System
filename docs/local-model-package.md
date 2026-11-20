@@ -1,10 +1,14 @@
-# Build one APK with the model inside (on your own PC)
+# Build one APK with the model inside
 
-**Read this first.** The packaged APK contains the analysis model. The model was trained partly on real conversations. **Never upload the packaged APK to GitHub (not as a release, an artifact, an attachment or an issue), never put it in a cloud drive or a chat, and never share it with anyone.** Keep it on your PC and your own phones. The GitHub build never contains the model, and nothing in the app downloads it.
+**Read this first.** On 20 November 2026 the owner decided that the released app carries the analysis model: the APK on this repository's GitHub Releases page contains Beacon, and the model file is also published on GitHub Releases as an asset of a separate release (`model-beacon`). The release workflow fetches that asset, checks its size and SHA-256 against `RiskModel.kt`, adds it with `tools/package_with_model.py` and signs with the release key held in the repository's GitHub secrets. The steps below build the same package on your own PC; signed with a different key, it cannot update an install signed with the release key.
 
-**Keep everything out of cloud-synced folders.** The repository clone, the model, the keystore and the output must not be inside a OneDrive, Dropbox, Google Drive or iCloud folder, because the sync program would upload the model. On Windows, **Documents**, **Desktop** and **Pictures** are often synced by OneDrive without you noticing. Use a plain local folder such as `C:\work\ig-guard` and pass `--out` a path there. The script refuses when the model or the output is under a folder named by `%OneDrive%`, `%OneDriveConsumer%` or `%OneDriveCommercial%`, or whose path contains `OneDrive`, `Dropbox`, `Google Drive` or `iCloudDrive`; `--allow-synced-folder` overrides that, and you should not need it.
+Publishing makes the model downloadable by anyone, and a downloaded copy cannot be recalled. The model was trained partly on real conversations (including other people's messages) and on PAN-12; a trained model can sometimes reproduce fragments of its training text; a limited test by the developer found no reproduction of the real training conversations (one setting, one prompt length, PAN-12 not included), which cannot prove the model never does. The training data itself stays private: **never add the real chats, the PAN-12 data or any training file to the repository, a release, an issue or a chat.** The model file is never committed either (it is git-ignored and far over GitHub's file limit). Ordinary builds of `main` contain no model, and nothing in the app downloads it.
 
-The result is one file you install like any app. On the child's phone the app copies the model out of itself on first start, so nothing has to be copied or picked by hand. If you prefer, the older way still works: install the normal APK and import the file with the file picker.
+**Keep everything out of cloud-synced folders.** The repository clone, the model, the keystore and the output must not be inside a OneDrive, Dropbox, Google Drive or iCloud folder, because the sync program would upload the keystore along with everything else. On Windows, **Documents**, **Desktop** and **Pictures** are often synced by OneDrive without you noticing. Use a plain local folder such as `C:\work\ig-guard` and pass `--out` a path there. The script refuses when the model or the output is under a folder named by `%OneDrive%`, `%OneDriveConsumer%` or `%OneDriveCommercial%`, or whose path contains `OneDrive`, `Dropbox`, `Google Drive` or `iCloudDrive`; `--allow-synced-folder` overrides that, and you should not need it.
+
+The result is one file you install like any app. On the child's phone the app copies the model out of itself on first start (about 1.1 GB free is needed for the copy, on top of the installed app), so nothing has to be copied or picked by hand. Importing the model file with the file picker (parent's password needed) remains only as a recovery path, for example on a build without the model.
+
+**Google Play.** The APK with the model is over 1 GB. It can be installed directly, but it cannot be uploaded to Google Play as a plain APK: Play limits apps published as APKs to 100 MB, and a model this size would need an Android App Bundle with an asset pack (Play allows up to 1.5 GB per asset pack), which is not built. Limits as stated in Google's Play Console Help, "Optimize your app's size and stay within Google Play app size limits" (support.google.com/googleplay/android-developer/answer/9859372), checked 20 November 2026.
 
 ## What you need (once)
 
@@ -27,7 +31,7 @@ The result is one file you install like any app. On the child's phone the app co
 1. On GitHub open the repository's **Actions** tab and the latest successful **build-apk** run for the branch you want.
 2. Under **Artifacts** download **`ig-guard-signed-apk`** (use `ig-guard-unsigned-apk` only if the secrets are not set; the script signs it anyway). It is a zip with one `.apk` inside. Unzip it.
 
-This APK has no model in it, so it is fine to download. Only the output of the script must stay private.
+This APK has no model in it. The output of the script is the same kind of file as the release APK.
 
 ## Run the script
 
@@ -82,5 +86,6 @@ Removing the model needs the parent's password. After a removal the app does **n
 ## Checks and limits
 
 - `python3.12 tests/check_package_with_model.py` tests the script without the real model. It also runs a real `zipalign` and `apksigner` with a throw-away key when the Android build-tools are present.
-- Not tested with the real 1.1 GB model or on a physical phone: the packaging run itself, installing a 1.1 GB APK, the first-start copy out of the APK, and how long it takes. Try it first on a spare phone.
-- The packaged APK is a separate, private build. Do not use it for the public release; the release workflow is unchanged and never contains the model.
+- Phone test, 20 November 2026, on two real phones with a package built from the real model: the APK installed, the first-start copy out of the APK worked, and both collection methods (automatic capture and manual upload) worked end to end. On a 2018 phone reporting 5.8 GB of memory, scoring completed with about 1.7 GB peak app memory (one phone, a few short chats; not a guarantee for other phones or longer chats).
+- Not tested: the natural schedules (the 15-minute check-in and the charging-and-idle scoring job were started by hand, not observed running on their own), importing the owner's real Instagram export, more than two devices, how long the copy takes, battery and heat, importing the 1.1 GB file through the file picker, and screen readers on real phones.
+- The release workflow change that fetches the model asset and packages it is planned; this document does not show that it has run.

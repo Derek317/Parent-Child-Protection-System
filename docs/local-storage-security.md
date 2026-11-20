@@ -1,6 +1,6 @@
-# Local storage security — 4.9-beta.4
+# Local storage security — 5.0
 
-Updated 19 November 2026 (Hong Kong). See the [release notes and known limits](releases/4.9-beta.4.md).
+Updated 20 November 2026 (Hong Kong). See the [release notes and known limits](releases/5.0.md).
 
 Preference strings and captured archive content are encrypted at rest using AES-256-GCM and keys generated in Android Keystore. These keys are separate from the shared family transport secret and from the developer's APK signing identity. No database decryption key is shipped in the APK or stored in ordinary preferences. Hardware backing depends on the device; this release does not claim that every device has hardware-backed storage.
 
@@ -43,4 +43,4 @@ Child withdrawal persistently gates new capture and local transfer, with hold/di
 
 Encryption protects an extracted storage snapshot when its Keystore keys remain unavailable. A compromised running app or sufficiently privileged attacker operating through the app's identity can still access data during authorised decryption. It does not provide complete device-compromise protection or make imperfect Instagram capture reliable evidence. No absolute security guarantee is made.
 
-Robolectric uses a test-only Keystore provider; software signing helpers also support fixtures/protocol vectors. Neither establishes hardware isolation or production-device authentication behavior. Physical-device Keystore, authenticated UI, update/migration and background-delivery testing remain necessary. No build, test pass, publication or absence of defects is claimed by this documentation update. No new model is introduced into the stable app; any model feasibility experiment is separate.
+Robolectric uses a test-only Keystore provider; software signing helpers also support fixtures/protocol vectors. Neither establishes hardware isolation or production-device authentication behavior. Physical-device Keystore, authenticated UI, update/migration and background-delivery testing remain necessary. No build, test pass, publication or absence of defects is claimed by this documentation update. The optional scores-only mode adds a model file (Beacon, about 1.1 GB) in the child phone's app-private storage (`files/risk/`). The released app carries the model inside its package and copies it there on first start; manual import is a recovery path. The model file is a plain file checked by size and SHA-256, not sealed by the field encryption above; the stored chat text for that mode is kept in the encrypted store. Any separate model feasibility experiment is not part of the app.

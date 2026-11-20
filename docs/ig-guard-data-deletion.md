@@ -1,6 +1,6 @@
 # IG Guard Data Deletion Instructions
 
-Updated: **20 November 2026 (Hong Kong)**. These steps describe **IG Guard 4.9-beta.4**, bundled Terms revision **2026-11-20-v5**. See the [release notes and known limits](releases/4.9-beta.4.md). Safe Guard handles privacy requests at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
+Updated: **20 November 2026 (Hong Kong)**. These steps describe **IG Guard 5.0**, bundled Terms revision **2026-11-20-v6**. See the [release notes and known limits](releases/5.0.md). Safe Guard handles privacy requests at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
 
 ## Declining initial terms is separate from deletion
 
@@ -52,7 +52,7 @@ Open **Settings → 保留期限與舊記錄預覽** to see the number of legacy
 
 ## Remove IG Guard data from both phones
 
-On each phone, open **Android Settings → Apps → IG Guard → Storage**, then choose **Clear storage** or **Clear data**. Uninstalling IG Guard also removes its local app data. Perform this separately on the teen’s phone and the parent’s phone to remove both the local delivery queue and the parent’s archive. This also removes pairing, settings and that phone's acceptance receipt, and on the child's phone the scores-only store, the child's agreement record and the app's copy of the model. A subsequent setup requires initial acceptance again; this is different from a normal update retaining app data. Any text someone copied or shared outside the app must be removed wherever that copy is stored. Clearing a child's phone does not erase the parent's phone, and neither action alone requests relay erasure.
+On each phone, open **Android Settings → Apps → IG Guard → Storage**, then choose **Clear storage** or **Clear data**. Uninstalling IG Guard also removes its local app data. Perform this separately on the teen’s phone and the parent’s phone to remove both the local delivery queue and the parent’s archive. This also removes pairing, settings and that phone's acceptance receipt, and on the child's phone the scores-only store, the child's agreement record and the app's copy of the model. A downloaded copy of the release APK or of the model file (for example in Downloads) is not removed by clearing app data; delete it separately. A subsequent setup requires initial acceptance again; this is different from a normal update retaining app data. Any text someone copied or shared outside the app must be removed wherever that copy is stored. Clearing a child's phone does not erase the parent's phone, and neither action alone requests relay erasure.
 
 ## Request help with data held by Safe Guard
 

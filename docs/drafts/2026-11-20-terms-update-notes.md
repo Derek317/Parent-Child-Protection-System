@@ -71,3 +71,57 @@ Written 20 November 2026 by Claude. Not legal advice. No lawyer has read the new
 - `docs/local-storage-security.md` (last paragraph) and `docs/releases/4.9-beta.4.md` (line 42) still say "No new model ... in the stable app". Both are now untrue.
 - `docs/local-risk-scoring.md` line 60 says the native library "has never run on a device"; it has now been phone-tested.
 - In-app texts (Kotlin, not mine to edit): the child consent point "分數可能出錯 / Scores can be wrong" and `ScoresUi.LIMITS_NOTICE` say the model was "tested mostly on invented chats and on a small number of real ones". That is narrower than the Terms (PAN-12, own chats, cannot tell adult sexual chat from grooming). Consider aligning.
+
+---
+
+# Pass 2 (20 November 2026, later): the model ships inside the released app, Terms 2026-11-20-v6
+
+Written by Claude. Not legal advice; no lawyer has read this text. Nothing is committed.
+
+## Owner decisions recorded in this pass
+
+- **Morning decision:** the model ships inside the app package; first start on a child phone copies it into private storage; manual import is a recovery path; distribution to families undecided.
+- **Later the same day, replacing the "undecided / never publish" part:** the APK with the model inside is published as a public GitHub release, signed with the release key in the repository's GitHub secrets, and the model file is also published on GitHub Releases as an asset of a separate release (`model-beacon`) so the release workflow can fetch, check and package it. This is against the earlier plan, in which the packaged APK was never to be uploaded or shared. The git repository still does not contain the model file; ordinary `main` builds still have no model.
+- **Notice only, no re-consent** for this revision (owner's decision today).
+
+## What changed in this pass
+
+- `docs/ig-guard-terms-of-service.md`: revision `2026-11-20-v5` → `2026-11-20-v6`. Section 2C (both languages): the model is not in the source repository; the app released on GitHub Releases includes it and the model file is published as a release asset, so anyone can download it; other builds have no model and AI risk analysis cannot be used on them; first start copies it into private storage (about 1.1 GB free on top of the installed app); manual import is a recovery path. Training paragraph: kept, plus "including text written by other people", and a new sentence that public distribution makes the untested reproduction risk greater and a downloaded copy cannot be recalled. Section 6 (both languages): "The GitHub build contains no model" replaced. Nothing else in the Terms changed.
+- `AppConsent.kt`: only `VERSION` → `2026-11-20-v6`.
+- `docs/ig-guard-privacy-policy.md`, `docs/ig-guard-data-deletion.md`, `docs/privacy-data-flow.md`: revision references to v6. Privacy policy: the same model facts and risk sentence as Terms 2C; the "GitHub build contains no model" sentence replaced. Deletion guide: a downloaded copy of the release APK or model file is not removed by clearing app data.
+- `README.md`: model paragraph rewritten (release carries the model, publicly downloadable, `main` builds have none, recovery import, Google Play note, link to `THIRD-PARTY-NOTICES.md`).
+- `docs/local-model-package.md`: no longer says "never upload / never share"; describes the planned release workflow and the local script as the same package; keeps the instruction never to add the real chats, PAN-12 data or training files anywhere; Google Play note; phone-test results and what was not tested.
+- `docs/local-risk-scoring.md`: "How the model file arrives" row; "has never run on a device" replaced by the phone-test results and the precise not-verified list; stale "Open before any release" items replaced.
+- `docs/signing.md`, `docs/local-storage-security.md`, `docs/releases/4.9-beta.4.md`: "never uploaded" and "No new model ... in the stable app" replaced. The release note also carries the Google Play note.
+- `CHANGELOG.md`: one new entry at the top; old entries untouched.
+- New `THIRD-PARTY-NOTICES.md`: llama.cpp (MIT, text copied from the b12503 checkout) and Qwen3 1.7B (Apache-2.0, verified at https://huggingface.co/Qwen/Qwen3-1.7B and its `LICENSE` file; Beacon described as a fine-tuned, 4-bit quantised modified work).
+
+## Decisions for you
+
+- **The release workflow is not changed by this pass** (`.github/` was out of scope). Until a release actually contains the model, the documents describe a planned state: Terms 2C says the released app includes the model. Do not tag a release with the v6 Terms before the workflow change lands, or the Terms will be wrong for that release.
+- **Licence notices inside the APK and the release.** The MIT and Apache licences ask that the notice / licence text travel with the copies. `THIRD-PARTY-NOTICES.md` is only in the repository. Consider attaching it to each release and adding it to the in-app licence text (a Kotlin/`ui-res` change, not made). Apache-2.0 4(b) also asks for a prominent statement that the files were changed; the notices file says so, but the GGUF itself carries no such statement that I could confirm.
+- **Re-consent.** Publishing the model is a material change to who can obtain material trained on real conversations. You chose notice only; that choice is recorded, not endorsed.
+- **Google Play.** Play Console Help (support.google.com/googleplay/android-developer/answer/9859372, checked 20 November 2026): apps published as APKs are limited to 100 MB; app bundles allow a 500 MB base module, 1.5 GB per asset pack and 4 GB in total for install-time content. A Play listing would need an app bundle with an asset pack (not built).
+
+## Not confirmed, so left out or marked planned
+
+- That the release workflow fetches, checks and packages the model: planned, not in this tree.
+- Which phone models were tested, how long the first-start copy takes, battery and heat.
+- Whether the natural 15-minute check-in and idle-and-charging job run as expected (started by hand in the test).
+- A 1.1 GB import through the system file picker, and screen-reader behaviour on real phones.
+- Whether the Beacon GGUF metadata names its licence or base model.
+
+## Added to the lawyer list
+
+- **Publishing the model.** On 20 November 2026 the owner decided to publish Beacon inside a public GitHub release, with the model file also attached as a release asset, against the earlier plan to keep it private. Risks, stated plainly: (1) the weights were trained partly on real conversations, including messages written by other people who never agreed, and on PAN-12, whose record states no licence; (2) a trained model can sometimes reproduce fragments of its training text, and this has not been tested for Beacon; (3) once downloaded, a copy cannot be recalled or deleted, so a later decision to withdraw it cannot undo the release. Is publication lawful in Hong Kong (PDPO) and wherever it is downloaded, and what would have to be done first (for example an extraction test, removal of the real conversations from training, or consent)?
+- **Distribution to families generally.** Even apart from public release, handing a model trained on these sources to families means it leaves the developer's PC. Is that a disclosure of personal data or a new use under the PDPO?
+- **PAN-12 terms for redistribution of a derived model.**
+- **Licence compliance for the published APK and model** (MIT notice, Apache-2.0 sections 4(a) and 4(b)).
+## Addendum: version 5.0 and the release workflow (same pass)
+
+- **Version 5.0** (owner, 20 November 2026; tag `5.0`, normal GitHub release). The Terms header "版本 / Release" line, the privacy policy and deletion guide headers, `README.md`, `docs/local-storage-security.md` and `docs/cloudflare-relay-setup.md` now name 5.0. New `docs/releases/5.0.md`. The new CHANGELOG entry is headed "5.0". `docs/releases/4.9-beta.4.md` is left as that version's history; only its model sentence was reworded to "No model runs in 4.9-beta.4" with a pointer to the 5.0 notes. `tests/check_ui.py` now checks `docs/releases/5.0.md` in place of the 4.9-beta.4 notes and that the CHANGELOG has one `## 5.0 ` heading.
+- **Where the model asset lives.** Another agent's uncommitted workflow change (seen read-only in `.github/workflows/build-apk.yml`) fetches the model from a separate GitHub release named `model-beacon`, checks it against `RiskModel.kt`, packages and signs it, and fails the release rather than publish an APK without the model. The documents say the model is published as an asset of that separate release. They still say the workflow step is planned and not shown to have run, because I did not see a run.
+- **Licence notices in the app.** The same uncommitted work adds the llama.cpp MIT text and a Qwen3 / Beacon notice to `ui-res/raw/ui_asset_licenses.txt`, with a link to the Apache text rather than the full text. Open: whether a link meets Apache-2.0 section 4(a), and the `model-beacon` model file carries no notice at all. Consider attaching `THIRD-PARTY-NOTICES.md` (or the Apache text) to the `model-beacon` release.
+- **Speed fixes** in the 5.0 notes are taken from commit messages 2a656e3 and 1b603ce, not re-tested.
+- **Not confirmed:** that the release APK keeps the same signing certificate as earlier installed builds; the notes say only that an upgrade keeps data when the key matches.
+- **Update, 20 November 2026 (memorisation test; replaces "has not been tested" in the Terms 2C, privacy policy, 5.0 notes, CHANGELOG, local-model-package.md and local-risk-scoring.md; the Terms revision id is unchanged):** the developer prompted the shipped model file with the first half of chats and compared its free output with the true continuation. Real training conversations: 0 of 334 checked spans reproduced; conversations it never saw: 0 of 1,020; the developer's own everyday chats: 1.4% of spans overlapped against 1.1% for a model that never saw them (guessable repeated lines, not recall); prompts with no chat gave no match of 20 characters or more. Limits: one decoding setting and one prefix length; PAN-12 not tested; no test of whether someone could infer that a conversation was used in training; it cannot prove the model never reproduces training text. The lawful-basis and consent question stays open for a Hong Kong privacy lawyer.
