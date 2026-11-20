@@ -153,7 +153,7 @@ class ScoresModeChildTest {
         RiskModelStore.file(ctx).writeBytes(tinyBytes.copyOf().also { it[0] = 0 })   // same size, wrong content
         assertEquals(RiskModelState.INSTALLED, RiskModelStore.state(ctx)); assertFalse(RiskModelStore.verify(ctx))
         assertEquals(RiskModelState.MISMATCH, RiskModelStore.state(ctx))
-        RiskModelStore.memoryProbe = { 6L shl 30 }
+        RiskModelStore.memoryProbe = { 4L shl 30 }
         assertEquals(RiskModelState.UNSUPPORTED_DEVICE, RiskModelStore.state(ctx))
         assertEquals(RiskImportResult.UNSUPPORTED_DEVICE, RiskModelStore.importModel(ctx, ByteArrayInputStream(tinyBytes), {}, tinyBytes.size.toLong(), sha(tinyBytes)))
     }
@@ -750,7 +750,7 @@ class ScoresModeChildTest {
         assertNotNull(ScoresReportCodec.parse(reports().last(), scope, System.currentTimeMillis()))
         assertTrue(RiskLocal.accept(ctx)); assertEquals("accepted", RiskLocal.consentState(ctx)); assertTrue(RiskLocal.active(ctx))
         val fresh = JSONObject(LocalVault.open(ctx, "scores_consent_receipt", ctx.getSharedPreferences("ig_guard_scores_consent", Context.MODE_PRIVATE).getString("receipt", "")!!))
-        assertEquals("2026-11-19-scores-v2", fresh.getString("version"))
+        assertEquals("2026-11-20-scores-v3", fresh.getString("version"))
     }
     @Test fun theChildsOwnHandleIsNotAnotherAuthorAndAPausedPhoneStillSpotsAGroup() {
         activate(); GuardEngine.setChildSelfHandle(ctx, "mychild")

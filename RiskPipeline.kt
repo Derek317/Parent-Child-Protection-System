@@ -98,8 +98,8 @@ internal object RiskModelStore {
     @Volatile internal var abiProbe: () -> Boolean = { Build.SUPPORTED_ABIS.contains("arm64-v8a") }
     private const val NATIVE_UNAVAILABLE = "risk_native_unavailable_for"
     private val importing = java.util.concurrent.atomic.AtomicBoolean(false)
-    /** Phones sold as 8 GB report slightly less than 8 GiB. */
-    const val MIN_MEMORY_BYTES = 7L * 1024 * 1024 * 1024
+    /** Phones sold as 6 GB report about 5.8 GB; measured on a 2018 phone with 5.8 GB, scoring peaked at about 1.7 GB of app memory and completed. */
+    const val MIN_MEMORY_BYTES = 5L * 1024 * 1024 * 1024
     private const val SPACE_MARGIN = 32L * 1024 * 1024
     private const val VERIFY_FAILED = "risk_model_verify_failed"
     /** Set when a parent removed the model (password-gated): the included copy is then never installed on its own. */
@@ -241,7 +241,7 @@ internal enum class RiskCapture { NORMAL, CONTENT_FREE, ACTIVE, UPLOAD }
  */
 internal object RiskLocal {
     /** Bump when the consent wording changes: a child who agreed to older wording is asked again. */
-    private const val WORDING_VERSION = "2026-11-19-scores-v2"
+    private const val WORDING_VERSION = "2026-11-20-scores-v3"
     private const val RECEIPT_PURPOSE = "scores_consent_receipt"
     private const val POLICY_ID = "scores_policy_id"
     private const val POLICY_ENABLED = "scores_policy_enabled"

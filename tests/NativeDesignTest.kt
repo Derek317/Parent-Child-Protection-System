@@ -68,6 +68,17 @@ class NativeDesignTest {
         assertFalse(text(c.get()).any{it.contains("晴晴")||it.contains("ching.sample")||it.contains("R7K2M9")})
         c.destroy()
     }
+    @Test fun parentHeaderStopsWaitingOnceAScoresReportArrives() {
+        GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString());GuardEngine.setRole(ctx,"parent")
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
+        invoke(c.get(),"navigateTo","overview")
+        assertTrue(text(c.get()).contains("等待子女手機回報"))
+        val sent=System.currentTimeMillis()-1000
+        FamilyEvidence(ctx).use{it.storeScoresReport(GuardEngine.getChannelTopic(ctx),ParsedScoresReport(java.util.UUID.randomUUID().toString(),sent,ChildScoresState(null,"valid","none",false,null,sent-100,0,0,false),emptyList()),System.currentTimeMillis())}
+        invoke(c.get(),"navigateTo","settings");invoke(c.get(),"navigateTo","overview")
+        assertFalse(text(c.get()).any{it.contains("等待子女手機回報")});assertTrue(text(c.get()).any{it.contains("已收到子女手機報告")})
+        c.destroy()
+    }
     /** A pairing link can no longer convert a parent phone (F3); any other role change must still dismiss privileged sheets. */
     private fun deliverPairing(a:MainActivity) {
         GuardEngine.setRole(ctx,"child")

@@ -3362,19 +3362,25 @@ class MainActivity : Activity() {
             "parent" -> when {
                 GuardEngine.isChildHeartbeatOverdue(this) -> "子女回報逾時 · 請查看連接狀態"
                 GuardEngine.hasChildHeartbeat(this) -> "已收到子女回報 · 加密守護通道"
-                else -> "等待子女手機回報"
+                else -> childReportWaiting()
             }
             "child" -> {
-                val notification = if (!GuardEngine.isNotificationListenerEnabledStatic(this)) "通知未授權" else if (GuardEngine.cpNotifConnected) "通知已連接" else "通知等待連接"
-                val screen = if (!GuardEngine.isAccessibilityEnabledStatic(this)) "畫面未授權" else if (GuardEngine.cpAccConnected) "畫面已連接" else "畫面等待連接"
-                val capture=if(GuardEngine.fullCaptureEnabled(this))"雙向擷取已啟用" else "只擷取傳入警報"
-                "$notification · $screen · $capture" + GuardEngine.pendingDeliveryCount(this).let { if (it > 0) " · 待確認 $it" else "" } + if (GuardEngine.isTemporarilyUnlocked(this)) " · 暫時解鎖中" else ""
+                val line = if (RiskLocal.uploadOnly(this)) (if (RiskLocal.captureHeld(this)) "擷取已停止，等你決定 · 不讀取 Instagram" else "手動上載 · 不讀取 Instagram") else {
+                    val notification = if (!GuardEngine.isNotificationListenerEnabledStatic(this)) "通知未授權" else if (GuardEngine.cpNotifConnected) "通知已連接" else "通知等待連接"
+                    val screen = if (!GuardEngine.isAccessibilityEnabledStatic(this)) "畫面未授權" else if (GuardEngine.cpAccConnected) "畫面已連接" else "畫面等待連接"
+                    val capture=if(GuardEngine.fullCaptureEnabled(this))"雙向擷取已啟用" else "只擷取傳入警報"
+                    "$notification · $screen · $capture"
+                }
+                line + GuardEngine.pendingDeliveryCount(this).let { if (it > 0) " · 待確認 $it" else "" } + if (GuardEngine.isTemporarilyUnlocked(this)) " · 暫時解鎖中" else ""
             }
             else -> "選擇這部手機的身份"
         }
         statusText.setTextColor(color(if (GuardEngine.isParentMode(this) && GuardEngine.isChildHeartbeatOverdue(this)) t.warmCoral else t.textSecondary))
         unlockTimerText?.text = if (GuardEngine.getUnlockRemainingSeconds(this) > 0) "暫時解鎖中 · 剩餘 ${formatSeconds(GuardEngine.getUnlockRemainingSeconds(this))}" else "保護已重新上鎖"
     }
+    /** No heartbeat yet: a scores-mode report from the child phone still counts as having heard from it. */
+    private fun childReportWaiting(): String =
+        FamilyEvidence(this).use { it.scoresModeState(GuardEngine.getChannelTopic(this)) }?.let { "已收到子女手機報告 · 最後 ${ScoresUi.time(it.receivedAt)}" } ?: "等待子女手機回報"
     private fun formatSeconds(seconds: Long) = "%02d:%02d".format(seconds / 60, seconds % 60)
     private fun heading(title: String, subtitle: String, t: ThemeColors) {
         rootContainer.addView(label(title, 27f, t.textPrimary, true, bottomPad = 10))
@@ -3460,7 +3466,8 @@ class MainActivity : Activity() {
         val card = makeCard(t)
         val handle = GuardEngine.getChildSelfHandle(this)
         card.addView(label(if (handle.isEmpty()) "子女手機" else "@$handle", 16f, t.textPrimary, true, bottomPad = 8))
-        card.addView(label(if (connected) GuardEngine.getLastChildHeartbeatInfo(this) else "等待子女手機回報", 13f, t.textSecondary))
+        val waiting = if (connected) "" else childReportWaiting()
+        card.addView(label(if (connected) GuardEngine.getLastChildHeartbeatInfo(this) else waiting, 13f, t.textSecondary))
         if (connected && GuardEngine.isChildCaptureHeld(this)) card.addView(label(ScoresUi.PARENT_CAPTURE_HELD, 13f, t.textPrimary, true, topPad = 6))
         if (!connected) card.addView(textAction("邀請子女配對") { showPairingInvite(t) })
         rootContainer.addView(card)
@@ -3961,8 +3968,9 @@ class MainActivity : Activity() {
         val notification = GuardEngine.isNotificationListenerEnabledStatic(this) && GuardEngine.cpNotifConnected
         val screen = GuardEngine.isAccessibilityEnabledStatic(this) && GuardEngine.cpAccConnected
         val card = makeCard(t)
-        card.addView(label(if (notification && screen) "你的保護已準備好" else "完成設定，讓保護正常運作。", 17f, t.textPrimary, true, bottomPad = 8))
-        card.addView(label(if (notification && screen) "通知及畫面保護已連接。" else "通知讀取保護背景訊息；畫面保護處理對話、留言回覆及防靜音。", 14f, t.textSecondary))
+        val noRead = RiskLocal.uploadOnly(this)
+        card.addView(label(if (noRead) (if (RiskLocal.captureHeld(this)) "擷取已停止，等你決定" else "手動上載 · 不讀取 Instagram") else if (notification && screen) "你的保護已準備好" else "完成設定，讓保護正常運作。", 17f, t.textPrimary, true, bottomPad = 8))
+        card.addView(label(if (noRead) "本 App 不讀取 Instagram 的通知或畫面，所以不需要通知或畫面權限。" else if (notification && screen) "通知及畫面保護已連接。" else "通知讀取保護背景訊息；畫面保護處理對話、留言回覆及防靜音。", 14f, t.textSecondary))
         rootContainer.addView(card)
         renderScoresChildBlocks(t)
         rootContainer.addView(label(childDisclaimerText(),13f,t.textSecondary,bottomPad=14))

@@ -31,6 +31,13 @@ class HeldChildWordingTest : UploadTestBase() {
         assertFalse(waiting, waiting.contains("still receives messages")); assertTrue(waiting, waiting.contains("stays off"))
         assertTrue(ScoresChildCopy.statusLines(ScoresChildCopy.StatusState.WAITING, "none").joinToString("\n").contains("still receives messages"))
     }
+    @Test fun childHeaderFollowsTheCollectionMethod() {
+        fun header(): String { val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+            try { UiSupport.nav(c.get(), "overview"); return UiSupport.texts(c.get().window.decorView).joinToString("\n") } finally { c.pause().stop().destroy() } }
+        activate(ScoresMethod.CAPTURE); header().let { assertTrue(it, it.contains("雙向擷取已啟用")); assertFalse(it, it.contains("不讀取 Instagram")) }
+        activate(ScoresMethod.UPLOAD); header().let { assertTrue(it, it.contains("手動上載 · 不讀取 Instagram")); assertFalse(it, it.contains("未授權") || it.contains("只擷取傳入警報")) }
+        switchOff(); header().let { assertTrue(it, it.contains("擷取已停止，等你決定 · 不讀取 Instagram")); assertFalse(it, it.contains("未授權")) }
+    }
     @Test fun storedMessagesAreWipedOnceWhenAnUnreadableReceiptIsFirstSeen() {
         activate(ScoresMethod.CAPTURE)
         GuardEngine.captureMessages(ctx, listOf(CapturedText("Pal", "hello", "incoming", "Pal", "", "notification", System.currentTimeMillis() - 3000, "k1", false, "direct")))

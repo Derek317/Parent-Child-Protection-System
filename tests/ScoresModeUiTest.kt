@@ -204,7 +204,7 @@ class ScoresParentUiTest {
             try {
                 val v = page(c)
                 val seen = UiSupport.everything(c.get().window.decorView).joinToString("\n")
-                for (needle in listOf("主要用虛構對話", "可能高估，也可能漏掉真正的風險", "先和孩子好好談談", "999", "你不會收到訊息內容")) assertTrue(needle, seen.contains(needle))
+                for (needle in listOf("PAN-12", "可能高估，也可能漏掉真正的風險", "先和孩子好好談談", "999", "你不會收到訊息內容")) assertTrue(needle, seen.contains(needle))
                 assertFalse(seen.contains(marker))
                 tagged(v, "scores_safety_advice").single().performClick()
                 val sheet = UiSupport.everything(ShadowDialog.getLatestDialog().window!!.decorView).joinToString("\n")
@@ -499,7 +499,7 @@ class ScoresParentUiTest {
             val v = page(c)
             assertEquals("子女手機的分析功能未能啟動", (tagged(v, "scores_state_title").single() as TextView).text.toString())
             val text = UiSupport.texts(UiSupport.current(c.get())).joinToString("\n")
-            assertTrue(text.contains("更新或重新安裝")); assertFalse(text.contains("8 GB"))
+            assertTrue(text.contains("更新或重新安裝")); assertFalse(text.contains("6 GB"))
         } finally { c.pause().stop().destroy() }
         reset(); report(model = "engine_unavailable", policyId = null)
         val d = launch()
@@ -708,8 +708,8 @@ class ScoresChildUiTest {
         try {
             tag(c, "scores_consent_open").single().performClick()
             val text = UiSupport.texts(c.get().window.decorView).joinToString("\n")
-            for (needle in listOf("一對一對話", "最新 60 則", "14 天", "充電", "帳戶名稱", "風險分數", "不含訊息文字", "家長不會收到你的訊息", "主要用虛構的對話測試過", "兩個方向都可能出錯", "隨時暫停", "撤回", "刪除", "未獲 Meta 批准",
-                "One-to-one Instagram chats that this app already reads are analysed", "cannot be told apart from group chats", "latest 60 messages", "invented chats and on a small number of real ones", "wrong in both directions", "Not approved by Meta")) assertTrue(needle, text.contains(needle))
+            for (needle in listOf("一對一對話", "最新 60 則", "14 天", "充電", "帳戶名稱", "風險分數", "不含訊息文字", "家長不會收到你的訊息", "PAN-12", "兩個方向都可能出錯", "隨時暫停", "撤回", "刪除", "未獲 Meta 批准",
+                "One-to-one Instagram chats that this app already reads are analysed", "cannot be told apart from group chats", "latest 60 messages", "trained and tested on invented chats", "cannot reliably tell sexual conversation","wrong in both directions", "Not approved by Meta")) assertTrue(needle, text.contains(needle))
             assertFalse("no pre-ticked box", v(c).any { it is android.widget.CheckBox })
             assertEquals(0, tag(c, "scores_agree").count { !it.isEnabled })
             tag(c, "scores_not_now").single().performClick()
@@ -1088,7 +1088,7 @@ class ScoresChildUiTest {
         try {
             permissions(c)
             assertEquals(1, tag(c, "scores_engine_unavailable").size); assertTrue(tag(c, "scores_model_unsupported").isEmpty()); assertTrue(tag(c, "model_import_row").isEmpty())
-            assertFalse(UiSupport.texts(tag(c, "scores_engine_unavailable").single()).joinToString().contains("8 GB"))
+            assertFalse(UiSupport.texts(tag(c, "scores_engine_unavailable").single()).joinToString().contains("6 GB"))
         } finally { c.pause().stop().destroy() }
     }
 }
