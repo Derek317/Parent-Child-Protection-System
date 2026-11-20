@@ -2272,13 +2272,6 @@ class IgAccessibilityService : AccessibilityService() {
         if (pkg != GuardEngine.INSTAGRAM_PKG) return
 
         val now = System.currentTimeMillis()
-        // The heartbeat and relay poll run before the upload gate: a phone that reads nothing must still report in and hear the parent.
-        GuardEngine.checkAndSendChildHeartbeatIfDue(this)
-        if (now - lastRemoteSyncMs > 45_000L) {
-            lastRemoteSyncMs = now
-            thread { GuardEngine.pollChannelOnce(applicationContext, since = "all") }
-        }
-        if(RiskLocal.uploadOnly(this))return   // manual upload: the Instagram screen is not read
         val scanNow=SystemClock.uptimeMillis()
         if (event.eventType in setOf(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,AccessibilityEvent.TYPE_VIEW_SCROLLED) && scanNow-lastScanMs<450L) {
             pendingScan?.let{debounceHandler.removeCallbacks(it)}
@@ -2293,6 +2286,14 @@ class IgAccessibilityService : AccessibilityService() {
         }
         pendingScan?.let{debounceHandler.removeCallbacks(it)};pendingScan=null
         lastScanMs = scanNow
+        // After the 450 ms throttle, never per raw event: these checks write sealed settings, and per event they froze a real phone.
+        // The heartbeat and relay poll run before the upload gate: a phone that reads nothing must still report in and hear the parent.
+        GuardEngine.checkAndSendChildHeartbeatIfDue(this)
+        if (now - lastRemoteSyncMs > 45_000L) {
+            lastRemoteSyncMs = now
+            thread { GuardEngine.pollChannelOnce(applicationContext, since = "all") }
+        }
+        if(RiskLocal.uploadOnly(this))return   // manual upload: the Instagram screen is not read
         GuardEngine.cpAccConnected = true
         GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
 
