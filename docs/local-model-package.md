@@ -71,7 +71,7 @@ If the input APK was unsigned, only the comparison with the workflow's pinned di
 ## Install on the phone
 
 - **With adb** (USB debugging on, phone connected): `adb install -r dist\ig-guard-with-model.apk`. The `-r` keeps the existing app's data when the certificate matches.
-- **Without adb:** copy the one APK file to the phone (USB cable), open it from the Files app and allow installing from that source when asked.
+- **Without adb:** copy the one APK file to the phone (USB cable), open it from the Files app and allow installing from that source when asked. This is blocked, with no "install anyway" option, on phones where Google Play Protect's enhanced fraud protection is active, because the app declares an accessibility service and a notification listener. Use adb there.
 
 Then delete the copy of the packaged APK from the phone's Downloads folder and from any other place you copied it. The installed app still holds the model inside itself.
 

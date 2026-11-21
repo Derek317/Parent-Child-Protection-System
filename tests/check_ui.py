@@ -42,7 +42,7 @@ class Checks(unittest.TestCase):
       self.fail(f'{source.name}:{number} states relay retention that the relay does not implement: {clause[:60]}')
  def test_user_facing_documents_have_no_branch_or_draft_language(self):
   root=Path(__file__).resolve().parents[1]
-  names=['README.md','docs/ig-guard-terms-of-service.md','docs/ig-guard-privacy-policy.md','docs/ig-guard-data-deletion.md','docs/local-storage-security.md','docs/releases/5.0.md']
+  names=['README.md','docs/ig-guard-terms-of-service.md','docs/ig-guard-privacy-policy.md','docs/ig-guard-data-deletion.md','docs/local-storage-security.md','docs/releases/5.0.md','docs/releases/5.1.md']
   banned=['本分支','on this branch','source draft','來源草稿','security/hardening-2026-11-17','not an announcement of a published APK','Local commits do not']
   for name in names:
    text=(root/name).read_text()
@@ -54,7 +54,7 @@ class Checks(unittest.TestCase):
    self.assertNotIn('2026-11-18-v2',(root/name).read_text(),name)
  def test_documents_match_receipt_time_retention_and_key_fallback(self):
   root=Path(__file__).resolve().parents[1]
-  names=['README.md','docs/ig-guard-terms-of-service.md','docs/ig-guard-privacy-policy.md','docs/local-storage-security.md','docs/releases/5.0.md','CHANGELOG.md']
+  names=['README.md','docs/ig-guard-terms-of-service.md','docs/ig-guard-privacy-policy.md','docs/local-storage-security.md','docs/releases/5.0.md','CHANGELOG.md','docs/releases/5.1.md']
   for name in names:
    text=(root/name).read_text()
    for phrase in ['based on record time','按記錄時間','from record time','measured from record time']:self.assertNotIn(phrase,text,f'{name}: {phrase}')
@@ -68,6 +68,7 @@ class Checks(unittest.TestCase):
   text=(Path(__file__).resolve().parents[1]/'CHANGELOG.md').read_text()
   self.assertEqual(1,text.count('## 4.9-beta.4'))
   self.assertEqual(1,text.count('## 5.0 '))
+  self.assertEqual(1,text.count('## 5.1 '))
   self.assertNotIn('## Unreleased',text)
  def test_monitoring_is_declared(self):
   workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/build-apk.yml').read_text()
@@ -80,6 +81,6 @@ class Checks(unittest.TestCase):
   self.assertEqual(len(palettes),2)
   for raw in palettes:
    p=dict(re.findall(r'(\w+) = "(#[0-9A-Fa-f]{6})"',raw))
-   for a,b in [('textPrimary','bgCard'),('textSecondary','bgCard'),('textMuted','bgInput'),('btnPrimaryText','btnPrimaryBg'),('btnSecondaryText','btnSecondaryBg'),('accentSeafoam','bgCard'),('accentSeafoam','bgHero'),('warmHoney','bgCard'),('warmHoney','bgHero'),('warmCoral','bgHero'),('warmCoral','bgCard'),('warningButtonText','warningButtonBg')]:
+   for a,b in [('textPrimary','bgCard'),('textSecondary','bgCard'),('textMuted','bgInput'),('btnPrimaryText','btnPrimaryBg'),('btnSecondaryText','btnSecondaryBg'),('accentSeafoam','bgCard'),('accentSeafoam','bgHero'),('warmHoney','bgCard'),('warmHoney','bgHero'),('warmCoral','bgHero'),('warmCoral','bgCard'),('riskLow','bgCard'),('riskLow','bgHero'),('warningButtonText','warningButtonBg')]:
     self.assertGreaterEqual(contrast(p[a],p[b]),4.5,(a,b,p[a],p[b]))
 if __name__=='__main__': unittest.main()

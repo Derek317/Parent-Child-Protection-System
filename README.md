@@ -3,7 +3,9 @@
 
 **IG Teen Guard** is a single-APK Android family safeguarding app for Instagram users who meet Instagram's applicable minimum age: at least 13, or higher where required. It helps a parent or legal guardian review captured text and selected risk signals. It does not guarantee safety, complete capture or detection of every harmful interaction.
 
-Current version: **5.0** (AI risk analysis), documented **20 November 2026 (Hong Kong)**. See the [release notes and known limits](docs/releases/5.0.md) and [changelog](CHANGELOG.md).
+Current version: **5.1** (new look), documented **21 November 2026 (Hong Kong)**. See the [5.1 release notes](docs/releases/5.1.md) and [changelog](CHANGELOG.md). 5.1 is 5.0 (AI risk analysis) with a new look only: "Harbour" navy on light, "Clear Sky" blue on dark, a circular reveal when the theme changes, and separate colours for risk bands. No feature, Terms wording or behaviour changed; the [5.0 notes](docs/releases/5.0.md) still describe the app and its limits.
+
+**Installing.** On phones where Google Play Protect's enhanced fraud protection is active, installing the downloaded APK by opening it from a browser, messaging app or file manager is blocked, with no "install anyway" option, because the app declares an accessibility service and a notification listener. Installing over USB with `adb` from a computer is not blocked. There is no Google Play listing. Upgrading from 5.0 keeps data (same signing key).
 
 Public review references **E01/E02** are available in the [dated evidence index](docs/reviews/2026-11-16/evidence/README.md). These are release-verification and prior cleanup records with stated limits, not a legal certification or a claim that the app has no flaws.
 

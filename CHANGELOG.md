@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.1 — 21 November 2026 (Hong Kong)
+
+Version 5.1 is 5.0 with a new look. Nothing else changed. Full notes: [5.1 release notes](docs/releases/5.1.md).
+
+- New colours: light mode "Harbour" (navy #1F4E79 on #F6F8FB) and dark mode "Clear Sky" (sky blue #6FB6FF on #0B1724). Risk bands keep their own colours, separate from the brand colour, and the word or number beside them stays. All mapped text and background pairs are at least 4.5:1.
+- Switching theme (header sun or moon button, or Settings) now uncovers the new theme as a circle growing from the tapped button over about 650 ms. It is instant when system animations are off.
+- The scores-mode switch row has the same press ripple as other controls. Card corners are 14 dp and button corners 10 dp.
+- No feature, screen, setting, wording of the Terms, consent step or behaviour was removed or changed. Terms revision stays `2026-11-20-v6`; nobody is shown a new Terms notice. Same Beacon model, same relay. Upgrading from 5.0 keeps data (same signing key).
+- Tested: 695 unit tests run, 1 known Windows-only failure (`RelayOutboxTest > concurrentFirstOpenCannotRaceDatabaseCreation`); lint 0 errors; on two real devices (LG G7+ Android 8 as child, Xiaomi tablet Android 15 as parent) a debug build without the model loaded every parent and child tab in both themes, and theme switching from both places worked, including rapid taps, with no crash.
+- Not tested: the 5.1 release APK itself on a phone; scoring and scores screens with data on a phone in 5.1; automatic-capture screens with permissions granted; two taps about 50 ms apart on the tablet register as one.
+- Install limit, also true for 5.0: on phones where Google Play Protect's enhanced fraud protection is active, installing the downloaded APK by opening it from a browser, messaging app or file manager is blocked with no "install anyway" option, because the app declares an accessibility service and a notification listener. Installing over USB with `adb` from a computer is not blocked. There is no Google Play listing.
+
 ## 5.0 — 20 November 2026 (Hong Kong)
 
 Version 5.0 is the first release with the optional scores-only mode (AI risk analysis), the two collection methods with the automatic-capture warning, the capture hold, the 15-minute background check-in, relay room deletion and 90-day room expiry, and the speed fixes found on a real phone; those changes are described in the entries below and in the [5.0 release notes](docs/releases/5.0.md). Bundled Terms revision `2026-11-20-v6`. The Terms have not been reviewed by a lawyer and are not legal advice.
@@ -9,7 +21,7 @@ Version 5.0 is the first release with the optional scores-only mode (AI risk ana
 - Terms revision `2026-11-20-v6` (header release line now 5.0): section 2C (both languages) and section 6, the privacy policy and the deletion guide say this, and add that because the model is public, the possibility that it reproduces fragments of its training text (including other people's messages) matters more (a limited developer test found no reproduction of the real training conversations, with one setting and one prompt length and without PAN-12, so it cannot prove the model never does), and a downloaded copy cannot be recalled. Existing users see the one-time 條款已更新 notice; nobody is asked to accept again.
 - Phone test on two real phones: the first-start self-install worked, both collection methods worked end to end, and on a 2018 phone reporting 5.8 GB scoring completed with about 1.7 GB peak app memory (one phone, a few short chats; not a guarantee). Not observed: the 15-minute check-in and the charging-and-idle scoring job running on their own (both were started by hand); the owner's real Instagram export was not imported; only two devices. This supersedes the "nothing has run on a physical phone" and "not verified" lines of the 19 November entry for the items above.
 - Add `THIRD-PARTY-NOTICES.md` for llama.cpp (MIT) and the Qwen3 1.7B base model (Apache-2.0). Whether the APK and the separately published model file carry enough of these notices is listed as open.
-- Note that an APK over 1 GB installs directly but cannot be uploaded to Google Play as a plain APK (Play's limit for APKs is 100 MB); Play would need an app bundle with an asset pack, which is not built.
+- Note that an APK over 1 GB installs directly (correction, 21 November 2026: not on phones where Google Play Protect's enhanced fraud protection blocks it; see the 5.1 entry) but cannot be uploaded to Google Play as a plain APK (Play's limit for APKs is 100 MB); Play would need an app bundle with an asset pack, which is not built.
 - Upgrading keeps data only if the new APK is signed with the same key as the installed app.
 
 ## Terms 2026-11-20-v5: AI risk analysis, collection method and model (20 November 2026, Hong Kong)
