@@ -3,6 +3,8 @@ package app.family.igguard
 import android.accessibilityservice.AccessibilityService
 import android.app.Activity
 import android.app.Dialog
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.res.ColorStateList
 import android.app.AlertDialog
@@ -22,14 +24,21 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Color
 import android.graphics.Canvas
+import android.graphics.ColorFilter
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Build
@@ -2844,26 +2853,30 @@ class MainActivity : Activity() {
         val textSecondary: String, val textMuted: String, val accentSeafoam: String,
         val accentPowderSky: String, val btnPrimaryBg: String, val btnPrimaryText: String,
         val btnSecondaryBg: String, val btnSecondaryText: String, val warmHoney: String,
-        val warmCoral: String, val warningButtonBg: String, val warningButtonText: String
+        val warmCoral: String, val warningButtonBg: String, val warningButtonText: String,
+        val riskLow: String
     )
+    // Light "Harbour" / dark "Clear Sky". accentSeafoam = brand primary, accentPowderSky = secondary (borders only), warningButtonBg = attention.
     private fun currentTheme(): ThemeColors {
         return if (GuardEngine.isBrightTheme(this)) {
             ThemeColors(
-                bgCanvas = "#F6F8F5", bgCard = "#FFFFFF", bgHero = "#EAF1EB", bgInput = "#FFFFFF",
-                bgChip = "#EAF1EB", borderSubtle = "#DEE7DF", textPrimary = "#202B24",
-                textSecondary = "#5D6C61", textMuted = "#5D6C61", accentSeafoam = "#315644",
-                accentPowderSky = "#61786A", btnPrimaryBg = "#315644", btnPrimaryText = "#FFFFFF",
-                btnSecondaryBg = "#FFFFFF", btnSecondaryText = "#315644", warmHoney = "#865917",
-                warmCoral = "#A83142", warningButtonBg = "#865917", warningButtonText = "#FFFFFF"
+                bgCanvas = "#F6F8FB", bgCard = "#FFFFFF", bgHero = "#EDF1F4", bgInput = "#FFFFFF",
+                bgChip = "#EDF1F4", borderSubtle = "#DDE0E3", textPrimary = "#0F2238",
+                textSecondary = "#576474", textMuted = "#576474", accentSeafoam = "#1F4E79",
+                accentPowderSky = "#1E8A8A", btnPrimaryBg = "#1F4E79", btnPrimaryText = "#FFFFFF",
+                btnSecondaryBg = "#FFFFFF", btnSecondaryText = "#1F4E79", warmHoney = "#8F5300",
+                warmCoral = "#B3261E", warningButtonBg = "#D9822B", warningButtonText = "#0F2238",
+                riskLow = "#17703A"
             )
         } else {
             ThemeColors(
-                bgCanvas = "#151E18", bgCard = "#1D2820", bgHero = "#2B3F2E", bgInput = "#1D2820",
-                bgChip = "#2B3F2E", borderSubtle = "#354436", textPrimary = "#ECF2EC",
-                textSecondary = "#AFBEB0", textMuted = "#AFBEB0", accentSeafoam = "#CEE1CE",
-                accentPowderSky = "#AFBEB0", btnPrimaryBg = "#CEE1CE", btnPrimaryText = "#1D3422",
-                btnSecondaryBg = "#1D2820", btnSecondaryText = "#CEE1CE", warmHoney = "#E8CC96",
-                warmCoral = "#FFB2BF", warningButtonBg = "#E8CC96", warningButtonText = "#1D3422"
+                bgCanvas = "#0B1724", bgCard = "#12243A", bgHero = "#1F3856", bgInput = "#12243A",
+                bgChip = "#1F3856", borderSubtle = "#304155", textPrimary = "#E5F0FB",
+                textSecondary = "#A6B3C1", textMuted = "#A6B3C1", accentSeafoam = "#6FB6FF",
+                accentPowderSky = "#5ED6BF", btnPrimaryBg = "#6FB6FF", btnPrimaryText = "#0B1724",
+                btnSecondaryBg = "#12243A", btnSecondaryText = "#6FB6FF", warmHoney = "#F5B84D",
+                warmCoral = "#FF8279", warningButtonBg = "#FFC043", warningButtonText = "#0B1724",
+                riskLow = "#66D48F"
             )
         }
     }
@@ -2923,6 +2936,45 @@ class MainActivity : Activity() {
         window.statusBarColor = color(t.bgCanvas)
         window.navigationBarColor = color(t.bgCard)
         window.decorView.systemUiVisibility = if (bright) View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0
+    }
+    private var themeReveal: ValueAnimator? = null
+    /** Both theme switches: save the choice, rebuild, then uncover the new theme as a circle growing from [from]. */
+    private fun switchTheme(bright: Boolean, from: View) {
+        themeReveal?.end() // a running reveal removes its overlay and recycles its bitmap in onAnimationEnd
+        val root = window.decorView
+        val xy = IntArray(2).also { from.getLocationInWindow(it) }
+        val cx = xy[0] + from.width / 2f; val cy = xy[1] + from.height / 2f
+        val snapshot = if (ValueAnimator.areAnimatorsEnabled() && root.isAttachedToWindow && root.width > 0 && root.height > 0) try {
+            Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
+        } catch (_: RuntimeException) { null } catch (_: OutOfMemoryError) { null } else null
+        GuardEngine.setBrightTheme(this, bright); renderUi()
+        if (snapshot == null) return
+        val w = root.width.toFloat(); val h = root.height.toFloat(); var radius = 0f
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = BitmapShader(snapshot, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }
+        val path = Path()
+        // The old screen with a growing hole. A ViewOverlay never takes touches, and renderUi() never removes it.
+        val cover = object : Drawable() {
+            override fun draw(canvas: Canvas) {
+                path.rewind(); path.fillType = Path.FillType.EVEN_ODD
+                path.addRect(0f, 0f, w, h, Path.Direction.CW); path.addCircle(cx, cy, radius, Path.Direction.CW)
+                canvas.drawPath(path, paint)
+            }
+            override fun setAlpha(alpha: Int) {}
+            override fun setColorFilter(colorFilter: ColorFilter?) {}
+            @Deprecated("Deprecated in Java") override fun getOpacity() = PixelFormat.TRANSLUCENT
+        }.apply { setBounds(0, 0, root.width, root.height) }
+        root.overlay.add(cover)
+        themeReveal = ValueAnimator.ofFloat(0f, Math.hypot(maxOf(cx, w - cx).toDouble(), maxOf(cy, h - cy).toDouble()).toFloat()).apply {
+            duration = 650; interpolator = DecelerateInterpolator()
+            addUpdateListener { radius = it.animatedValue as Float; root.invalidate() }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    root.overlay.remove(cover); snapshot.recycle()
+                    if (themeReveal === animation) themeReveal = null
+                }
+            })
+            start()
+        }
     }
     private val refreshReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -3182,7 +3234,7 @@ class MainActivity : Activity() {
         super.onStop()
         parentAuthSignal?.let { parentAuthTicket++; it.cancel(); clearParentAuthRequest() }
     }
-    override fun onDestroy() { if (ModelImportJob.listener === importListener) ModelImportJob.listener = null; if (InstagramImport.listener === exportListener) InstagramImport.listener = null; parentAuthSignal?.cancel();parentAccess.lock(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null); dismissUiDialogs(); super.onDestroy() }
+    override fun onDestroy() { if (ModelImportJob.listener === importListener) ModelImportJob.listener = null; if (InstagramImport.listener === exportListener) InstagramImport.listener = null; parentAuthSignal?.cancel();parentAccess.lock(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null); dismissUiDialogs(); themeReveal?.end(); super.onDestroy() }
 
     private fun navigateTo(destination: String) {
         val role = GuardEngine.getRole(this)
@@ -3323,9 +3375,11 @@ class MainActivity : Activity() {
         if (section.endsWith("_setup")) row.addView(iconButton("arrow-left", "返回身份選擇") { navigateTo("role") })
         else row.addView(icon("shield-check", t.accentSeafoam, 28))
         row.addView(label("IG Guard", 18f, t.textPrimary, true).apply { setPadding(dp(9), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(iconButton(if (GuardEngine.isBrightTheme(this)) "moon" else "sun", "切換淺色或深色模式") {
-            GuardEngine.setBrightTheme(this, !GuardEngine.isBrightTheme(this)); renderUi()
-        })
+        lateinit var themeToggle: View
+        themeToggle = iconButton(if (GuardEngine.isBrightTheme(this)) "moon" else "sun", "切換淺色或深色模式") {
+            switchTheme(!GuardEngine.isBrightTheme(this), themeToggle)
+        }
+        row.addView(themeToggle)
         fixedHeader.addView(row)
         statusText = label("", 12f, t.textSecondary).apply { setPadding(0, dp(5), 0, dp(12)) }
         if (section != "role" && !section.endsWith("_setup") && role != "unconfigured") {
@@ -4078,7 +4132,7 @@ class MainActivity : Activity() {
     }
     // ================= Scores-only family mode: shared helpers =================
     private fun bandColor(token: String, t: ThemeColors): String = when (token) {
-        "accentSeafoam" -> t.accentSeafoam; "warmHoney" -> t.warmHoney; "warmCoral" -> t.warmCoral; else -> t.textSecondary
+        "accentSeafoam" -> t.riskLow; "warmHoney" -> t.warmHoney; "warmCoral" -> t.warmCoral; else -> t.textSecondary
     }
     private fun iconLine(glyph: String, tint: String, text: String, t: ThemeColors, sizeSp: Float = 15f, tag: String? = null): LinearLayout =
         LinearLayout(this).apply {
@@ -4405,7 +4459,7 @@ class MainActivity : Activity() {
         val why = if (!on && !can) ScoresUi.enableBlockedWhy(state) else ""
         val line = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(74); setPadding(dp(14), dp(14), dp(14), dp(14)); tag = "scores_mode_switch"
-            background = background(t.bgCard, 12, t.borderSubtle); isEnabled = usable; isFocusable = true
+            background = ripple(t.bgCard, 12, t.borderSubtle); isEnabled = usable; isFocusable = true
             contentDescription = "僅分數模式。${if (on) "已開啟" else "未開啟"}。$status。$why"
             accessibilityDelegate = object : View.AccessibilityDelegate() {
                 override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
@@ -4541,9 +4595,11 @@ class MainActivity : Activity() {
         sectionTitle("顯示方式", t)
         val modes = LinearLayout(this)
         for ((bright, text) in listOf(true to "淺色模式", false to "深色模式")) {
-            modes.addView(actionButton(text, if (GuardEngine.isBrightTheme(this) == bright) t.bgChip else t.bgCard, t.accentSeafoam) {
-                GuardEngine.setBrightTheme(this, bright); renderUi()
-            }.apply{isSelected=GuardEngine.isBrightTheme(this@MainActivity)==bright}, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(8), 0) })
+            lateinit var mode: Button
+            mode = actionButton(text, if (GuardEngine.isBrightTheme(this) == bright) t.bgChip else t.bgCard, t.accentSeafoam) {
+                switchTheme(bright, mode)
+            }.apply{isSelected=GuardEngine.isBrightTheme(this@MainActivity)==bright}
+            modes.addView(mode, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(8), 0) })
         }
         rootContainer.addView(modes)
         sectionTitle("保護與通知", t)
@@ -4848,7 +4904,7 @@ class MainActivity : Activity() {
     private fun divider(parent: LinearLayout, t: ThemeColors) { parent.addView(View(this).apply { setBackgroundColor(color(t.borderSubtle)) }, LinearLayout.LayoutParams(-1, dp(1))) }
     private fun sectionTitle(title: String, t: ThemeColors) { rootContainer.addView(label(title, 16f, t.textPrimary, true, topPad = 22, bottomPad = 14)) }
     private fun makeCard(t: ThemeColors, isHero: Boolean = false): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL; background = background(if (isHero) t.bgHero else t.bgCard, 12, t.borderSubtle)
+        orientation = LinearLayout.VERTICAL; background = background(if (isHero) t.bgHero else t.bgCard, 14, t.borderSubtle)
         setPadding(dp(18), dp(18), dp(18), dp(18))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(12), 0, dp(12)) }
     }
@@ -4889,13 +4945,13 @@ class MainActivity : Activity() {
     private fun actionButton(title: String, hexBg: String, hexText: String, critical: Boolean = false, onClick: () -> Unit): Button =
         (if (critical) ObscuredAwareButton(this) { warnObscured() } else Button(this)).apply {
         text = title; textSize = 14f; typeface = font(true); isAllCaps = false
-        setTextColor(color(hexText)); background = ripple(hexBg, 8, if (hexBg != currentTheme().btnPrimaryBg) currentTheme().accentPowderSky else null)
+        setTextColor(color(hexText)); background = ripple(hexBg, 10, if (hexBg != currentTheme().btnPrimaryBg) currentTheme().accentPowderSky else null)
         minimumHeight = dp(52); setPadding(dp(14), dp(13), dp(14), dp(13)); setOnClickListener(sessionClick(onClick))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(5), 0, dp(8)) }
     }
     private fun textAction(title: String, onClick: () -> Unit): Button = Button(this).apply {
         val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
-        setTextColor(color(t.accentSeafoam)); background = ripple(t.bgCard, 8, t.accentPowderSky); minimumHeight = dp(48)
+        setTextColor(color(t.accentSeafoam)); background = ripple(t.bgCard, 10, t.accentPowderSky); minimumHeight = dp(48)
         gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(dp(12), dp(10), dp(12), dp(10)); setOnClickListener(sessionClick(onClick))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply{setMargins(0,dp(4),0,dp(6))}
     }
