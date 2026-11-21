@@ -5,6 +5,8 @@ import android.app.Activity
 import android.app.Dialog
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
 import android.animation.ValueAnimator
 import android.content.res.ColorStateList
 import android.app.AlertDialog
@@ -2832,6 +2834,11 @@ class MainActivity : Activity() {
     private var chartZone = ZoneId.systemDefault()
     private var displayed15MinCode = ""
     private var lastRenderedSection = ""
+    private var lastRenderedPage = ""
+    private var pageMotion: ValueAnimator? = null
+    private var navShown = "" // "role/destination" of the highlighted tab; "" while the bar is hidden
+    private var navPillX = 0f // the highlight's last drawn left edge, px inside the bar
+    private var navMotion: ValueAnimator? = null
     private var unlockTimerText: TextView? = null
     private val drawableIds = mutableMapOf<String, Int>()
     private val fonts = mutableMapOf<Boolean, Typeface>()
@@ -2919,6 +2926,9 @@ class MainActivity : Activity() {
         val t=currentTheme();val feedback=color(if(fill==t.btnPrimaryBg)t.btnPrimaryText else t.accentSeafoam)
         return RippleDrawable(ColorStateList.valueOf((feedback and 0x00ffffff) or 0x24000000), focusSurface(fill,radius,border), background("#FFFFFF", radius))
     }
+    /** Starts [animator], or returns null when the system "remove animations" setting is on: the caller then places the final state itself. */
+    private fun motion(animator: ValueAnimator, ms: Long): ValueAnimator? =
+        if (!ValueAnimator.areAnimatorsEnabled()) null else animator.apply { duration = ms; interpolator = DecelerateInterpolator(); start() }
     private fun View.describeAsControl(choice:Boolean=false) {
         accessibilityDelegate=object:View.AccessibilityDelegate() {
             override fun onInitializeAccessibilityNodeInfo(host:View,info:AccessibilityNodeInfo) {
@@ -3325,11 +3335,10 @@ class MainActivity : Activity() {
         val focus = currentFocus as? EditText
         val focusHint = focus?.hint?.toString(); val selection = focus?.selectionStart ?: -1
         val sameSection = lastRenderedSection == section
+        val page = section + when (section) { "alerts" -> "/$evidenceSection/$evidenceSender"; "overview" -> "/$chartMode"; else -> "" } // a sub-tab, an open conversation or a chart mode is its own page
         val savedY = if (sameSection) scrollView.scrollY else 0
-        val old = if (contentFrame.childCount > 0) contentFrame.getChildAt(contentFrame.childCount - 1) else null
-        old?.animate()?.cancel()
+        pageMotion?.cancel()
         contentFrame.removeAllViews()
-        if (animate && old != null && !sameSection && ValueAnimator.areAnimatorsEnabled()) contentFrame.addView(old)
         screenShell.setBackgroundColor(color(t.bgCanvas))
         buildHeader(t, role); buildBottomNavigation(t, role)
         scrollView = ScrollView(this).apply { isFillViewport = true; isVerticalScrollBarEnabled = false }
@@ -3357,17 +3366,9 @@ class MainActivity : Activity() {
             }
         }
         scrollView.post { scrollView.scrollTo(0, savedY) }
-        if (animate && old != null && !sameSection && ValueAnimator.areAnimatorsEnabled()) {
-            val incoming = scrollView
-            incoming.alpha = 0f; incoming.translationX = dp(12).toFloat()
-            incoming.animate().alpha(1f).translationX(0f).setDuration(240).setInterpolator(DecelerateInterpolator()).start()
-            old.animate().alpha(0f).translationX(-dp(8).toFloat()).setDuration(180).withEndAction {
-                if (old.parent === contentFrame) contentFrame.removeView(old)
-            }.start()
-            old.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-            for (view in descendants(old)) { view.isEnabled = false; view.isClickable = false; view.isFocusable = false }
-        }
-        lastRenderedSection = section; updateStatus()
+        pageMotion = if (animate && lastRenderedPage.isNotEmpty() && page != lastRenderedPage) motion(ObjectAnimator.ofPropertyValuesHolder(scrollView,
+            PropertyValuesHolder.ofFloat(View.ALPHA, 0f, 1f), PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, dp(12).toFloat(), 0f)), 220) else null
+        lastRenderedSection = section; lastRenderedPage = page; updateStatus()
     }
     private fun buildHeader(t: ThemeColors, role: String) {
         fixedHeader.removeAllViews(); fixedHeader.setBackgroundColor(color(t.bgCanvas))
@@ -3387,17 +3388,29 @@ class MainActivity : Activity() {
         }
     }
     private fun buildBottomNavigation(t: ThemeColors, role: String) {
-        bottomNav.removeAllViews()
+        bottomNav.removeAllViews(); navMotion?.cancel()
         bottomNav.visibility = if (section == "role" || section.endsWith("_setup") || role == "unconfigured") View.GONE else View.VISIBLE
-        if (bottomNav.visibility != View.VISIBLE) return
-        bottomNav.setBackgroundColor(color(t.bgCard)); bottomNav.setPadding(dp(12), dp(8), dp(12), dp(10))
+        if (bottomNav.visibility != View.VISIBLE) { navShown = ""; return }
+        // The bar's background draws the one highlight, so it can slide between tabs that are rebuilt on every render.
+        val pill = object : Drawable() {
+            var x = navPillX; var tab: View? = null
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).also { it.color = color(t.bgChip) }
+            override fun draw(canvas: Canvas) {
+                canvas.drawColor(color(t.bgCard))
+                tab?.let { canvas.drawRoundRect(x, it.top.toFloat(), x + it.width, it.bottom.toFloat(), dp(8).toFloat(), dp(8).toFloat(), paint) }
+            }
+            override fun setAlpha(alpha: Int) {}
+            override fun setColorFilter(colorFilter: ColorFilter?) {}
+            @Deprecated("Deprecated in Java") override fun getOpacity() = PixelFormat.OPAQUE
+        }
+        bottomNav.background = pill; bottomNav.setPadding(dp(12), dp(8), dp(12), dp(10))
         val destinations = if (role == "parent") listOf(Triple("overview", "house", "總覽"), Triple("alerts", "bell-simple", "提醒"), Triple("family", "users-three", "家庭"), Triple("settings", "gear-six", "設定"))
             else listOf(Triple("overview", "house", "總覽"), Triple("permissions", "shield", "權限"), Triple("unlock", "key", "解鎖"), Triple("settings", "gear-six", "設定"))
         for ((destination, glyph, title) in destinations) {
             val selected = section == destination || (destination == "overview" && section in setOf("scores", "scores_consent", "scores_change"))
             val tab = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; minimumHeight = dp(56)
-                background = ripple(if (selected) t.bgChip else t.bgCard, 8)
+                background = ripple("#00000000", 8)
                 isClickable = true; isFocusable = true; isSelected = selected; contentDescription = title
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 setOnClickListener { if (section != destination) navigateTo(destination) }
@@ -3407,6 +3420,17 @@ class MainActivity : Activity() {
             tab.addView(icon(glyph, if (selected) t.accentSeafoam else t.textMuted, 23))
             tab.addView(label(title, 11f, if (selected) t.accentSeafoam else t.textMuted, selected, topPad = 4).apply { gravity = Gravity.CENTER })
             bottomNav.addView(tab, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
+            if (!selected) continue
+            val slide = navShown.substringBefore('/') == role && navShown != "$role/$destination" // a tab change; not first draw, role or theme change
+            navShown = "$role/$destination"
+            var glide = slide
+            tab.addOnLayoutChangeListener { v, l, _, _, _, _, _, _, _ ->
+                pill.tab = v
+                val place = { x: Float -> pill.x = x; navPillX = x; pill.invalidateSelf() }
+                if (glide) navMotion = motion(ValueAnimator.ofFloat(navPillX, l.toFloat()).apply { addUpdateListener { place(it.animatedValue as Float) } }, 280)
+                glide = false
+                if (navMotion?.isRunning != true) place(l.toFloat())
+            }
         }
     }
     private fun updateStatus() {
@@ -3553,7 +3577,7 @@ class MainActivity : Activity() {
                 setTextColor(color(if (chartMode == mode) t.accentSeafoam else t.textMuted))
                 background = ripple(if (chartMode == mode) t.bgChip else t.bgCard, 7, t.accentPowderSky)
                 minimumHeight = dp(48); isSelected = chartMode == mode
-                setOnClickListener { chartMode = mode; renderUi() }
+                setOnClickListener { chartMode = mode; renderUi(animate = true) }
             }, LinearLayout.LayoutParams(0, -2, 1f))
         }
         card.addView(tabs)
@@ -3728,7 +3752,7 @@ class MainActivity : Activity() {
         val inConversation=evidenceSender!=null
         heading(evidenceSender ?: when(evidenceSection){"review"->"需要跟進";"device"->"裝置與傳送";else->"對話記錄"},
             if(inConversation)"只顯示實際擷取內容，按可確認的先後順序整理。" else "按對話對象整理。一般訊息與需要跟進的內容分開。",t)
-        if(inConversation)rootContainer.addView(textAction("返回對話列表") { evidenceSender=null;evidenceConversationKey=null;evidenceDirection="all";evidencePage=0;renderUi() })
+        if(inConversation)rootContainer.addView(textAction("返回對話列表") { evidenceSender=null;evidenceConversationKey=null;evidenceDirection="all";evidencePage=0;renderUi(animate=true) })
         else {
             val tabs=LinearLayout(this)
             for((key,title) in listOf("conversations" to "對話記錄","review" to "需要跟進","device" to "裝置與傳送")) {
@@ -3737,7 +3761,7 @@ class MainActivity : Activity() {
                     setTextColor(color(if(evidenceSection==key)t.btnPrimaryText else t.textSecondary))
                     background=ripple(if(evidenceSection==key)t.btnPrimaryBg else t.bgCanvas,7)
                     isSelected=evidenceSection==key
-                    setOnClickListener(sessionClick{evidenceSection=key;evidencePage=0;alertFilter="all";evidenceDirection="all";renderUi()})
+                    setOnClickListener(sessionClick{evidenceSection=key;evidencePage=0;alertFilter="all";evidenceDirection="all";renderUi(animate=true)})
                 },LinearLayout.LayoutParams(0,-2,1f))
             }
             rootContainer.addView(tabs)
