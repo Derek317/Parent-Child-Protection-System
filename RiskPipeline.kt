@@ -273,8 +273,10 @@ internal object RiskLocal {
     private const val POLICY_REPOST = "scores_policy_repost_ms"
     /** Time of the last successful Instagram import, nothing else about it. Wiped with the store. */
     private const val LAST_IMPORT = "scores_last_import_ms"
-    /** Child: when the parent's last request for a fresh export was shown, nothing else about it. Removed with the store, by a successful import and by the child's "OK". */
+    /** Child: when the parent's last request for a fresh export was shown, nothing else about it. Kept for the 20-hour limit until the store is wiped. */
     private const val IMPORT_REQUEST = "scores_import_request_ms"
+    /** Child: that request's card was closed by the child's "OK" or a successful import. Wiped with the store. */
+    private const val IMPORT_REQUEST_DONE = "scores_import_request_done"
     /** Parent: when this phone last sent such a request. */
     private const val PARENT_IMPORT_REQUEST = "scores_parent_import_request_ms"
     const val REQUEST_PARENT_GAP_MS = 24L * 3_600_000L
@@ -471,7 +473,7 @@ internal object RiskLocal {
     /** Store and results only: queued reports (such as the "model is valid" state) are left alone. */
     private fun wipeStore(ctx: Context) = retrying("store") {
         FamilyEvidence(ctx).use { it.wipeRisk() }
-        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(LAST_IMPORT).remove(IMPORT_REQUEST).remove(WIPE_PENDING).remove(RiskBatch.IN_FLIGHT).remove(RiskBatch.IN_FLIGHT_SUSPECT).commit()
+        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(LAST_IMPORT).remove(IMPORT_REQUEST).remove(IMPORT_REQUEST_DONE).remove(WIPE_PENDING).remove(RiskBatch.IN_FLIGHT).remove(RiskBatch.IN_FLIGHT_SUSPECT).commit()
     }
 
     /** Leaving the child role, a new family, or a remote reset: data plus all mode state and the consent receipt. */
@@ -565,7 +567,7 @@ internal object RiskLocal {
         } catch (_: RuntimeException) { /* The notice is best effort; the persisted change flag is the record. */ }
     }
 
-    fun recordImport(ctx: Context, now: Long = System.currentTimeMillis()) { prefs(ctx).edit().putLong(LAST_IMPORT, now).remove(IMPORT_REQUEST).commit() }
+    fun recordImport(ctx: Context, now: Long = System.currentTimeMillis()) { prefs(ctx).edit().putLong(LAST_IMPORT, now).putBoolean(IMPORT_REQUEST_DONE, true).commit() }
     fun lastImport(ctx: Context): Long = prefs(ctx).getLong(LAST_IMPORT, 0L)
 
     /** Upload agreed and analysis on (not paused, not withdrawn), and no successful import for 7 days (counted from the agreement if none yet). */
@@ -596,26 +598,28 @@ internal object RiskLocal {
     }
 
     fun importRequestAt(ctx: Context): Long = prefs(ctx).getLong(IMPORT_REQUEST, 0L)
-    /** The card shows only while an import could actually run. */
-    fun importRequestPending(ctx: Context): Boolean = importRequestAt(ctx) > 0 && InstagramImport.allowed(ctx)
+    /** The card shows until it is closed (OK or a successful import), and only while an import could actually run. */
+    fun importRequestPending(ctx: Context): Boolean =
+        importRequestAt(ctx) > 0 && !prefs(ctx).getBoolean(IMPORT_REQUEST_DONE, false) && InstagramImport.allowed(ctx)
 
     /**
      * A signed "import_request" from the parent (processIncomingRelayLine, under the session lock). Only the child role, and only
      * while an import is allowed (upload agreed, analysis on, not paused, not withdrawn); within 20 hours of the last one shown it is
-     * ignored. Otherwise nothing is stored or shown. Only the time is kept; nothing is sent back to the parent.
+     * ignored, also after the child's "OK" or an import. Otherwise nothing is stored or shown. Only the time (and whether its card
+     * was closed) is kept; nothing is sent back to the parent.
      */
     fun receiveImportRequest(ctx: Context, now: Long = System.currentTimeMillis()): Boolean {
         if (!GuardEngine.isChildMode(ctx) || !InstagramImport.allowed(ctx)) return false
         val last = importRequestAt(ctx)
         // A last time ahead of the clock also counts as recent: when in doubt, do not show it again.
         if (last > 0 && now - last < REQUEST_CHILD_GAP_MS) return false
-        if (!prefs(ctx).edit().putLong(IMPORT_REQUEST, now).commit()) return false
+        if (!prefs(ctx).edit().putLong(IMPORT_REQUEST, now).remove(IMPORT_REQUEST_DONE).commit()) return false
         try { notifyUpload(ctx, ScoresChildCopy.REQUEST_TITLE, ScoresChildCopy.REQUEST_TEXT) } catch (_: RuntimeException) { /* The card is the record; the notice is best effort. */ }
         try { ctx.sendBroadcast(Intent(GuardEngine.ACTION_UI_REFRESH).setPackage(ctx.packageName)) } catch (_: RuntimeException) {}
         return true
     }
-    /** The child's "OK" on the card. Nothing is sent to the parent. */
-    fun dismissImportRequest(ctx: Context): Boolean = prefs(ctx).edit().remove(IMPORT_REQUEST).commit()
+    /** The child's "OK" on the card. Closes the card only: the time stays, so the 20-hour limit still holds. Nothing is sent to the parent. */
+    fun dismissImportRequest(ctx: Context): Boolean = prefs(ctx).edit().putBoolean(IMPORT_REQUEST_DONE, true).commit()
 
     private fun carriesText(token: String, wire: String): Boolean {
         val json = GuardEngine.decryptPayload(token, wire) ?: return true   // unreadable: do not risk forwarding it

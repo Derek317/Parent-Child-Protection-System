@@ -39,7 +39,10 @@ class ImportRequestChildTest : UploadTestBase() {
     }
     /** The upload notice (id 7003); the ongoing disclosure (7001) is a different notification. */
     private fun notice(): Notification? = shadowOf(ctx.getSystemService(NotificationManager::class.java)).getNotification(7003)
-    private fun shown() = RiskLocal.importRequestAt(ctx) > 0
+    /** The card is up. */
+    private fun shown() = RiskLocal.importRequestPending(ctx)
+    /** The time of the last request shown is stored (it outlives the card, for the 20-hour limit). */
+    private fun kept() = RiskLocal.importRequestAt(ctx) > 0
     private fun export(): ByteArray {
         val at = System.currentTimeMillis() - 2 * hour
         return JSONObject().put("participants", org.json.JSONArray().put(JSONObject().put("name", "Bea Friend")).put(JSONObject().put("name", "alex_teen")))
@@ -47,7 +50,7 @@ class ImportRequestChildTest : UploadTestBase() {
             .toString().toByteArray()
     }
     private fun assertNothing(why: String) {
-        assertFalse(why, shown()); assertNull(why, notice())
+        assertFalse(why, kept()); assertFalse(why, shown()); assertNull(why, notice())
     }
 
     // ---------- protocol ----------
@@ -141,23 +144,50 @@ class ImportRequestChildTest : UploadTestBase() {
         assertFalse("a time ahead of the clock counts as recent", RiskLocal.receiveImportRequest(ctx, t - hour)); assertEquals(t, RiskLocal.importRequestAt(ctx))
         assertTrue(RiskLocal.receiveImportRequest(ctx, t + 20 * hour)); assertEquals(t + 20 * hour, RiskLocal.importRequestAt(ctx))
         // Through the relay as well: a second signed request minutes later changes nothing.
-        RiskLocal.dismissImportRequest(ctx); assertEquals(RelayConsumption.CONSUMED, deliver(command()))
+        RiskLocal.wipeData(ctx); assertEquals(RelayConsumption.CONSUMED, deliver(command()))
         val shownAt = RiskLocal.importRequestAt(ctx)
         assertEquals(RelayConsumption.CONSUMED, deliver(command()))
         assertEquals(shownAt, RiskLocal.importRequestAt(ctx))
     }
+    @Test fun afterOkOrAnImportASecondRequestWithinTwentyHoursIsStillIgnored() {
+        activate(ScoresMethod.UPLOAD)
+        val manager = ctx.getSystemService(NotificationManager::class.java)
+        // Shown, then "OK": the card goes, the time stays.
+        assertEquals(RelayConsumption.CONSUMED, deliver(command())); assertTrue(shown()); assertNotNull(notice())
+        val at = RiskLocal.importRequestAt(ctx)
+        assertTrue(RiskLocal.dismissImportRequest(ctx)); manager.cancelAll()
+        assertFalse(shown()); assertEquals("the time stays after OK", at, RiskLocal.importRequestAt(ctx))
+        assertEquals(RelayConsumption.CONSUMED, deliver(command()))
+        assertFalse("no card after OK", shown()); assertNull("no notification after OK", notice()); assertEquals(at, RiskLocal.importRequestAt(ctx))
+        assertFalse(RiskLocal.receiveImportRequest(ctx, at + 19 * hour)); assertFalse(shown()); assertNull(notice())
+        // Shown, then a successful import: the same.
+        RiskLocal.wipeData(ctx); assertFalse(kept())
+        assertEquals(RelayConsumption.CONSUMED, deliver(command())); assertTrue(shown())
+        val at2 = RiskLocal.importRequestAt(ctx)
+        assertEquals(ImportResult.OK, InstagramImport.run(ctx, java.io.ByteArrayInputStream(export()), "message_1.json").result); manager.cancelAll()
+        assertFalse(shown()); assertEquals("the time stays after an import", at2, RiskLocal.importRequestAt(ctx))
+        assertEquals(RelayConsumption.CONSUMED, deliver(command()))
+        assertFalse("no card after an import", shown()); assertNull("no notification after an import", notice()); assertEquals(at2, RiskLocal.importRequestAt(ctx))
+        // 20 hours after the last one shown, a new request shows again.
+        assertTrue(RiskLocal.receiveImportRequest(ctx, at2 + 20 * hour)); assertTrue(shown()); assertNotNull(notice())
+    }
 
     // ---------- what clears it ----------
-    @Test fun theWipeASuccessfulImportAndTheChildsOkClearIt() {
+    @Test fun okAndASuccessfulImportCloseTheCardAndTheWipeDeletesTheTime() {
         activate(ScoresMethod.UPLOAD)
-        assertTrue(RiskLocal.receiveImportRequest(ctx)); RiskLocal.wipeData(ctx); assertFalse("wipe", shown())
+        assertTrue(RiskLocal.receiveImportRequest(ctx)); RiskLocal.wipeData(ctx); assertFalse("wipe", kept()); assertFalse("wipe", shown())
         assertTrue(RiskLocal.receiveImportRequest(ctx))
         assertEquals(ImportResult.TOO_OLD, InstagramImport.run(ctx, java.io.ByteArrayInputStream(
             String(export()).replace(Regex("\"timestamp_ms\":\\d+"), "\"timestamp_ms\":${System.currentTimeMillis() - 20 * 24 * hour}").toByteArray()), "message_1.json").result)
-        assertTrue("an import that stored nothing does not clear it", shown())
-        assertEquals(ImportResult.OK, InstagramImport.run(ctx, java.io.ByteArrayInputStream(export()), "message_1.json").result); assertFalse("import", shown())
-        assertTrue(RiskLocal.receiveImportRequest(ctx, System.currentTimeMillis())); RiskLocal.dismissImportRequest(ctx); assertFalse("dismiss", shown())
-        assertTrue(RiskLocal.receiveImportRequest(ctx)); assertTrue(RiskLocal.withdraw(ctx)); assertFalse("withdrawal wipes it with the store", shown())
+        assertTrue("an import that stored nothing does not close it", shown())
+        assertEquals(ImportResult.OK, InstagramImport.run(ctx, java.io.ByteArrayInputStream(export()), "message_1.json").result)
+        assertFalse("import closes the card", shown()); assertTrue("import keeps the time", kept())
+        RiskLocal.wipeData(ctx); assertFalse("wipe after import", kept())
+        assertTrue(RiskLocal.receiveImportRequest(ctx)); RiskLocal.dismissImportRequest(ctx)
+        assertFalse("OK closes the card", shown()); assertTrue("OK keeps the time", kept())
+        RiskLocal.wipeData(ctx); assertFalse("wipe after OK", kept())
+        assertTrue(RiskLocal.receiveImportRequest(ctx)); assertTrue("the closed flag went with the store", shown())
+        assertTrue(RiskLocal.withdraw(ctx)); assertFalse("withdrawal wipes the time with the store", kept())
     }
     @Test fun nothingIsBlockedWhenItIsIgnored() {
         activate(ScoresMethod.UPLOAD)
