@@ -2892,9 +2892,10 @@ class MainActivity : Activity() {
         val accentPowderSky: String, val btnPrimaryBg: String, val btnPrimaryText: String,
         val btnSecondaryBg: String, val btnSecondaryText: String, val warmHoney: String,
         val warmCoral: String, val warningButtonBg: String, val warningButtonText: String,
-        val riskLow: String
+        val riskLow: String, val navPill: String, val navPillInk: String
     )
     // Light "Harbour" / dark "Clear Sky". accentSeafoam = brand primary, accentPowderSky = secondary (borders only), warningButtonBg = attention.
+    // navPill / navPillInk = the selected bottom tab's highlight and its icon and label (bgChip carries accent text elsewhere).
     private fun currentTheme(): ThemeColors = themeColors(GuardEngine.isBrightTheme(this))
     /** The saved theme, or the phone's dark mode when none is saved or the encrypted preferences cannot be read: consent and storage-failure pages. */
     private fun brightOrDefault(): Boolean = try { GuardEngine.isBrightTheme(this) } catch (_: RuntimeException) { !GuardEngine.phoneIsDark(this) }
@@ -2907,7 +2908,7 @@ class MainActivity : Activity() {
                 accentPowderSky = "#1565C0", btnPrimaryBg = "#1565C0", btnPrimaryText = "#FFFFFF",
                 btnSecondaryBg = "#FFFFFF", btnSecondaryText = "#1565C0", warmHoney = "#8F5300",
                 warmCoral = "#B3261E", warningButtonBg = "#D9822B", warningButtonText = "#0F2238",
-                riskLow = "#17703A"
+                riskLow = "#17703A", navPill = "#1565C0", navPillInk = "#FFFFFF"
             )
         } else {
             ThemeColors(
@@ -2917,7 +2918,7 @@ class MainActivity : Activity() {
                 accentPowderSky = "#5ED6BF", btnPrimaryBg = "#6FB6FF", btnPrimaryText = "#0B1724",
                 btnSecondaryBg = "#12243A", btnSecondaryText = "#6FB6FF", warmHoney = "#F5B84D",
                 warmCoral = "#FF8279", warningButtonBg = "#FFC043", warningButtonText = "#0B1724",
-                riskLow = "#66D48F"
+                riskLow = "#66D48F", navPill = "#1F3856", navPillInk = "#6FB6FF"
             )
         }
     }
@@ -3446,7 +3447,7 @@ class MainActivity : Activity() {
         // The bar's background draws the one highlight, so it can slide between tabs that are rebuilt on every render.
         val pill = object : Drawable() {
             var x = navPillX; var tab: View? = null
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).also { it.color = color(t.bgChip) }
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).also { it.color = color(t.navPill) }
             override fun draw(canvas: Canvas) {
                 canvas.drawColor(color(t.bgCard))
                 tab?.let { canvas.drawRoundRect(x, it.top.toFloat(), x + it.width, it.bottom.toFloat(), dp(10).toFloat(), dp(10).toFloat(), paint) }
@@ -3462,20 +3463,23 @@ class MainActivity : Activity() {
             val selected = section == destination || (destination == "overview" && section in setOf("scores", "scores_consent", "scores_change"))
             val tab = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; minimumHeight = dp(56)
-                background = ripple(TRANSPARENT_FILL, 10)
+                background = ripple(TRANSPARENT_FILL, 10, t = if (selected) t.copy(accentSeafoam = t.navPillInk) else t)   // ripple and focus ring readable on the pill
                 isClickable = true; isFocusable = true; isSelected = selected; contentDescription = title
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 setOnClickListener { if (section != destination) navigateTo(destination) }
                 tag = "nav_$destination"
                 describeAsControl()
             }
-            tab.addView(icon(glyph, if (selected) t.accentSeafoam else t.textMuted, 24))
-            tab.addView(label(title, 12f, if (selected) t.accentSeafoam else t.textMuted, selected, topPad = 4).apply { gravity = Gravity.CENTER })
+            val glyphView = icon(glyph, if (selected) t.navPillInk else t.textMuted, 24)
+            val titleView = label(title, 12f, if (selected) t.navPillInk else t.textMuted, selected, topPad = 4).apply { gravity = Gravity.CENTER }
+            tab.addView(glyphView); tab.addView(titleView)
             bottomNav.addView(tab, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
             if (!selected) continue
             val slide = navShown.substringBefore('/') == role && navShown != "$role/$destination" // a tab change; not first draw, role or theme change
             navShown = "$role/$destination"
             var glide = slide
+            // While the pill slides in, the tab keeps the accent ink (readable on the bar); it takes the pill ink once the pill is under it.
+            val ink = { hex: String -> glyphView.drawable?.setTint(color(hex)); titleView.setTextColor(color(hex)) }
             tab.addOnLayoutChangeListener { v, l, _, _, _, _, _, _, _ ->
                 pill.tab = v
                 val place = { x: Float -> pill.x = x; navPillX = x; pill.invalidateSelf() }
@@ -3484,8 +3488,9 @@ class MainActivity : Activity() {
                     // The target was read before the slide; a rotation mid-slide moves the tab, so land on where it is now.
                     addListener(object : AnimatorListenerAdapter() {
                         var cancelled = false
+                        override fun onAnimationStart(animation: Animator) { ink(t.accentSeafoam) }
                         override fun onAnimationCancel(animation: Animator) { cancelled = true }
-                        override fun onAnimationEnd(animation: Animator) { if (!cancelled && pill.tab === v) place(v.left.toFloat()) }
+                        override fun onAnimationEnd(animation: Animator) { ink(t.navPillInk); if (!cancelled && pill.tab === v) place(v.left.toFloat()) }
                     })
                 }, 280, moveEasing)
                 glide = false
