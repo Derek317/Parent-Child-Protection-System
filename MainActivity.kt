@@ -2935,8 +2935,10 @@ class MainActivity : Activity() {
         return RippleDrawable(ColorStateList.valueOf((feedback and 0x00ffffff) or 0x24000000), focusSurface(fill,radius,border), background(t.bgCard, radius)) // mask: only its shape counts
     }
     /** Starts [animator], or returns null when the system "remove animations" setting is on: the caller then places the final state itself. */
-    private fun motion(animator: ValueAnimator, ms: Long): ValueAnimator? =
-        if (!ValueAnimator.areAnimatorsEnabled()) null else animator.apply { duration = ms; interpolator = DecelerateInterpolator(); start() }
+    /** Entrances decelerate; a move between two places on screen passes [moveEasing] (fast-out-slow-in, as the sheets use). */
+    private fun motion(animator: ValueAnimator, ms: Long, easing: android.animation.TimeInterpolator = DecelerateInterpolator()): ValueAnimator? =
+        if (!ValueAnimator.areAnimatorsEnabled()) null else animator.apply { duration = ms; interpolator = easing; start() }
+    private val moveEasing get() = android.view.animation.AnimationUtils.loadInterpolator(this, android.R.interpolator.fast_out_slow_in)
     private fun View.describeAsControl(choice:Boolean=false) {
         accessibilityDelegate=object:View.AccessibilityDelegate() {
             override fun onInitializeAccessibilityNodeInfo(host:View,info:AccessibilityNodeInfo) {
@@ -3170,7 +3172,7 @@ class MainActivity : Activity() {
                 val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
                 if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒。"; return@actionButton }
                 val entered = password?.text?.toString().orEmpty()
-                confirm.isEnabled = false; error.text = "正在通知原本的家長手機…"
+                confirm.isEnabled = false; error.setTextColor(color(t.textSecondary)); error.text = "正在通知原本的家長手機…"
                 // Delivering the notice to the old family can take seconds: keep it off the UI thread.
                 thread {
                     val ok = GuardEngine.applyPairing(this@MainActivity, parsed, entered, noticeWaitMs = 6_000L)
@@ -3178,7 +3180,7 @@ class MainActivity : Activity() {
                         if (isDestroyed) return@runOnUiThread
                         if (ok) { dismissUiDialogs(); finishPairing(); onAccepted() }
                         else {
-                            confirm.isEnabled = true
+                            confirm.isEnabled = true; error.setTextColor(color(t.warmCoral))
                             val locked = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
                             error.text = if (locked > 0) "輸入已鎖定，請等 $locked 秒。" else "家長主密碼不正確。"
                             password?.error = "請重新輸入"
@@ -3304,6 +3306,7 @@ class MainActivity : Activity() {
             addView(password)
             val error = label("", 13f, t.warmCoral); addView(error)
             addView(actionButton("驗證並繼續", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
+                error.setTextColor(color(t.warmCoral)) // errors; the progress line below switches to the status colour
                 val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
                 if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒，或由家長手機遠端救援。"; return@actionButton }
                 val ok = GuardEngine.verifyParentPassword(this@MainActivity, password.text.toString())
@@ -3311,7 +3314,7 @@ class MainActivity : Activity() {
                 if (!ok) { error.text = "家長主密碼不正確。"; password.error = "請重新輸入"; return@actionButton }
                 inputDrafts.remove("家長主密碼")
                 if (!announceLeaving) { dialog.dismiss(); onSuccess(); return@actionButton }
-                error.text = "正在通知家長手機…"
+                error.setTextColor(color(t.textSecondary)); error.text = "正在通知家長手機…"
                 thread {
                     GuardEngine.announceChildLeaving(this@MainActivity, 6_000L)
                     runOnUiThread { if (!isDestroyed) { dialog.dismiss(); onSuccess() } }
@@ -3438,7 +3441,7 @@ class MainActivity : Activity() {
             tab.addOnLayoutChangeListener { v, l, _, _, _, _, _, _, _ ->
                 pill.tab = v
                 val place = { x: Float -> pill.x = x; navPillX = x; pill.invalidateSelf() }
-                if (glide) navMotion = motion(ValueAnimator.ofFloat(navPillX, l.toFloat()).apply { addUpdateListener { place(it.animatedValue as Float) } }, 280)
+                if (glide) navMotion = motion(ValueAnimator.ofFloat(navPillX, l.toFloat()).apply { addUpdateListener { place(it.animatedValue as Float) } }, 280, moveEasing)
                 glide = false
                 if (navMotion?.isRunning != true) place(l.toFloat())
             }
