@@ -57,6 +57,9 @@ The invitation still contains the shared encryption token, so it must be sent pr
 - **A stalled pairing behind queued records.** The relay keeps at most 8 records in flight per connection. If 8 or more records that are not part of the pairing wait in the new room ahead of the parent's confirmation, the child phone's pairing stalls until its 10-minute timeout.
 - **Old commands are not carried over** on "pair again to verify": commands a parent with an older pairing still has queued for the old family are not moved to the new room.
 - **A parent cancel after the child confirmed is not signalled directly** to the child phone. The parent retires the new room, which ends the child's wait (the child phone is refused and deletes its key); there is no signed cancel message.
+- **The old family room is not retired on "pair again to verify".** The new QR pairing moves both phones to a new room; the old one is not deleted at the relay, so whatever still waits there stays until the relay's own deadlines (packets 7 days, an idle room 90 days).
+- **A re-pairing child phone discards its unsent records.** When a child phone is paired again, records it had not yet delivered to the old family are dropped, not carried over; the parent never receives them.
+- **Forged parts can cost a genuine multi-part record.** Someone who already holds the family secret can send parts of a forged record under the id of a genuine multi-part record before the genuine parts arrive; the genuine parts are then refused and that record is lost (the forged one is refused too and none of its parts is kept).
 
 ## Verification
 
