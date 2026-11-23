@@ -54,6 +54,9 @@ The invitation still contains the shared encryption token, so it must be sent pr
 - **The relay has no per-address rate limit** for requests to unknown rooms. This can cost the operator money; it exposes no data.
 - **The release build runs tests and signing in one job**, without full dependency verification (only the ZXing jar is checked against a pinned checksum).
 - **Not tested on real phones yet** at the time of writing.
+- **A stalled pairing behind queued records.** The relay keeps at most 8 records in flight per connection. If 8 or more records that are not part of the pairing wait in the new room ahead of the parent's confirmation, the child phone's pairing stalls until its 10-minute timeout.
+- **Old commands are not carried over** on "pair again to verify": commands a parent with an older pairing still has queued for the old family are not moved to the new room.
+- **A parent cancel after the child confirmed is not signalled directly** to the child phone. The parent retires the new room, which ends the child's wait (the child phone is refused and deletes its key); there is no signed cancel message.
 
 ## Verification
 
