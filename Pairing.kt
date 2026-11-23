@@ -252,6 +252,8 @@ class ChildPairing(
     private var replyAt = 0L
     private var confirmedAt = 0L
     internal val holdsSecrets get() = secret != null || ephemeral != null || token != null
+    /** K's alias while this machine holds K (null before start and after a cancel). */
+    internal val keyAlias get() = key?.alias
     private val terminal get() = state == ChildPairingState.Paired || state is ChildPairingState.Cancelled
 
     /** Parses the QR, creates K and Ec, returns M1 and the pairing room; null if refused (see state). */

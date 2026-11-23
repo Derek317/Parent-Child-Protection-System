@@ -1172,11 +1172,38 @@ object GuardEngine {
     // ---------------- QR pairing (design m2 rev. 3, 2.5): storage and relay side of the state machines ----------------
     fun newParentPairing(ctx: Context): ParentPairing {
         check(isParentMode(ctx))
-        return ParentPairing({ FamilySecurity.signCommand(it, parentIdentity(ctx).privateKey) }, EMOJI_PALETTE.toList())
+        return ParentPairing({ FamilySecurity.signCommand(it, parentIdentity(ctx).privateKey) }, EMOJI_PALETTE.toList()).also { live(it) }
     }
     /** [created] receives K as soon as it exists: the child proves it to the new family room before M3 (relay v2). */
     fun newChildPairing(ctx: Context, created: (FamilySecurity.ChildSigningKey) -> Unit = {}): ChildPairing =
-        ChildPairing({ FamilySecurity.createChildSigningKey(ctx).also(created) }, { FamilySecurity.deleteChildSigningKey(ctx, it) }, EMOJI_PALETTE.toList())
+        ChildPairing({ FamilySecurity.createChildSigningKey(ctx).also(created) }, { FamilySecurity.deleteChildSigningKey(ctx, it) }, EMOJI_PALETTE.toList()).also { live(it) }
+
+    /** The pairing machines of this process, held weakly: a machine nobody holds any more stops counting. */
+    private val livePairings = java.util.Collections.newSetFromMap(java.util.WeakHashMap<Any, Boolean>())
+    private fun live(machine: Any) = synchronized(livePairings) { livePairings.add(machine) }
+    private fun pairingInProgress(storedAlias: String?): Boolean = synchronized(livePairings) {
+        livePairings.any { when (it) {
+            is ParentPairing -> it.state !is ParentPairingState.Cancelled && it.state != ParentPairingState.Accepted
+            // Paired counts until completeChildPairing has stored K's alias.
+            is ChildPairing -> it.state !is ChildPairingState.Cancelled && !(it.state == ChildPairingState.Paired && it.keyAlias == storedAlias)
+            else -> false
+        } }
+    }
+    /**
+     * App start, every role, best effort: deletes the child signing keys and markers that no stored pairing references (the process
+     * died mid-pairing). Never the stored alias; the parent identity has another alias pattern. Skipped while a pairing machine of
+     * this process is running (both are main-thread only, so none can start meanwhile). Never throws.
+     */
+    fun removeOrphanedChildKeys(ctx: Context) {
+        try {
+            synchronized(pollLock) {
+                val current = prefs(ctx).getString(CHILD_KEY_ALIAS, null)
+                if (pairingInProgress(current)) return
+                for (alias in FamilySecurity.childSigningKeyAliases(ctx) - setOfNotNull(current))
+                    try { FamilySecurity.deleteChildSigningKey(ctx, alias) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
 
     /**
      * Parent, after ParentPairing.accept and the fresh authentication (design 2.5 P6). (a) In one state transaction T1 replaces the
@@ -3191,6 +3218,8 @@ class MainActivity : Activity() {
         modelPickAuthorized = savedInstanceState?.getBoolean("model_pick_authorized", false) == true
         // App start on a child phone: install the model included in the app, if there is one and it is missing. Not on a recreation.
         if (savedInstanceState == null) try { BundledModel.maybeAutoInstall(this) } catch (_: RuntimeException) {}
+        // App start in every role: child keys left by a pairing that never finished (best effort, never throws).
+        if (savedInstanceState == null) GuardEngine.removeOrphanedChildKeys(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         try {
             LocalVault.preferences(this).all

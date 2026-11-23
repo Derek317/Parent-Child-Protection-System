@@ -373,6 +373,13 @@ object FamilySecurity {
             check(!markerExists(marker)) { "Child key marker could not be deleted" }
         }
     }
+    /** Every child-key alias on this phone, from the Keystore and from marker files: a crash can leave either one without the other. */
+    fun childSigningKeyAliases(ctx: Context): Set<String> = synchronized(identityLock) {
+        childKeyOperation {
+            val markers = ctx.noBackupFilesDir.list().orEmpty().filter { ".initialized" in it }.map { it.substringBefore(".initialized") }
+            (parentStore().aliases().toList() + markers).filter { childAliasPattern.matches(it) }.toSet()
+        }
+    }
     fun signChildBytes(bytes: ByteArray, alias: String): ByteArray = synchronized(identityLock) {
         childKeyOperation {
             require(childAliasPattern.matches(alias)) { "Unknown child signing key alias" }
