@@ -24,6 +24,18 @@ Existing child monitoring remains active before re-pairing. Legacy invitations c
 
 The invitation still contains the shared encryption token, so it must be sent privately. Anyone holding it can decrypt family traffic. A child device is a participant in this shared channel; it is not a tamper-proof hardware boundary. Real-device testing is still needed for Instagram metadata/geometry, Samsung permission behavior, background scheduling and banking/Play Protect decisions. No permission or monitoring scope is expanded by these fixes.
 
+## Open risk: anyone holding the invitation can impersonate the child phone
+
+Child-to-parent messages are encrypted with the family token but not signed. Whoever holds the invitation text (the child, who sees it in the chat it was sent through, or anyone who finds it in a chat backup or screenshot) can derive the relay room and the child credential and send messages that the parent phone accepts as coming from the child phone:
+
+- fake "running, notification access on" heartbeats, so the missing-heartbeat alert never fires after IG Guard is uninstalled or its access is revoked;
+- fake scores reports and capture acknowledgements;
+- a new child login on the relay, which disconnects the real child phone.
+
+A routine key rotation does not end this, because the new token is sent encrypted under the old one. Until this is fixed, treat a "running" heartbeat as a sign that something holding the invitation is online, not as proof that the child phone is protected, and send the invitation only through a private channel that is deleted afterwards.
+
+The planned fix (a non-exportable Android Keystore key on the child phone, its public key pinned by the parent and covered by a compared code, and signed child heartbeats, reports and acknowledgements) was not included in this build. The public key would reach the parent only after pairing, so the code compared at invitation time cannot cover it; the fix needs a second comparison after pairing, a change to when the child sends its pairing confirmation, and a parent-side step to accept a reset child phone. Those pairing-flow changes are left for a later release.
+
 ## Verification
 
 Behavior tests cover malformed invitations, password verifiers, signatures and family scope, expired/future/replayed commands, plaintext injection, family replacement, sender spoofing, stale heartbeats, pairing consent/recreation, failure recovery, and the existing statistics/UI/permission flows. Transport-failure tests use a local refusing proxy; no test posts to a real family relay.
