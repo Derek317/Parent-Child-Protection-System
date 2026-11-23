@@ -60,6 +60,7 @@ The invitation still contains the shared encryption token, so it must be sent pr
 - **The old family room is not retired on "pair again to verify".** The new QR pairing moves both phones to a new room; the old one is not deleted at the relay, so whatever still waits there stays until the relay's own deadlines (packets 7 days, an idle room 90 days).
 - **A re-pairing child phone discards its unsent records.** When a child phone is paired again, records it had not yet delivered to the old family are dropped, not carried over; the parent never receives them.
 - **Forged parts can cost a genuine multi-part record.** Someone who already holds the family secret can send parts of a forged record under the id of a genuine multi-part record before the genuine parts arrive; the genuine parts are then refused and that record is lost (the forged one is refused too and none of its parts is kept).
+- **The undelivered-reports notice covers only records that wait for a receipt.** A child phone paired by QR code reports in its signed heartbeat how many of its records still wait for the parent's receipt and whether one expired undelivered; the parent shows a notice without content. Scores reports and other control records (such as capture acknowledgements) do not wait for a receipt and are not covered, and the notice can take up to about 2.5 hours after delivery stops.
 
 ## Verification
 

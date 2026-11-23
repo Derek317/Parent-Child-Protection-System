@@ -73,13 +73,13 @@
 
 **此版本之前的配對。** 之前已配對的手機繼續運作；父母手機會持續顯示「未核實」提示，直至兩部手機再以 QR 碼配對。
 
-**子女手機的簽署金鑰。** 子女手機在 Android Keystore 建立自己的簽署金鑰，不可匯出。子女手機傳給父母的每一則記錄（心跳、提醒、擷取的訊息、分數報告、確認回覆）都以此金鑰簽署。父母手機以此方式核實某部子女手機後，沒有該金鑰有效簽署的記錄會被拒絕，其內容不會儲存，父母會收到一則不含內容的通知（最多每小時一則）。簽署有效但過舊、日期設在太遠的未來或類型不符的記錄，會被靜默丟棄。
+**子女手機的簽署金鑰。** 子女手機在 Android Keystore 建立自己的簽署金鑰，不可匯出。子女手機傳給父母的每一則記錄（心跳、提醒、擷取的訊息、分數報告、確認回覆）都以此金鑰簽署。父母手機以此方式核實某部子女手機後，沒有該金鑰有效簽署的記錄會被拒絕，其內容不會儲存，父母會收到一則不含內容的通知（最多每小時一則）。簽署有效但過舊、日期設在太遠的未來或類型不符的記錄，會被靜默丟棄。子女手機的已簽署心跳另帶兩個計數及一個旗標，說明有多少回報仍未確認送達父母手機、最舊的一則已等候多久，以及是否曾有回報逾期仍未送達（不含內容，不含發送者）；父母手機據此顯示一則不含內容的提醒，但由回報停止送達起計，提醒最長可能約 2.5 小時後才出現（心跳每 30 至 95 分鐘一次，另加 60 分鐘的等候規則）。
 
 **中繼站儲存甚麼。** 對以 QR 碼配對的家庭，中繼站儲存子女手機的公鑰（不含內容，不含私鑰），並只接受能證明持有該金鑰的子女連線。未以此方式配對的家庭，處理方式不變。
 
 **相機。** 子女手機只在掃描畫面為讀取 QR 碼才請求相機權限。影像只在記憶體中處理，不儲存，不傳送。父母手機不請求相機權限。
 
-**仍然沒有保護的情況。** 已 root 或已被入侵的子女手機仍可使用其金鑰。父母若配對了並非子女本人使用的裝置，或子女掃描了陌生人的 QR 碼，此機制不能防止。子女解除安裝 App 時，父母只會看到心跳缺失。中繼資料仍然可見。如子女手機時鐘調快，而惡意中繼站扣起一則已簽署的心跳，該心跳其後最多可延遲24小時仍被視為最新。App 不能證明金鑰存放於防篡改硬件。此機制不保證沒有漏洞，亦不保證偵測到所有偽造；詳見儲存庫的 docs/security-review.md。
+**仍然沒有保護的情況。** 已 root 或已被入侵的子女手機仍可使用其金鑰。父母若配對了並非子女本人使用的裝置，或子女掃描了陌生人的 QR 碼，此機制不能防止。子女解除安裝 App 時，父母只會看到心跳缺失。中繼資料仍然可見。如子女手機時鐘調快，而惡意中繼站扣起一則已簽署的心跳，該心跳其後最多可延遲24小時仍被視為最新。App 不能證明金鑰存放於防篡改硬件。此機制不保證沒有漏洞，亦不保證偵測到所有偽造；詳見儲存庫的 docs/security-review.md。分數報告及其他控制記錄（例如擷取確認）不等待父母手機確認收妥，未送達提醒不涵蓋它們。
 
 ### 3. 加密及保留
 
@@ -182,13 +182,13 @@ The model can be wrong in both directions. It cannot reliably tell sexual conver
 
 **Pairings made before this version.** They keep working. The parent phone shows a permanent "not verified" (未核實) notice until the two phones are paired again with the QR code.
 
-**The child phone's signing key.** The child phone creates its own signing key in the Android Keystore; it cannot be exported. Every record the child phone sends to the parent (heartbeats, alerts, captured messages, scores reports, acknowledgements) is signed with it. Once the parent phone has verified a child phone this way, a record without a valid signature from that key is refused, its content is not stored, and the parent gets a notice without content (at most one per hour). A correctly signed record that is too old, dated too far ahead, or of an unexpected kind is dropped quietly.
+**The child phone's signing key.** The child phone creates its own signing key in the Android Keystore; it cannot be exported. Every record the child phone sends to the parent (heartbeats, alerts, captured messages, scores reports, acknowledgements) is signed with it. Once the parent phone has verified a child phone this way, a record without a valid signature from that key is refused, its content is not stored, and the parent gets a notice without content (at most one per hour). A correctly signed record that is too old, dated too far ahead, or of an unexpected kind is dropped quietly. The child phone's signed heartbeat also carries two counters and one flag about reports not yet confirmed as delivered to the parent phone (how many, how long the oldest has waited, and whether one ever expired undelivered), with no content and no sender; the parent phone uses them to show a notice without content, which can take up to about 2.5 hours after delivery stops (a heartbeat every 30 to 95 minutes plus the 60-minute rule).
 
 **What the relay stores.** For a family paired by QR code, the relay stores the child phone's public key (no content, no private key) and admits a child connection only with proof of that key. Families that were not paired this way are handled exactly as before.
 
 **Camera.** The child phone asks for camera permission only on the scan screen, only to read the QR code. Frames are processed in memory; no image is stored or sent. The parent phone does not ask for camera permission.
 
-**What is still not protected.** A rooted or compromised child phone can still use its key. This does not prevent a parent pairing a device that is not really the child's phone, or a child scanning a stranger's QR code. If the child uninstalls the app, the parent only sees missing heartbeats. Relay metadata remains visible. If a child phone's clock is set ahead and a hostile relay holds a signed heartbeat back, that heartbeat can count as fresh later by at most 24 hours. The app cannot prove that the key sits in tamper-resistant hardware. This mechanism does not promise that the app is free of vulnerabilities or that every forgery is detected; see docs/security-review.md in the repository.
+**What is still not protected.** A rooted or compromised child phone can still use its key. This does not prevent a parent pairing a device that is not really the child's phone, or a child scanning a stranger's QR code. If the child uninstalls the app, the parent only sees missing heartbeats. Relay metadata remains visible. If a child phone's clock is set ahead and a hostile relay holds a signed heartbeat back, that heartbeat can count as fresh later by at most 24 hours. The app cannot prove that the key sits in tamper-resistant hardware. This mechanism does not promise that the app is free of vulnerabilities or that every forgery is detected; see docs/security-review.md in the repository. Scores reports and other control records (such as capture acknowledgements) do not wait for the parent phone's receipt, so the undelivered-reports notice does not cover them.
 
 ### 3. Encryption and retention
 
