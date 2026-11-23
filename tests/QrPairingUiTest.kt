@@ -229,6 +229,30 @@ class QrPairingUiTest {
         }
     }
 
+    /** Large system text on a 360 dp phone: the scan button is inside the first screenful, the warning directly under it. */
+    @Config(qualifiers = "w360dp-h640dp-mdpi")
+    @Test fun theScanButtonIsOnTheFirstScreenAtLargeFontSizes() {
+        for (scale in listOf(1.3f, 1.5f)) {
+            prefs.edit().clear().commit(); RuntimeEnvironment.setFontScale(scale)
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+            try {
+                call(a, "navigateTo", "child_setup"); idle()
+                val shell = field(a, "screenShell").get(a) as ViewGroup
+                shell.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY)); shell.layout(0, 0, 360, 640)
+                val frame = field(a, "contentFrame").get(a) as View
+                val button = shell.findViewWithTag<View>("scan_qr")
+                val at = android.graphics.Rect(0, 0, button.width, button.height); shell.offsetDescendantRectToMyCoords(button, at)
+                val visible = android.graphics.Rect(0, 0, frame.width, frame.height); shell.offsetDescendantRectToMyCoords(frame, visible)
+                assertTrue("font scale $scale: button bottom ${at.bottom} inside ${visible.bottom}", at.bottom in 1..visible.bottom)
+                val parent = button.parent as ViewGroup
+                val warning = parent.getChildAt(parent.indexOfChild(button) + 1)
+                assertTrue(all(warning).filterIsInstance<TextView>().any { it.text.toString() == "只可掃描你自己家長手機上的 QR 碼。掃描他人的 QR 碼會把此手機連到該人。\nScan only the QR code on your own parent's phone. Scanning someone else's code connects this phone to that person." })
+                val bitmap = Bitmap.createBitmap(360, 640, Bitmap.Config.ARGB_8888); shell.draw(Canvas(bitmap))
+                File("build/test-screenshots/child-setup-font-$scale.png").apply { parentFile?.mkdirs() }.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            } finally { c.pause().stop().destroy(); RuntimeEnvironment.setFontScale(1f) }
+        }
+    }
+
     @Test fun chatInvitationsAreRefusedOnANewChildPhone() {
         val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
         try {

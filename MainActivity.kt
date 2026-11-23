@@ -3752,8 +3752,9 @@ class MainActivity : Activity() {
     }
     private fun renderChildSetup(t: ThemeColors) {
         heading("讓家人，安心相連。", "請家長在家長手機選擇「加入子女」，再用此手機掃描家長手機上的 QR 碼。", t)
-        rootContainer.addView(stateNote(Note.WARNING, "只可掃描你自己家長手機上的 QR 碼。掃描他人的 QR 碼會把此手機連到該人。\nScan only the QR code on your own parent's phone. Scanning someone else's code connects this phone to that person.", t))
+        // The primary action first: at large font sizes the warning card would push it below the fold.
         rootContainer.addView(actionButton("掃描 QR 碼 · Scan QR code", t.btnPrimaryBg, t.btnPrimaryText) { showChildPairingSheet() }.apply { tag = "scan_qr" })
+        rootContainer.addView(stateNote(Note.WARNING, "只可掃描你自己家長手機上的 QR 碼。掃描他人的 QR 碼會把此手機連到該人。\nScan only the QR code on your own parent's phone. Scanning someone else's code connects this phone to that person.", t))
         rootContainer.addView(label("相機只在掃描時使用，不會儲存或傳送任何影像。兩部手機需要在一起。\nThe camera is used only while scanning; no image is stored or sent. Both phones need to be together.", 13f, t.textSecondary, topPad = 18))
     }
 
