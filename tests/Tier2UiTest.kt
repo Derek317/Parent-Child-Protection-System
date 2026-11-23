@@ -155,6 +155,20 @@ class Tier2UiTest {
         } finally { c.pause().stop().destroy() }
     }
 
+    @Test fun emptyAndWarningStatesAreNoticeCardsWithAnIconAndUnchangedText() {
+        GuardEngine.setFamilyToken(ctx, java.util.UUID.randomUUID().toString())
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            UiSupport.nav(a, "alerts"); val views = UiSupport.views(a, "evidence_loading")
+            val text = views.filterIsInstance<TextView>().single { it.text.toString() == "尚無符合條件的對話記錄。" }
+            val line = text.parent as android.widget.LinearLayout
+            assertTrue("an icon beside the text", line.getChildAt(0) is android.widget.ImageView)
+            assertTrue("inside a card", (line.parent as View).background is android.graphics.drawable.GradientDrawable)
+            UiSupport.nav(a, "family"); settle()
+            assertTrue(UiSupport.texts(UiSupport.current(a)).contains("尚未加入信任好友。請確認對方身份後，再加入名單。"))
+        } finally { c.pause().stop().destroy() }
+    }
+
     @Test fun aLockedParentGetsNoBackLinkPastTheLock() {
         ParentUiAuthFixture.autoApprove = false
         try {

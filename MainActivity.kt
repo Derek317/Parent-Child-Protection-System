@@ -3372,7 +3372,7 @@ class MainActivity : Activity() {
         contentFrame.addView(scrollView, FrameLayout.LayoutParams(-1, -1))
         unlockTimerText = null
         if (role == "parent" && GuardEngine.parentKeyMigrationPending(this))
-            rootContainer.addView(label("金鑰升級尚未完成：目前仍使用原有簽署金鑰，接收及指令不受影響；下次開啟 App 會再試一次。", 13f, t.warmHoney, bottomPad = 14))
+            rootContainer.addView(stateNote(Note.WARNING, "金鑰升級尚未完成：目前仍使用原有簽署金鑰，接收及指令不受影響；下次開啟 App 會再試一次。", t))
         when {
             section == "role" -> renderRoleChoice(t)
             section == "parent_setup" && role == "unconfigured" -> renderParentSetup(t)
@@ -3676,7 +3676,7 @@ class MainActivity : Activity() {
         renderScoresSwitch(t)
         sectionTitle("信任好友", t)
         val current = GuardEngine.getTrustedHandles(this)
-        if (current.isEmpty()) rootContainer.addView(label("尚未加入信任好友。請確認對方身份後，再加入名單。", 14f, t.textSecondary, bottomPad = 16))
+        if (current.isEmpty()) rootContainer.addView(stateNote(Note.EMPTY, "尚未加入信任好友。請確認對方身份後，再加入名單。", t))
         for (handle in current) rootContainer.addView(row("users-three", "@$handle", "已獲家長批准 · 點按管理", t) {
             alert().setTitle("移除 @$handle？").setMessage("對方的新訊息將重新依照既有保護規則檢查。")
                 .setNegativeButton("保留", null).setPositiveButton("移除") { _, _ ->
@@ -3827,7 +3827,7 @@ class MainActivity : Activity() {
             if(inConversation)evidenceCursors[evidencePage] else null)
         val scope=GuardEngine.getChannelTopic(this);val session=GuardEngine.captureRelaySession(this);val container=rootContainer
         val results=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};container.addView(results)
-        results.addView(label("正在搜尋本機記錄…",13f,t.textMuted).apply{tag="evidence_loading"})
+        results.addView(stateNote(Note.LOADING,"正在搜尋本機記錄…",t,"evidence_loading"))
         thread {
             try {
                 val contacts:List<ConversationSummary>;val messages:List<JSONObject>;val incomplete:Int
@@ -3849,7 +3849,7 @@ class MainActivity : Activity() {
                                 tag="conversation_${contact.key}";getChildAt(0).tag="evidence_contact_${contact.label.trim().removePrefix("@").lowercase(Locale.ROOT)}"
                             })
                         }
-                        if(contacts.isEmpty())results.addView(label(if(query.section=="review")"沒有符合條件的跟進項目。" else "尚無符合條件的對話記錄。",15f,t.textSecondary,topPad=24,bottomPad=20))
+                        if(contacts.isEmpty())results.addView(stateNote(Note.EMPTY,if(query.section=="review")"沒有符合條件的跟進項目。" else "尚無符合條件的對話記錄。",t))
                     } else {
                         var day=""
                         val shown=if(inConversation)messages.takeLast(30)else messages.take(30)
@@ -3864,9 +3864,9 @@ class MainActivity : Activity() {
                             if(inConversation)results.addView(conversationBubble(message,t))
                             else results.addView(row("info",alertTitle(message.optString("reason")),"${evidenceClock(message)}\n${shortEvidence(evidenceBody(message))}",t){showAlertDetails(message,t)})
                         }
-                        if(shown.isEmpty())results.addView(label("沒有符合條件的訊息。",15f,t.textSecondary,topPad=24,bottomPad=20))
+                        if(shown.isEmpty())results.addView(stateNote(Note.EMPTY,"沒有符合條件的訊息。",t))
                     }
-                    if(incomplete>0)results.addView(label("另有 $incomplete 則訊息尚未完整接收，內容可能缺少。",13f,t.warmHoney,topPad=16))
+                    if(incomplete>0)results.addView(stateNote(Note.WARNING,"另有 $incomplete 則訊息尚未完整接收，內容可能缺少。",t))
                     val paging=LinearLayout(this)
                     if(evidencePage>0)paging.addView(textAction(if(inConversation)"較新訊息" else "上一頁"){evidencePage--;scrollView.scrollTo(0,0);renderUi()},LinearLayout.LayoutParams(0,-2,1f))
                     paging.addView(label("第 ${evidencePage+1} 頁",13f,t.textMuted).apply{gravity=Gravity.CENTER},LinearLayout.LayoutParams(0,dp(48),1f))
@@ -3874,7 +3874,7 @@ class MainActivity : Activity() {
                     results.addView(paging)
                 }
             } catch(_:Exception) {
-                uiHandler.post{if(!isDestroyed && rootContainer===container && GuardEngine.captureRelaySession(this)==session){results.removeAllViews();results.addView(label("未能讀取本機記錄，請保留資料並重試。",14f,t.warmCoral))}}
+                uiHandler.post{if(!isDestroyed && rootContainer===container && GuardEngine.captureRelaySession(this)==session){results.removeAllViews();results.addView(stateNote(Note.ERROR,"未能讀取本機記錄，請保留資料並重試。",t))}}
             }
         }
         rootContainer.addView(textAction("重新同步可用記錄"){thread{GuardEngine.pollChannelOnce(applicationContext,since="all")};Toast.makeText(this,"正在同步；未擷取或中繼站已過期的內容無法復原。",Toast.LENGTH_LONG).show()})
@@ -3917,7 +3917,7 @@ class MainActivity : Activity() {
         showSheet(if(stored.optString("type")=="captured_message")ConversationCapture.displayLabel(stored.optString("conversation_label"),unidentified)else alertTitle(stored.optString("reason"))) { dialog ->
             val reason = stored.optString("reason");val sender = stored.optString("sender","未識別來源")
             addView(label("${evidenceSpeaker(stored)}\n${evidenceClock(stored)}\n${evidenceSource(stored)}",13f,t.textSecondary,bottomPad=16))
-            if(unidentified)addView(label("舊版曾把導覽按鈕當作對話名稱，這些內容可能來自不同對話。原文保留，無法可靠還原對象，請勿據此判定發訊人。",13f,t.warmHoney,bottomPad=14))
+            if(unidentified)addView(stateNote(Note.WARNING,"舊版曾把導覽按鈕當作對話名稱，這些內容可能來自不同對話。原文保留，無法可靠還原對象，請勿據此判定發訊人。",t))
             addView(label(if(reason=="archive_recovery")"原始舊資料未能自動解析，完整原始內容保留於此，可複製後尋求復原協助。" else if(stored.optBoolean("_legacy_partial"))"舊版本記錄，內容可能已截短，無法復原未保留的部分。" else "保留 App 實際擷取的文字，未必涵蓋 Instagram 原始對話的全部內容。",12f,t.textMuted,bottomPad=14))
             addView(label(evidenceBody(stored),16f,t.textPrimary,bottomPad=20).apply{setTextIsSelectable(true)})
             if(reason=="sexual_or_grooming_content")addView(actionButton("尋求協助建議",t.btnSecondaryBg,t.btnSecondaryText) { dialog.dismiss();showSafetyAdvice(stored,t) })
@@ -3951,9 +3951,9 @@ class MainActivity : Activity() {
                         "$field：「${match.optString("phrase")}」"
                     }
                 }.distinct()
-                addView(label("關鍵字相符，不代表已確認誘導或侵害。\n"+phrases.joinToString("；"),13f,t.warmCoral,bottomPad=14))
+                addView(stateNote(Note.ERROR,"關鍵字相符，不代表已確認誘導或侵害。\n"+phrases.joinToString("；"),t))
             }
-            if(stored.optBoolean("possible_duplicate"))addView(label("此項擷取可能與其他來源重複；無法確認為獨立訊息。",12f,t.warmHoney,bottomPad=12))
+            if(stored.optBoolean("possible_duplicate"))addView(stateNote(Note.WARNING,"此項擷取可能與其他來源重複；無法確認為獨立訊息。",t))
             if(stored.optString("_conversation_key").isNotEmpty())addView(textAction("查看此對象的對話") {
                 dialog.dismiss();evidenceSearch="";evidenceSaved=false;openConversation(stored.optString("_conversation_key"),ConversationCapture.displayLabel(stored.optString("_conversation_label",sender),unidentified))
             })
@@ -3984,7 +3984,7 @@ class MainActivity : Activity() {
         showSheet("先了解，再尋求合適協助。") { dialog ->
             addView(label(if(alert==null)"分數只是一個參考訊號，不代表已確認任何事情。請先冷靜了解情況，避免責備孩子。" else "偵測到需留意的關鍵字，不代表已確認誘導或侵害。請先冷靜了解情況，避免責備孩子。",15f,t.textPrimary,bottomPad=18))
             addView(label("保留相關記錄，與孩子確認是否感到不安、被威脅或被要求保密。若有疑慮，請向學校社工、合資格兒童保障或心理專業人士尋求協助。",14f,t.textSecondary,bottomPad=18))
-            addView(label("如在香港遇到即時人身危險，請致電 999；其他地區請使用當地緊急求助號碼。App 不能代替專業評估或緊急支援。",14f,t.warmCoral,bottomPad=18))
+            addView(stateNote(Note.ERROR,"如在香港遇到即時人身危險，請致電 999；其他地區請使用當地緊急求助號碼。App 不能代替專業評估或緊急支援。",t))
             if(alert!=null)addView(actionButton("查看相關記錄",t.btnSecondaryBg,t.btnSecondaryText) {
                 dialog.dismiss();section="alerts";evidenceSearch="";openConversation(alert.optString("_conversation_key").takeIf{it.isNotEmpty()},alert.optString("_conversation_label").ifBlank{alert.optString("sender")})
                 showAlertDetails(alert,t)
@@ -4154,7 +4154,7 @@ class MainActivity : Activity() {
         rootContainer.addView(label(childDisclaimerText(),13f,t.textSecondary,bottomPad=14))
         rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)}.apply{getChildAt(0).tag="full_capture_setup"})
         renderModelImport(t)
-        if (!GuardEngine.hasSecureParentCommands(this)) rootContainer.addView(label("需要更新家庭配對：現有監察仍會運作。新版家長指令與臨時碼需要家長傳送新邀請；請先更新兩部手機，並以新主密碼重新建立家庭。", 14f, t.warmHoney, bottomPad = 20))
+        if (!GuardEngine.hasSecureParentCommands(this)) rootContainer.addView(stateNote(Note.WARNING, "需要更新家庭配對：現有監察仍會運作。新版家長指令與臨時碼需要家長傳送新邀請；請先更新兩部手機，並以新主密碼重新建立家庭。", t))
         val notification = GuardEngine.isNotificationListenerEnabledStatic(this)
         val screen = GuardEngine.isAccessibilityEnabledStatic(this)
         rootContainer.addView(row("bell-simple", "Instagram 通知", if (notification) { if (GuardEngine.cpNotifConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取 IG 通知並加密傳送警報。", t) { openDirectNotificationToggle() })
@@ -4179,16 +4179,22 @@ class MainActivity : Activity() {
     private fun bandColor(token: String, t: ThemeColors): String = when (token) {
         "accentSeafoam" -> t.riskLow; "warmHoney" -> t.warmHoney; "warmCoral" -> t.warmCoral; else -> t.textSecondary
     }
-    private fun iconLine(glyph: String, tint: String, text: String, t: ThemeColors, sizeSp: Float = 15f, tag: String? = null): LinearLayout =
+    private fun iconLine(glyph: String, tint: String, text: String, t: ThemeColors, sizeSp: Float = 15f, tag: String? = null, bold: Boolean = true): LinearLayout =
         LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(4), 0, dp(8))
             addView(icon(glyph, tint, 24))
-            addView(label(text, sizeSp, t.textPrimary, true).apply { setPadding(dp(10), 0, 0, 0); if (tag != null) this.tag = tag }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(label(text, sizeSp, t.textPrimary, bold).apply { setPadding(dp(10), 0, 0, 0); if (tag != null) this.tag = tag }, LinearLayout.LayoutParams(0, -2, 1f))
         }
     private fun noticeCard(t: ThemeColors, hero: Boolean = false, cardTag: String? = null): LinearLayout = makeCard(t, hero).apply { if (cardTag != null) tag = cardTag }
 
     // ================= Scores-only family mode: child's phone =================
     private val modelPickRequest = 9032
+    /** Empty, loading, error and inline-warning states: one notice card with one icon line. The icon carries the kind, so colour is never the only signal. */
+    private enum class Note(val glyph: String) { EMPTY("info"), LOADING("clock"), ERROR("shield-warning"), WARNING("shield-warning") }   // ERROR (coral) also marks danger warnings
+    private fun stateNote(kind: Note, text: String, t: ThemeColors, cardTag: String? = null): LinearLayout = noticeCard(t, cardTag = cardTag).apply {
+        val tint = when (kind) { Note.EMPTY, Note.LOADING -> t.textSecondary; Note.WARNING -> t.warmHoney; Note.ERROR -> t.warmCoral }
+        addView(iconLine(kind.glyph, tint, text, t, 14f, bold = false))
+    }
     private val exportPickRequest = 9033
     private var modelPickAuthorized = false
     private var scoresReadOnly = false
@@ -4446,7 +4452,7 @@ class MainActivity : Activity() {
         backLink()
         val session = GuardEngine.captureRelaySession(this); val container = rootContainer
         val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }; container.addView(results)
-        results.addView(label("正在讀取分數…", 13f, t.textMuted).apply { tag = "scores_loading" })
+        results.addView(stateNote(Note.LOADING, "正在讀取分數…", t, "scores_loading"))
         thread {
             val model = try { readScoresModel() } catch (_: Exception) { null }
             uiHandler.post {
