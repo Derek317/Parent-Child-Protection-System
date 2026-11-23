@@ -389,53 +389,80 @@ object FamilySecurity {
         fun hash(text: String) = encoder.encodeToString(MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)))
         return "igguard-child-record-v1\n${hash(parentPublicKey)}\n${hash(childPublicKey)}\n$record".toByteArray(Charsets.UTF_8)
     }
-    /** The two wrapper fields for the exact record text [record]; the caller adds `type:"alert"` and `event_id`. */
+    /** The one text form of a P-256 public key that is hashed into child-record signatures: base64url WITH padding, as [encoder]
+     * writes it (ChildSigningKey.publicKey, newSigningIdentity). Padded or unpadded input of the same key gives the same result;
+     * null unless the text is a canonical SPKI P-256 key (PairingCrypto.p256PublicKey). */
+    fun canonicalKeyText(text: String): String? = PairingCrypto.p256PublicKey(text)?.let { encoder.encodeToString(it.encoded) }
+    private fun canonicalKey(text: String) = requireNotNull(canonicalKeyText(text)) { "Invalid P-256 key text" }
+
+    /** The two wrapper fields for the exact record text [record]; the caller adds `type:"alert"` and `event_id`.
+     * P and K are hashed in their canonical text form whatever form [parentPublicKey] is stored in. */
     fun signChildRecord(record: String, parentPublicKey: String, child: ChildSigningKey): JSONObject =
         JSONObject().put("child_signed", record)
-            .put("child_sig", encoder.encodeToString(signChildBytes(childRecordSignedBytes(record, parentPublicKey, child.publicKey), child.alias)))
+            .put("child_sig", encoder.encodeToString(signChildBytes(childRecordSignedBytes(record, canonicalKey(parentPublicKey), canonicalKey(child.publicKey)), child.alias)))
 
     /** A verified child record. [id] is event_id (alert, captured_message) or command_id (control records); [timeMs] is the field checked for age. */
     data class ChildRecord(val record: JSONObject, val type: String, val id: String, val timeMs: Long)
+    /** Why a record whose signature DID verify was still not accepted. */
+    enum class ChildRecordRejection { OUT_OF_WINDOW, UNKNOWN_TYPE, UNKNOWN_REASON, BAD_ID, ID_MISMATCH, TOO_LARGE, MALFORMED_RECORD }
+    sealed class ChildRecordResult {
+        data class Verified(val child: ChildRecord) : ChildRecordResult()
+        /** child_signed/child_sig missing, not strings, over the size bound, undecodable, or not a valid signature under P and K. */
+        object BadSignature : ChildRecordResult()
+        /** Signature valid under the pinned key; the record broke a field, size or time rule. Carries no record content. */
+        data class Rejected(val reason: ChildRecordRejection) : ChildRecordResult()
+        /** The caller's own P or K text is not a P-256 key: nothing about the frame was checked. */
+        object InvalidKey : ChildRecordResult()
+    }
     private val childContentTypes = setOf("alert", "captured_message")
     private val childRecordControlTypes = setOf("capture_ack", "sync_child_handle", "scores_mode_report", "pair_hello")
     /** Every reason a 5.2 child sends in an alert: heartbeats, tamper/unlock notices, tests, and message categories. */
-    private val childAlertReasons = setOf("heartbeat_ok", "pairing_verified", "test_alert", "tamper_attempt", "unlock_used",
+    internal val childAlertReasons = setOf("heartbeat_ok", "pairing_verified", "test_alert", "tamper_attempt", "unlock_used",
         "stranger_message", "sexual_or_grooming_content", "flagged_contact_follow_up")
-    private val capturedReasons = setOf("conversation_context", "stranger_message", "sexual_or_grooming_content", "flagged_contact_follow_up")
+    internal val capturedReasons = setOf("conversation_context", "stranger_message", "sexual_or_grooming_content", "flagged_contact_follow_up")
     private val childRecordId = Regex("[A-Za-z0-9:_-]{1,160}")
     private const val CHILD_RECORD_MAX = 1_048_576 // AlertFrames' transport bound: captured messages and scores reports exceed 16 KiB
     private const val CHILD_CONTROL_MAX = 16_384
 
     /** Signature, type, id and time only; replay and ordering state stay with the caller. Null on any deviation. */
-    fun readChildRecord(wrapper: JSONObject, childPublicKey: String, parentPublicKey: String, now: Long): ChildRecord? = try {
+    fun readChildRecord(wrapper: JSONObject, childPublicKey: String, parentPublicKey: String, now: Long): ChildRecord? =
+        (checkChildRecord(wrapper, childPublicKey, parentPublicKey, now) as? ChildRecordResult.Verified)?.child
+
+    /** As [readChildRecord], telling a bad signature apart from a genuine record outside the rules. Sizes are bounded before the
+     * hash, and the signed text is not parsed until its signature has verified. A record may be dated up to
+     * RiskLimits.REPORT_FUTURE_MS (24 h) ahead of [now]. Never throws. */
+    fun checkChildRecord(wrapper: JSONObject, childPublicKey: String, parentPublicKey: String, now: Long): ChildRecordResult {
+        val k = canonicalKeyText(childPublicKey) ?: return ChildRecordResult.InvalidKey
+        val p = canonicalKeyText(parentPublicKey) ?: return ChildRecordResult.InvalidKey
         val text = wrapper.opt("child_signed") as? String
         val signature = wrapper.opt("child_sig") as? String
         if (text == null || signature == null || text.length > CHILD_RECORD_MAX || signature.length > 128 ||
-            !validPublicKey(parentPublicKey) || !PairingCrypto.validP256Key(childPublicKey) ||
-            !verifySigned(childRecordSignedBytes(text, parentPublicKey, childPublicKey), signature, childPublicKey)) null
-        else {
-            val record = JSONObject(text)
-            val type = record.opt("type") as? String ?: ""
-            val control = type in childRecordControlTypes
-            val id = record.opt(if (control) "command_id" else "event_id") as? String ?: ""
-            val timeField = when (type) { "scores_mode_report" -> "sent_at_ms"; "captured_message" -> "captured_at_ms"; else -> "ts_ms" }
-            val time = when (val value = record.opt(timeField)) { is Int -> value.toLong(); is Long -> value; else -> 0L }
-            val maxAge = when (type) {
-                "alert", "captured_message" -> 8 * 86_400_000L
-                "scores_mode_report" -> RiskLimits.REPORT_HORIZON_MS
-                else -> 86_400_000L
-            }
-            val valid = (control || type in childContentTypes) && childRecordId.matches(id) &&
-                wrapper.opt("event_id") == (if (control) "control:$id" else id) &&
-                time > 0 && time <= now + 120_000L && time >= now - maxAge &&
-                (type == "scores_mode_report" || !control || text.length <= CHILD_CONTROL_MAX) &&
-                when (type) {
-                    "alert" -> (record.opt("reason") as? String) in childAlertReasons
-                    "captured_message" -> (record.opt("reason") as? String) in capturedReasons
-                    "pair_hello" -> record.opt("k") == childPublicKey && PairingCrypto.validP256Key(record.opt("ec") as? String)
-                    else -> true
-                }
-            if (valid) ChildRecord(record, type, id, time) else null
+            !(try { verifySigned(childRecordSignedBytes(text, p, k), signature, k) } catch (_: Exception) { false })) return ChildRecordResult.BadSignature
+        fun rejected(reason: ChildRecordRejection) = ChildRecordResult.Rejected(reason)
+        val record = try { JSONObject(text) } catch (_: Exception) { return rejected(ChildRecordRejection.MALFORMED_RECORD) }
+        val type = record.opt("type") as? String ?: ""
+        val control = type in childRecordControlTypes
+        if (!control && type !in childContentTypes) return rejected(ChildRecordRejection.UNKNOWN_TYPE)
+        val id = record.opt(if (control) "command_id" else "event_id") as? String ?: ""
+        if (!childRecordId.matches(id)) return rejected(ChildRecordRejection.BAD_ID)
+        // Checked before the time and reason rules: a re-wrapped genuine record is reported as such, whatever else it breaks.
+        if (wrapper.opt("event_id") != (if (control) "control:$id" else id)) return rejected(ChildRecordRejection.ID_MISMATCH)
+        if (type != "scores_mode_report" && control && text.length > CHILD_CONTROL_MAX) return rejected(ChildRecordRejection.TOO_LARGE)
+        val timeField = when (type) { "scores_mode_report" -> "sent_at_ms"; "captured_message" -> "captured_at_ms"; else -> "ts_ms" }
+        val time = when (val value = record.opt(timeField)) { is Int -> value.toLong(); is Long -> value; else -> return rejected(ChildRecordRejection.MALFORMED_RECORD) }
+        val maxAge = when (type) {
+            "alert", "captured_message" -> 8 * 86_400_000L
+            "scores_mode_report" -> RiskLimits.REPORT_HORIZON_MS
+            else -> 86_400_000L
         }
-    } catch (_: Exception) { null }
+        if (time <= 0 || time > now + RiskLimits.REPORT_FUTURE_MS || time < now - maxAge) return rejected(ChildRecordRejection.OUT_OF_WINDOW)
+        val fieldsOk = when (type) {
+            "alert" -> (record.opt("reason") as? String) in childAlertReasons
+            "captured_message" -> (record.opt("reason") as? String) in capturedReasons
+            "pair_hello" -> canonicalKeyText(record.opt("k") as? String ?: "") == k && PairingCrypto.validP256Key(record.opt("ec") as? String)
+            else -> true
+        }
+        if (!fieldsOk) return rejected(if (type == "pair_hello") ChildRecordRejection.MALFORMED_RECORD else ChildRecordRejection.UNKNOWN_REASON)
+        return ChildRecordResult.Verified(ChildRecord(record, type, id, time))
+    }
 }

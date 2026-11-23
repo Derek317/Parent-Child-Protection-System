@@ -211,9 +211,9 @@ class PairingCryptoTest {
             wrap(alert("remote_reset")), wrap(alert().apply { remove("reason") }), wrap(captured().put("reason", "heartbeat_ok")),
             wrap(alert().put("event_id", "has space")), wrap(alert().put("event_id", "a".repeat(161))), wrap(alert().put("event_id", "")),
             wrap(control("capture_ack").put("command_id", "")), wrap(control("capture_ack").put("command_id", "bad/id")),
-            wrap(alert(ts = now + 120_001L)), wrap(alert(ts = now - 8 * 86_400_000L - 1)), wrap(alert(ts = 0)), wrap(alert().put("ts_ms", now.toString())),
+            wrap(alert(ts = now + RiskLimits.REPORT_FUTURE_MS + 1)), wrap(alert(ts = now - 8 * 86_400_000L - 1)), wrap(alert(ts = 0)), wrap(alert().put("ts_ms", now.toString())),
             wrap(captured(now - 8 * 86_400_000L - 1)), wrap(captured().apply { remove("captured_at_ms") }),
-            wrap(scores(now - RiskLimits.REPORT_HORIZON_MS - 1)), wrap(scores(now + 120_001L)),
+            wrap(scores(now - RiskLimits.REPORT_HORIZON_MS - 1)), wrap(scores(now + RiskLimits.REPORT_FUTURE_MS + 1)),
             wrap(control("capture_ack", now - 86_400_000L - 1)), wrap(control("sync_child_handle", now - 86_400_000L - 1)), wrap(control("pair_hello").put("k", child.publicKey).put("ec", EC).put("ts_ms", now - 86_400_000L - 1)),
             wrap(control("pair_hello").put("k", attacker.publicKey).put("ec", EC)), wrap(control("pair_hello").put("k", child.publicKey).put("ec", "garbage")),
             wrap(control("capture_ack").put("pad", "x".repeat(16_384))),                   // small control record over 16 KiB
@@ -232,7 +232,7 @@ class PairingCryptoTest {
         assertNotNull(read(w))
         assertNull(read(w, p = otherParent.publicKey))                    // replayed into another family
         assertNull(read(w, k = otherChild.publicKey))                     // claimed for another child
-        assertNull(read(w, k = child.publicKey.trimEnd('=')))             // same key, different pinned text: the hash binds the text
+        assertNotNull(read(w, k = child.publicKey.trimEnd('=')))          // same key, unpadded pinned text: both normalise to the padded form
         assertNull(read(wrap(alert(), p = otherParent.publicKey)))        // signed for another family, read in this one
     }
 
