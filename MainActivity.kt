@@ -4069,6 +4069,7 @@ class MainActivity : Activity() {
     private fun renderChildOverview(t: ThemeColors) {
         rootContainer.addView(icon("plant", t.accentSeafoam, 42))
         heading("安心上網，\n自在成長。", "給你探索的空間，也給家人一份安心。", t)
+        renderScoresDecisionCards(t)
         val notification = GuardEngine.isNotificationListenerEnabledStatic(this) && GuardEngine.cpNotifConnected
         val screen = GuardEngine.isAccessibilityEnabledStatic(this) && GuardEngine.cpAccConnected
         val card = makeCard(t)
@@ -4218,7 +4219,8 @@ class MainActivity : Activity() {
     } }
     private val exportListener: () -> Unit = { uiHandler.post { if (!isDestroyed && activityVisible && section == "overview") renderUi() } }
 
-    private fun renderScoresChildBlocks(t: ThemeColors) {
+    // The two cards that ask the child to decide; drawn right under the heading so they show without scrolling.
+    private fun renderScoresDecisionCards(t: ThemeColors) {
         val s = RiskLocal.status(this)
         if (RiskLocal.captureHeld(this)) {
             val card = noticeCard(t, true, "scores_hold_card")
@@ -4228,12 +4230,6 @@ class MainActivity : Activity() {
             card.addView(actionButton(ScoresChildCopy.HOLD_ALLOW, t.btnSecondaryBg, t.btnSecondaryText, critical = true) { RiskLocal.releaseCaptureHold(this); ScoresEngineBridge.acknowledgeNotice(this, "off"); renderUi() }.apply { tag = "scores_hold_agree" })
             rootContainer.addView(card)
         }
-        ScoresEngineBridge.pendingNotice(this)?.let {
-            val card = noticeCard(t, true, "scores_change_card")
-            card.addView(label(ScoresChildCopy.CHANGE_CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 6))
-            card.addView(textAction(ScoresChildCopy.CHANGE_CARD_ACTION) { navigateTo("scores_change") })
-            rootContainer.addView(card)
-        }
         if (s.pendingPolicy) {
             val card = noticeCard(t, true, "scores_consent_card")
             val again = s.consent == "reconsent"
@@ -4241,6 +4237,15 @@ class MainActivity : Activity() {
             card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_TITLE else if (again) ScoresChildCopy.RECONSENT_CARD_TITLE else ScoresChildCopy.CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 8))
             card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_BODY else if (again) ScoresChildCopy.RECONSENT_CARD_BODY else ScoresChildCopy.CARD_BODY, 14f, t.textSecondary, bottomPad = 8))
             card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") }.apply { tag = "scores_consent_open" })
+            rootContainer.addView(card)
+        }
+    }
+    private fun renderScoresChildBlocks(t: ThemeColors) {
+        val s = RiskLocal.status(this)
+        ScoresEngineBridge.pendingNotice(this)?.let {
+            val card = noticeCard(t, true, "scores_change_card")
+            card.addView(label(ScoresChildCopy.CHANGE_CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 6))
+            card.addView(textAction(ScoresChildCopy.CHANGE_CARD_ACTION) { navigateTo("scores_change") })
             rootContainer.addView(card)
         }
         if (s.policyEnabled || s.consent != "none") renderScoresStatus(s, t)

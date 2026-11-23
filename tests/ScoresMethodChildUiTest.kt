@@ -116,6 +116,25 @@ class ScoresMethodChildUiTest {
             assertTrue(text.contains(ScoresChildCopy.METHOD_CARD_BODY.lineSequence().first())); assertFalse(text.contains(ScoresChildCopy.UPLOAD_ON_NOTE.lineSequence().first()))
         } finally { c.pause().stop().destroy() }
     }
+    @Test fun theCardsThatAskTheChildToDecideAreDrawnAboveTheStatusCard() {
+        installModel()
+        val statusTitles = setOf("擷取已停止，等你決定", "手動上載 · 不讀取 Instagram", "你的保護已準備好", "完成設定，讓保護正常運作。")
+        fun check(tag: String) {
+            val c = launch("overview")
+            try {
+                val root = MainActivity::class.java.getDeclaredField("rootContainer").apply { isAccessible = true }.get(c.get()) as android.view.ViewGroup
+                val kids = (0 until root.childCount).map { root.getChildAt(it) }
+                val decision = kids.indexOfFirst { it.tag == tag }
+                val status = kids.indexOfFirst { k -> UiSupport.texts(k).any { it in statusTitles } }
+                assertTrue("$tag is drawn", decision >= 0); assertTrue("status card is drawn", status >= 0)
+                assertTrue("$tag ($decision) comes before the status card ($status)", decision < status)
+            } finally { c.pause().stop().destroy() }
+        }
+        RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD)
+        check("scores_consent_card")
+        assertTrue(RiskLocal.accept(ctx)); RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), false)
+        check("scores_hold_card")
+    }
     private fun exportJson(): ByteArray {
         val now = System.currentTimeMillis()
         val messages = org.json.JSONArray().put(org.json.JSONObject().put("sender_name", "Bea Friend").put("timestamp_ms", now - 3_600_000L).put("content", "see you tomorrow"))
