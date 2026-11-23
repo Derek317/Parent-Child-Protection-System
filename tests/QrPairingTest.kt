@@ -199,6 +199,27 @@ class QrPairingTest {
         assertFalse(TestKeyStore.privateKeys.containsKey(second.childKeyAlias))
     }
 
+    /** Key rotation (rotateKeyAndNotifyChild) ends in setFamilyToken(new, preserveFamilyHistory = true) on both phones: the pin and
+     *  K survive it, and the rotated room is registered and joined with v2 proofs carrying the same K. */
+    @Test fun aRotatedFamilyKeepsTheChildKeyAndUsesV2InItsNewRoom() {
+        val r = QrPairing.pairChild(ctx)
+        val rotated = java.util.UUID.randomUUID().toString()
+        GuardEngine.setFamilyToken(ctx, rotated, preserveFamilyHistory = true)
+        assertEquals(r.childKeyAlias, GuardEngine.childKeyAlias(ctx))
+        val child = JSONObject(String(java.util.Base64.getUrlDecoder().decode(GuardEngine.relayAuthorization(ctx, rotated).removePrefix("IGGuard "))))
+        assertEquals(2, child.getInt("v")); assertEquals(r.childKey.trimEnd('='), child.getString("child_key"))
+        prefs.edit().clear().commit()
+        parentPhone()
+        val run = parentUpToDigits()
+        assertTrue(run.link.enterDigits((run.child.state as CS.ShowingDigits).digits)); run.child.confirm(now + 3_000); assertTrue(run.link.accept())
+        val pinned = GuardEngine.pinnedChildKey(ctx)!!
+        val next = java.util.UUID.randomUUID().toString()
+        GuardEngine.setFamilyToken(ctx, next, preserveFamilyHistory = true)
+        assertEquals(pinned, GuardEngine.pinnedChildKey(ctx))
+        val parent = JSONObject(String(java.util.Base64.getUrlDecoder().decode(GuardEngine.relayAuthorization(ctx, next).removePrefix("IGGuard "))))
+        assertEquals(2, parent.getInt("v")); assertEquals(pinned.trimEnd('='), parent.getString("child_key"))
+    }
+
     @Test fun resetAndRoleChangeDeleteTheChildKey() {
         val r = QrPairing.pairChild(ctx)
         GuardEngine.setRole(ctx, "unconfigured")

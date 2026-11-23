@@ -21,7 +21,7 @@ class ProtocolRoundTripTest {
     @Before fun reset(){prefs.edit().clear().commit();GuardEngine.pauseTamperUntilMs=0}
     private fun pairedChild():Pair<String,String> {
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
-        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
+        val invite=QrPairing.legacyInvite(ctx)
         val privateKey=FamilySecurity.loadOrCreateParentIdentity(ctx,null,invite.parentPublicKey).privateKey
         simulateLeavingParentRole()
         assertTrue(GuardEngine.applyPairing(ctx,invite))
@@ -50,7 +50,7 @@ class ProtocolRoundTripTest {
     }
     @Test fun parentAndChildShowSameCodeAndChangingAuthorityChangesIt() {
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
-        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
+        val invite=QrPairing.legacyInvite(ctx)
         val parentCode=GuardEngine.getSafetyCode(ctx)
         assertEquals(parentCode,GuardEngine.getSafetyCode(ctx))
         val forged=invite.copy(parentPublicKey=FamilySecurity.newSigningIdentity().publicKey)

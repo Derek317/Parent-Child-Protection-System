@@ -37,36 +37,28 @@ class RecoveryFlowTest {
     private val inviteKey by lazy { FamilySecurity.newSigningIdentity().publicKey }
     private fun inviteIntent()=Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?version=43&token=01234567-89ab-cdef-0123-456789abcdef&pw="+
         FamilySecurity.encode(FamilySecurity.passwordVerifier("ParentPassword928!"))+"&parent="+inviteKey))
-    @Test fun externalInviteRequiresExplicitAcceptanceAndIsConsumed() {
+    @Test fun externalInviteIsRefusedAndConsumed() {
         GuardEngine.setRole(ctx,"unconfigured")
         val c=Robolectric.buildActivity(MainActivity::class.java,inviteIntent()).setup()
         val a=c.get();assertEquals("unconfigured",GuardEngine.getRole(ctx))
         assertNull(a.intent.data)
         val d=ShadowDialog.getLatestDialog()
-        all(d.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="確認配對並切換為子女手機"}.performClick()
-        assertEquals("child",GuardEngine.getRole(ctx));assertFalse(GuardEngine.isTemporarilyUnlocked(ctx))
+        assertTrue(all(d.window!!.decorView).any{it.tag=="invite_refused"})
+        assertTrue(all(d.window!!.decorView).filterIsInstance<Button>().none{it.text.toString()=="確認配對並切換為子女手機"})
+        assertEquals("unconfigured",GuardEngine.getRole(ctx));assertFalse(GuardEngine.isTemporarilyUnlocked(ctx))
         c.destroy()
     }
-    @Test fun manualInviteRequiresBoundCodeConfirmationBeforeChangingFamily() {
-        GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
-        val text=GuardEngine.buildPairingInviteText(ctx)
-        val invitedToken=GuardEngine.getOrCreateFamilyToken(ctx)
-        val parentCode=GuardEngine.getSafetyCode(ctx)
+    /** The child setup page has no paste box any more: the only way in is the QR scan, which asks for the camera there and only there. */
+    @Test fun childSetupOffersOnlyTheQrScanAndAsksForTheCameraThere() {
         GuardEngine.setRole(ctx,"unconfigured")
-        // Same device plays both phones: a real second phone holds no parent secrets.
-        LocalVault.preferences(ctx).edit().remove("parent_master_password").remove("parent_share_verifier").remove("parent_signing_public").commit()
-        GuardEngine.setFamilyToken(ctx,java.util.UUID.randomUUID().toString())
-        val previous=GuardEngine.getOrCreateFamilyToken(ctx)
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         MainActivity::class.java.getDeclaredMethod("navigateTo",String::class.java).apply{isAccessible=true}.invoke(a,"child_setup")
-        all(a.window.decorView).filterIsInstance<android.widget.EditText>().first().setText(text)
-        all(a.window.decorView).filterIsInstance<Button>().first{it.text.toString()=="連結家庭"}.performClick()
+        assertTrue("no paste field",all(a.window.decorView).filterIsInstance<android.widget.EditText>().isEmpty())
+        assertTrue(all(a.window.decorView).filterIsInstance<Button>().none{it.text.toString()=="連結家庭" || it.text.toString().contains("剪貼簿")})
+        assertNull("not asked before the scan screen",org.robolectric.Shadows.shadowOf(a).lastRequestedPermission)
+        all(a.window.decorView).first{it.tag=="scan_qr"}.performClick()
+        assertEquals(android.Manifest.permission.CAMERA,org.robolectric.Shadows.shadowOf(a).lastRequestedPermission.requestedPermissions.single())
         assertEquals("unconfigured",GuardEngine.getRole(ctx))
-        assertEquals(previous,GuardEngine.getOrCreateFamilyToken(ctx))
-        val confirmation=ShadowDialog.getLatestDialog()
-        assertTrue(all(confirmation.window!!.decorView).filterIsInstance<android.widget.TextView>().any{it.text.toString()==parentCode})
-        all(confirmation.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="確認配對並切換為子女手機"}.performClick()
-        assertEquals("child",GuardEngine.getRole(ctx));assertEquals(invitedToken,GuardEngine.getOrCreateFamilyToken(ctx))
         c.destroy()
     }
     @Test fun unrelatedExternalUriCannotReplaceFamily() {

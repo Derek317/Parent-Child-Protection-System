@@ -173,10 +173,9 @@ class FirstLaunchConsentTest {
             assertFalse(CloudRelay.publishBlocking(ctx, token, "test", "ciphertext", "urgent").accepted)
         } finally { connection.close(); server.shutdown() }
     }
-    @Test fun pairingDeepLinkIsHeldUntilConsentAndStillRequiresPairingConfirmation() {
+    @Test fun pairingDeepLinkIsHeldUntilConsentAndThenRefused() {
         val invite = FamilySecurity.Invite(UUID.randomUUID().toString(), FamilySecurity.passwordVerifier("synthetic928"), FamilySecurity.newSigningIdentity().publicKey)
         val link = "igguard://pair?version=43&token=${invite.token}&pw=${FamilySecurity.encode(invite.passwordVerifier)}&parent=${invite.parentPublicKey}"
-        assertNotNull(GuardEngine.parsePairingString(link))
         val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(link))
         val controller = Robolectric.buildActivity(MainActivity::class.java, intent).setup()
         assertNotNull(root(controller.get()).findViewWithTag<View>("consent_accept"))
@@ -188,6 +187,8 @@ class FirstLaunchConsentTest {
         assertEquals("unconfigured", GuardEngine.getRole(ctx))
         val dialog = MainActivity::class.java.getDeclaredField("activeSheet").apply { isAccessible = true }.get(accepted.get()) as android.app.Dialog
         assertTrue(dialog.isShowing)
+        // After consent the held link is handled: refused with the plain message (design 2.8), never paired.
+        assertNotNull(dialog.window!!.decorView.findViewWithTag<View>("invite_refused"))
         accepted.pause().stop().destroy()
     }
     @Test fun existingQueuesAreHeldWithoutRetryMutationBeforeConsent() {

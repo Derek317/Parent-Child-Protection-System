@@ -177,24 +177,19 @@ class ParentFreshAuthTest {
             assertEquals(7,FamilyEvidence(ctx).use{it.retentionPreview(scope).retentionDays})
         } finally {c.pause().stop().destroy()}
     }
-    @Test fun sharingOrCopyingTheInviteAndGeneratingAnUnlockCodeNeedFreshAuthentication() {
+    @Test fun addingAChildAndGeneratingAnUnlockCodeNeedFreshAuthentication() {
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
-        val clip=ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         try {
             call(a,"navigateTo","family")
             drain(a)
-            all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("邀請子女配對")==true}.performClick();idle()
-            val sheet=ShadowDialog.getLatestDialog()
-            assertFalse("the invite is not copied before authentication",clip.hasPrimaryClip())
-            button(sheet,"複製配對訊息").performClick();idle()
-            assertTrue(prompted(a));assertFalse(clip.hasPrimaryClip())
-            answer(a,false);assertFalse(clip.hasPrimaryClip())
-            button(openInvite(a),"複製配對訊息").performClick();idle()
-            assertTrue(prompted(a));answer(a,true)
-            assertTrue(clip.primaryClip!!.getItemAt(0).text.toString().contains("igguard://pair"))
-            clip.setPrimaryClip(android.content.ClipData.newPlainText("x","y"))
-            button(openInvite(a),"傳送配對邀請").performClick();idle()
-            assertTrue("sharing needs it too",prompted(a));assertTrue(generateSequence{shadowOf(a).nextStartedActivity}.none{it.action==Intent.ACTION_CHOOSER});answer(a,false)
+            fun pairingSheet()=ShadowDialog.getShownDialogs().any{it.isShowing && texts(it).any{t->t.contains("Add a child")}}
+            all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("加入子女")==true}.performClick();idle()
+            assertTrue("the QR sheet needs a fresh device authentication",prompted(a));assertFalse(pairingSheet())
+            answer(a,false);assertFalse("no QR without it",pairingSheet())
+            all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("加入子女")==true}.performClick();idle()
+            assertTrue(prompted(a));answer(a,true);idle()
+            assertTrue(pairingSheet())
+            ShadowDialog.getShownDialogs().forEach{it.dismiss()}
             // unlock code: no code is generated or pushed before authentication
             prefs.edit().remove("synced_15m_code").commit()
             all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("15 分鐘臨時解鎖")==true}.performClick();idle()
@@ -202,11 +197,6 @@ class ParentFreshAuthTest {
             answer(a,true)
             assertNotNull(prefs.getString("synced_15m_code",null))
         } finally {c.pause().stop().destroy()}
-    }
-    private fun openInvite(a:MainActivity):android.app.Dialog{
-        ShadowDialog.getShownDialogs().forEach{it.dismiss()}
-        all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("邀請子女配對")==true}.performClick();idle()
-        return ShadowDialog.getLatestDialog()
     }
 
     @Test fun legacyRetentionAdoptionNeedsFreshAuthentication() {

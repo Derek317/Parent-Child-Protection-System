@@ -28,7 +28,7 @@ class ChildNoticeTest {
     @Before fun setUp() {
         prefs.edit().clear().commit();ctx.deleteDatabase("family_evidence.db")
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
-        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
+        val invite=QrPairing.legacyInvite(ctx)
         GuardEngine.setRole(ctx,"unconfigured")
         prefs.edit().remove("parent_master_password").remove("parent_share_verifier").remove("parent_signing_public").commit()
         assertTrue(GuardEngine.applyPairing(ctx,invite))

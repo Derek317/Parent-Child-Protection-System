@@ -42,7 +42,7 @@ class UnlockClockTest {
     private fun provisionCode(code:String) {
         prefs.edit().clear().commit();GuardEngine.pauseTamperUntilMs=0
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
-        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
+        val invite=QrPairing.legacyInvite(ctx)
         val key=FamilySecurity.loadOrCreateParentIdentity(ctx,null,invite.parentPublicKey).privateKey
         GuardEngine.setRole(ctx,"unconfigured")
         prefs.edit().remove("parent_master_password").remove("parent_share_verifier").remove("parent_signing_public").commit()

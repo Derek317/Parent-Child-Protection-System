@@ -115,14 +115,8 @@ class ParentLockedViewsTest {
             assertSensitive("message text",marker)
             clip.setPrimaryClip(android.content.ClipData.newPlainText("x","y"))
             details.dismiss()
-            // invite
+            // (the invitation copy was removed with chat invitations; QR pairing copies nothing)
             MainActivity::class.java.getDeclaredMethod("navigateTo",String::class.java).apply{isAccessible=true}.invoke(a,"family")
-            all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("邀請子女配對")==true}.performClick()
-            val invite=ShadowDialog.getLatestDialog()
-            all(invite.window!!.decorView).filterIsInstance<Button>().first{it.text.toString()=="複製配對訊息"}.performClick()
-            reauthenticate(a)
-            assertSensitive("invite","igguard://pair")
-            clip.setPrimaryClip(android.content.ClipData.newPlainText("x","y"))
             // 15-minute unlock code
             all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("15 分鐘臨時解鎖")==true}.performClick()
             reauthenticate(a)

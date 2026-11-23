@@ -33,28 +33,23 @@ class PairingGuardTest {
     private fun foreignInvite()=FamilySecurity.Invite(UUID.randomUUID().toString(),FamilySecurity.passwordVerifier("OtherParent928!"),FamilySecurity.newSigningIdentity().publicKey)
     private fun link(i:FamilySecurity.Invite)=Uri.parse("igguard://pair?version=43&token=${i.token}&pw=${FamilySecurity.encode(i.passwordVerifier)}&parent=${i.parentPublicKey}")
 
-    @Test fun childConfirmationShowsTheSameSafetyPicturesAsTheParent() {
+    /** Design 2.8: a new, unpaired phone refuses a full V43 invitation link with the plain message, and stays unpaired. */
+    @Test fun aV43LinkOnAnUnpairedPhoneIsRefusedWithThePlainMessage() {
         AppConsent.accept(ctx,AppConsent.acknowledgments)
-        GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
-        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
-        val parentPictures=GuardEngine.getSafetyEmojis(ctx)
-        prefs.edit().clear().commit()   // the same process now plays the unpaired child phone
+        val invite=foreignInvite()
         val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,link(invite))).setup()
         try {
             val sheet=ShadowDialog.getLatestDialog().window!!.decorView
-            assertEquals(parentPictures,sheet.findViewWithTag<android.widget.TextView>("pairing_safety_emojis").text.toString())
+            assertNotNull("the refusal is shown",sheet.findViewWithTag<View>("invite_refused"))
+            assertTrue(all(sheet).filterIsInstance<android.widget.TextView>().any{it.text.toString().contains("請在家長手機選擇「加入子女」")})
+            assertTrue("no confirmation button",all(sheet).filterIsInstance<Button>().none{it.text.toString().contains("確認配對") || it.text.toString().contains("加入此家庭")})
+            assertEquals("unconfigured",GuardEngine.getRole(ctx));assertNotEquals(invite.token,prefs.getString("family_uuid_token",null))
         } finally {c.pause().stop().destroy()}
     }
     @Test fun newPairingRefusesAnInviteWithoutTheParentKey() {
         AppConsent.accept(ctx,AppConsent.acknowledgments)
         val token="01234567-89ab-cdef-0123-456789abcdef"
         val keyed=foreignInvite().copy(token=token)
-        val pw=FamilySecurity.encode(keyed.passwordVerifier)
-        for (raw in listOf("[IGGUARD-PAIR-V42:$token:$pw]", "[IGGUARD-PAIR:$token:ParentPassword928]",
-                "igguard://pair?token=$token&pin=ParentPassword928", "igguard://pair?token=$token&pw=$pw",
-                "igguard://pair?version=42&token=$token&pw=$pw", "igguard://pair?version=43&token=$token&pw=$pw&parent="))
-            assertNull(raw,GuardEngine.parsePairingString(raw))
-        assertEquals(keyed,GuardEngine.parsePairingString(link(keyed).toString()))
         assertFalse("applyPairing refuses a keyless invite too",GuardEngine.applyPairing(ctx,keyed.copy(parentPublicKey="")))
         assertEquals("unconfigured",GuardEngine.getRole(ctx))
         val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?token=$token&pin=ParentPassword928"))).setup()
@@ -102,7 +97,7 @@ class PairingGuardTest {
     // ---- F2(a): a temporary unlock alone never allows re-pairing a child phone ----
     private fun pairedChild():FamilySecurity.Invite {
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
-        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
+        val invite=QrPairing.legacyInvite(ctx)
         GuardEngine.setRole(ctx,"unconfigured")
         prefs.edit().remove("parent_master_password").remove("parent_share_verifier").remove("parent_signing_public").commit()
         assertTrue(GuardEngine.applyPairing(ctx,invite));assertEquals("child",GuardEngine.getRole(ctx))
@@ -114,19 +109,17 @@ class PairingGuardTest {
         assertFalse(GuardEngine.applyPairing(ctx,foreignInvite()))
         assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx));assertEquals(first.parentPublicKey,prefs.getString("parent_command_public_key",null))
     }
-    @Test fun deepLinkOnUnlockedChildAsksForTheParentPasswordAndDoesNotSwitchWithoutIt() {
+    @Test fun deepLinkOnUnlockedChildIsRefusedAndDoesNotSwitch() {
         pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx)
         GuardEngine.grantTemporaryUnlock(ctx,15*60_000L)
         val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,link(foreignInvite()))).setup()
         try {
-            val sheet=ShadowDialog.getLatestDialog()
-            val views=all(sheet.window!!.decorView)
-            assertTrue("the confirmation must ask for the parent password",views.any{it is android.widget.EditText})
-            views.filterIsInstance<Button>().first{it.text.toString().contains("確認配對")}.performClick()
+            val views=all(ShadowDialog.getLatestDialog().window!!.decorView)
+            assertTrue(views.any{it.tag=="invite_refused"})
+            assertTrue("nothing to confirm",views.filterIsInstance<Button>().none{it.text.toString().contains("確認配對")})
             assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx));assertEquals("child",GuardEngine.getRole(ctx))
         } finally {c.pause().stop().destroy()}
     }
-
     @After fun clearHook(){GuardEngine.beforeFamilySwitch=null}
     private fun queuedAlerts(token:String,topic:String):List<org.json.JSONObject> =
         FamilyEvidence(ctx).use{it.due(topic,Long.MAX_VALUE)}.mapNotNull{GuardEngine.decryptPayload(token,it.wire)}
@@ -200,24 +193,29 @@ class PairingGuardTest {
         assertEquals(1,FamilyEvidence(ctx).use{it.pendingCount(scope)})
         assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
     }
-    @Test fun deepLinkConfirmationRepairsOnlyWithTheRightPassword() {
-        pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx);val other=foreignInvite()
-        val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,link(other))).setup()
+    /** The QR join sheet on a paired child (C3): the parent password gates the join press, as the 5.2 re-pair did. */
+    @Test fun qrJoinOnAPairedChildStartsOnlyWithTheRightPassword() {
+        pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx)
+        val parent=FamilySecurity.newSigningIdentity()
+        val qr=QrPairing.bareParent(parent).start(parent.publicKey,System.currentTimeMillis()).qrText
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         try {
+            MainActivity::class.java.getDeclaredMethod("showChildPairingSheet").apply{isAccessible=true}.invoke(a)
+            MainActivity::class.java.getDeclaredMethod("onQrScanned",String::class.java).apply{isAccessible=true}.invoke(a,qr)
             val views=all(ShadowDialog.getLatestDialog().window!!.decorView)
             val box=views.filterIsInstance<android.widget.EditText>().first{it.tag=="repair_password"}
-            val confirm=views.filterIsInstance<Button>().first{it.text.toString().contains("確認配對")}
-            fun press(pw:String,until:()->Boolean){
-                box.setText(pw);confirm.performClick()
-                repeat(80){org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();if(until())return;Thread.sleep(100)}
-            }
-            press("WrongPassword928!"){confirm.isEnabled}
-            assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
-            press("ParentPrivate928!"){GuardEngine.getOrCreateFamilyToken(ctx)==other.token}
-            assertEquals(other.token,GuardEngine.getOrCreateFamilyToken(ctx))
+            val join=views.filterIsInstance<Button>().first{it.tag=="join_family"}
+            val link=MainActivity::class.java.getDeclaredField("childPairing").apply{isAccessible=true}
+            fun childKeys()=TestKeyStore.privateKeys.keys.count{it.startsWith("ig_guard.child_signing")}
+            val keysBefore=childKeys()
+            box.setText("WrongPassword928!");join.performClick()
+            assertNull("a wrong password starts nothing",link.get(a))
+            assertEquals("no child key is made",keysBefore,childKeys())
+            box.setText("ParentPrivate928!");join.performClick()
+            assertNotNull("the right password starts the pairing",link.get(a))
+            assertEquals("nothing is stored before the parent confirms",token,GuardEngine.getOrCreateFamilyToken(ctx))
         } finally {c.pause().stop().destroy()}
     }
-
     // ---- F9(b): one rate-limited alert, however often another app fires the link ----
     private fun fire(a:MainActivity,i:FamilySecurity.Invite)=MainActivity::class.java.getDeclaredMethod("onNewIntent",Intent::class.java).apply{isAccessible=true}.invoke(a,Intent(Intent.ACTION_VIEW,link(i)))
     @Test fun repeatedLinksAtALockedChildRaiseOneRateLimitedAlert() {

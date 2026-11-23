@@ -64,7 +64,7 @@ class ChildReleaseTest {
     private fun relayAcceptsTheReset(){GuardEngine.releaseOverride={c,_->GuardEngine.rotateKeyAndNotifyChild(c,true);GuardEngine.ReleaseOutcome.SENT}}
     @Test fun leavingTheParentRoleSendsAResetShowsThePasswordAndFreesTheChild() {
         relayAcceptsTheReset()
-        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
+        val invite=QrPairing.legacyInvite(ctx)
         val oldTopic=GuardEngine.getChannelTopic(ctx)
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         try {
@@ -103,7 +103,7 @@ class ChildReleaseTest {
     }
     @Test fun compromiseRecoveryAlsoReleasesTheChildBeforeDeletingThePassword() {
         relayAcceptsTheReset()
-        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
+        val invite=QrPairing.legacyInvite(ctx)
         val oldTopic=GuardEngine.getChannelTopic(ctx)
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         try {

@@ -36,7 +36,7 @@ internal class ParentPairingLink(
     private val open: PairingOpener = relayPairingOpener,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    enum class Relay { CONNECTING, READY, TOO_OLD, REFUSED }
+    enum class Relay { CONNECTING, READY, TOO_OLD, REFUSED, UNREACHABLE }
     enum class Outcome { NONE, ACCEPTED, NOT_STORED }
 
     val machine = GuardEngine.newParentPairing(ctx)
@@ -57,10 +57,12 @@ internal class ParentPairingLink(
         val s = machine.start(GuardEngine.relayPublicKey(ctx), clock())
         start = s
         val token = s.rendezvous.token
-        socket = open(ctx, CloudRelay.PairingRoute(GuardEngine.relayPublicKey(ctx), token, { GuardEngine.relayAuthorization(ctx, token) },
-            onReady = { ready -> main.post { ready(ready) } },
-            onRecord = { record -> main.post { hello(record) } },
-            onRefused = { main.post { if (!ended) { relay = Relay.REFUSED; machine.cancel(); finish() } } }))
+        socket = try {
+            open(ctx, CloudRelay.PairingRoute(GuardEngine.relayPublicKey(ctx), token, { GuardEngine.relayAuthorization(ctx, token) },
+                onReady = { ready -> main.post { ready(ready) } },
+                onRecord = { record -> main.post { hello(record) } },
+                onRefused = { main.post { if (!ended) { relay = Relay.REFUSED; machine.cancel(); finish() } } }))
+        } catch (_: Exception) { relay = Relay.UNREACHABLE; machine.cancel(); finish(); return }
         main.postDelayed(ticker, 1_000L)
         onChange()
     }
@@ -154,10 +156,12 @@ internal class ChildPairingLink(
     }
     private fun connect(room: Pairing.Rendezvous, authorization: () -> String) {
         socket?.close()
-        socket = open(ctx, CloudRelay.PairingRoute(parentKey, room.token, authorization,
-            onReady = { main.post { if (!ended) hello?.let { o -> socket?.publish(o.id, o.wire) {} } } },
-            onRecord = { record -> main.post { received(record) } },
-            onRefused = { main.post { if (!ended) { refused = true; machine.cancel(); stop() } } }))
+        socket = try {
+            open(ctx, CloudRelay.PairingRoute(parentKey, room.token, authorization,
+                onReady = { main.post { if (!ended) hello?.let { o -> socket?.publish(o.id, o.wire) {} } } },
+                onRecord = { record -> main.post { received(record) } },
+                onRefused = { main.post { if (!ended) { refused = true; machine.cancel(); stop() } } }))
+        } catch (_: Exception) { refused = true; machine.cancel(); stop(); null }
     }
     private fun received(record: JSONObject) {
         if (ended) return

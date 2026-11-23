@@ -48,11 +48,16 @@ class ObscuredTouchTest {
             assertFalse("decline stays usable under overlays",root.findViewWithTag<View>("consent_decline").filterTouchesWhenObscured)
         } finally {c.pause().stop().destroy()}
     }
+    /** The chat-invitation confirmation is gone; the QR join press is the pairing confirmation now (design 2.5 C3). */
     @Test fun pairingConfirmationIsGuarded() {
-        val token=UUID.randomUUID().toString()
-        val pw=FamilySecurity.encode(FamilySecurity.passwordVerifier("ParentPassword928!"));val key=FamilySecurity.newSigningIdentity().publicKey
-        val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?version=43&token=$token&pw=$pw&parent=$key"))).setup()
-        try { assertGuarded(button(ShadowDialog.getLatestDialog().window!!.decorView,"確認配對並切換為子女手機"),"pairing confirm") } finally {c.pause().stop().destroy()}
+        val parent=FamilySecurity.newSigningIdentity()
+        val qr=QrPairing.bareParent(parent).start(parent.publicKey,System.currentTimeMillis()).qrText
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            MainActivity::class.java.getDeclaredMethod("showChildPairingSheet").apply{isAccessible=true}.invoke(c.get())
+            MainActivity::class.java.getDeclaredMethod("onQrScanned",String::class.java).apply{isAccessible=true}.invoke(c.get(),qr)
+            assertGuarded(button(ShadowDialog.getLatestDialog().window!!.decorView,"加入此家庭 · Join this family"),"pairing join")
+        } finally {c.pause().stop().destroy()}
     }
     @Test fun twoWayCaptureConfirmationsAreGuarded() {
         GuardEngine.setRole(ctx,"child");prefs.edit().putString("capture_policy_id",UUID.randomUUID().toString()).commit()

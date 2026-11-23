@@ -40,16 +40,25 @@ class SecurityRegressionTest {
         assertTrue(GuardEngine.getTrustedHandles(ctx).isEmpty())
     }
     @Test fun malformedInvitesCannotSupplyFallbackOrShortPasswords() {
+        // Links are refused outright now; none of them may pair or store a credential.
         val prefix="igguard://pair?token=01234567-89ab-cdef-0123-456789abcdef"
-        for (suffix in listOf("", "&pw=A", "&pw=eA==")) assertNull(suffix,GuardEngine.parsePairingString(prefix+suffix))
+        for (suffix in listOf("", "&pw=A", "&pw=eA==")) {
+            val c=org.robolectric.Robolectric.buildActivity(MainActivity::class.java,android.content.Intent(android.content.Intent.ACTION_VIEW,Uri.parse(prefix+suffix))).setup()
+            assertEquals(suffix,"unconfigured",GuardEngine.getRole(ctx));assertNull(LocalVault.preferences(ctx).getString("parent_password_verifier",null))
+            c.pause().stop().destroy()
+        }
     }
-    @Test fun inviteDoesNotRevealParentMasterPassword() {
+    @Test fun qrPairingDoesNotRevealParentMasterPasswordOrVerifierBeforeAccept() {
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"PrivateParent928!")
-        val invite=GuardEngine.buildPairingInviteText(ctx)
-        val link=invite.lineSequence().first{it.startsWith("igguard://")}
-        val credential=String(Base64.decode(Uri.parse(link).getQueryParameter("pw"),Base64.NO_WRAP or Base64.URL_SAFE),Charsets.UTF_8)
-        assertFalse(invite.contains("PrivateParent928!"))
-        assertNotEquals("PrivateParent928!",credential)
+        val verifier=GuardEngine.parentPasswordVerifier(ctx)
+        val rooms=FakeRooms();val link=ParentPairingLink(ctx,{},rooms.opener)
+        link.begin();rooms.rooms[0].ready()
+        val qr=link.qrText!!
+        assertFalse(qr.contains("PrivateParent928!"));assertFalse(qr.contains(verifier))
+        val child=ChildPairing({FamilySecurity.createChildSigningKey(ctx)},{FamilySecurity.deleteChildSigningKey(ctx,it)},QrPairing.palette)
+        rooms.rooms[0].deliver(child.start(qr,"Pixel 7",System.currentTimeMillis())!!.hello)
+        for (record in rooms.rooms[0].records()) { assertFalse(record.toString().contains("PrivateParent928!"));assertFalse(record.toString().contains(verifier)) }
+        link.cancel()
     }
     @Test fun invitationTokenCannotDeriveTemporaryUnlockCodes() {
         GuardEngine.setRole(ctx,"child")

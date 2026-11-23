@@ -18,7 +18,6 @@ import android.app.Person
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.ActivityNotFoundException
-import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.DialogInterface
@@ -1108,41 +1107,8 @@ object GuardEngine {
         if (publicKey.isEmpty() || verifier.isEmpty()) "" else FamilySecurity.safetyCode(getOrCreateFamilyToken(ctx), verifier, publicKey)
     }
 
-    fun buildPairingInviteText(ctx: Context): String {
-        val token = getOrCreateFamilyToken(ctx)
-        val verifier = FamilySecurity.encode(parentPasswordVerifier(ctx))
-        val publicKey = parentIdentity(ctx).publicKey
-        return "🛡️ 【IG Guard 家庭專屬加密配對邀請】\n核對圖案 (Safety Emojis): ${getSafetyEmojis(ctx)}\n安全代碼：${getSafetyCode(ctx)}\n\n" +
-            "請先將兩部手機更新至最新版本，再在子女手機開啟邀請並確認配對。請妥善保管邀請。\n" +
-            "igguard://pair?version=43&token=$token&pw=$verifier&parent=$publicKey\n\n[IGGUARD-PAIR-V43:$token:$verifier:$publicKey]"
-    }
-
-    fun parsePairingString(raw: String): FamilySecurity.Invite? {
-        return try {
-        val text = raw.trim()
-        if (text.length > 16_384) null
-        else {
-            val v43 = Regex("IGGUARD-PAIR-V43:([a-zA-Z0-9-]{8,64}):([a-zA-Z0-9_=-]+):([a-zA-Z0-9_=-]+)").find(text)
-            val link = Regex("igguard://pair\\?[^\\s]+", RegexOption.IGNORE_CASE).find(text)?.value
-            val uri = link?.let { Uri.parse(it) }
-            val token: String; val credential: String; val publicKey: String
-            when {
-                v43 != null -> { token = v43.groupValues[1]; credential = FamilySecurity.decode(v43.groupValues[2]); publicKey = v43.groupValues[3] }
-                uri != null && uri.scheme.equals("igguard", true) && uri.host.equals("pair", true) -> {
-                    token = uri.getQueryParameter("token") ?: ""
-                    credential = uri.getQueryParameter("pw")?.let { FamilySecurity.decode(it) } ?: ""
-                    publicKey = uri.getQueryParameter("parent") ?: ""
-                }
-                else -> return null
-            }
-            // New pairings need the parent's command key: a keyless (v42, legacy or pin) invite has no safety code to compare
-            // and the relay refuses such a family. Families paired earlier keep their stored state; nothing re-parses it.
-            if (!FamilySecurity.validToken(token) || publicKey.isEmpty()) null
-            else if (FamilySecurity.validPublicKey(publicKey) && FamilySecurity.isVerifier(credential)) FamilySecurity.Invite(token, credential, publicKey)
-            else null
-        }
-        } catch (_: Exception) { null }
-    }
+    /** Chat invitations (V43 text and igguard://pair links) are not accepted for new pairings (design 2.8). */
+    const val INVITE_REFUSED = "此手機不再接受聊天邀請或配對連結。請在家長手機選擇「加入子女」，再用此手機掃描家長手機上的 QR 碼。\nThis phone no longer accepts chat invitations or pairing links. On the parent phone choose “Add a child”, then scan the QR code shown there with this phone."
 
     /** Parent secrets that a pairing link must never remove as a side effect. */
     fun parentSecretsPresent(ctx: Context): Boolean = listOf("parent_master_password", "parent_share_verifier", "parent_signing_public", "parent_signing_private")
@@ -2803,7 +2769,7 @@ class ParentAlertService : Service() {
         )
         val fgNotif = Notification.Builder(this, "ig_guard_monitor")
             .setContentTitle("IG Guard · 家長守護連線中")
-            .setContentText("核對圖案：${GuardEngine.getSafetyEmojis(this)} · 加密即時守護")
+            .setContentText(if (GuardEngine.pinnedChildKey(this) != null) "已核實配對 · 加密即時守護" else "核對圖案：${GuardEngine.getSafetyEmojis(this)} · 加密即時守護")
             .setSmallIcon(GuardEngine.notificationIcon(this)).setColor(GuardEngine.NOTIFICATION_COLOR)
             .setContentIntent(openIntent)
             .setOngoing(true)
@@ -3355,54 +3321,16 @@ class MainActivity : Activity() {
         val data = incoming?.data ?: return
         setIntent(Intent(incoming).apply { this.data = null })
         if (incoming.action != Intent.ACTION_VIEW || !data.scheme.equals("igguard", true) || !data.host.equals("pair", true)) return
-        val parsed = GuardEngine.parsePairingString(data.toString()) ?: return
         if (showPairingBlock()) return
         GuardEngine.noteInviteLinkOnChild(this)
-        confirmPairing(parsed)
+        showInviteRefused()
     }
-    private fun confirmPairing(parsed: FamilySecurity.Invite, onAccepted: () -> Unit = {}) {
-        if (showPairingBlock()) return
-        dismissUiDialogs()
+    /** Design 2.8: an invitation link or text never pairs this phone; the person is told to use the QR code instead. */
+    private fun showInviteRefused() {
         val t = currentTheme()
-        val childRepair = GuardEngine.isChildMode(this)
-        showSheet("確認家庭配對") { dialog ->
-            addView(label(if (childRepair) "此手機已配對子女保護。更換家庭需要目前的家長主密碼，並會先通知原本的家長手機。請在兩部手機核對安全圖案。"
-                else "只接受由家長傳送的邀請。確認後，此手機會切換為子女模式，並更換目前的家庭配對。請在兩部手機核對安全圖案。", 14f, t.textSecondary, bottomPad = 18))
-            // The text above asks to compare the pictures: show them, from the token as it will be stored (setFamilyToken trims and lower-cases).
-            addView(label(GuardEngine.safetyEmojis(parsed.token.trim().lowercase(Locale.US)), 30f, t.textPrimary, bottomPad = 12).apply { gravity = Gravity.CENTER; tag = "pairing_safety_emojis" })
-            if (parsed.parentPublicKey.isNotEmpty()) {
-                addView(label(FamilySecurity.safetyCode(parsed.token, parsed.passwordVerifier, parsed.parentPublicKey), 18f, t.textPrimary, true, bottomPad = 12))
-                addView(label("請由家長在家長手機查看並核對相同安全代碼，再確認配對。", 14f, t.textSecondary, bottomPad = 18))
-            }
-            var password: EditText? = null
-            val error = label("", 13f, t.warmCoral)
-            if (childRepair) {
-                password = inputBox(t, "家長主密碼", "", isPassword = true, remember = false).apply { tag = "repair_password" }
-                addView(password); addView(error)
-            }
-            lateinit var confirm: Button
-            confirm = actionButton("確認配對並切換為子女手機", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
-                if (!childRepair) { if (acceptPairing(parsed)) onAccepted(); return@actionButton }
-                val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
-                if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒。"; return@actionButton }
-                val entered = password?.text?.toString().orEmpty()
-                confirm.isEnabled = false; error.setTextColor(color(t.textSecondary)); error.text = "正在通知原本的家長手機…"
-                // Delivering the notice to the old family can take seconds: keep it off the UI thread.
-                thread {
-                    val ok = GuardEngine.applyPairing(this@MainActivity, parsed, entered, noticeWaitMs = 6_000L)
-                    runOnUiThread {
-                        if (isDestroyed) return@runOnUiThread
-                        if (ok) { dismissUiDialogs(); finishPairing(); onAccepted() }
-                        else {
-                            confirm.isEnabled = true; error.setTextColor(color(t.warmCoral))
-                            val locked = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
-                            error.text = if (locked > 0) "輸入已鎖定，請等 $locked 秒。" else "家長主密碼不正確。"
-                            password?.error = "請重新輸入"
-                        }
-                    }
-                }
-            }
-            addView(confirm)
+        showSheet("請改用 QR 碼 · Use the QR code") { dialog ->
+            addView(stateNote(Note.WARNING, GuardEngine.INVITE_REFUSED, t, cardTag = "invite_refused"))
+            addView(actionButton("關閉 · Close", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() })
         }
     }
     /** Plain explanation when a phone that holds parent authority is offered a pairing link. */
@@ -3413,14 +3341,6 @@ class MainActivity : Activity() {
             null -> return false
         }
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-        return true
-    }
-    private fun acceptPairing(invite: FamilySecurity.Invite): Boolean {
-        if (showPairingBlock()) return false
-        if (!GuardEngine.applyPairing(this, invite)) {
-            Toast.makeText(this, "未能完成配對，請確認邀請有效並已同意使用條款。", Toast.LENGTH_LONG).show(); return false
-        }
-        dismissUiDialogs(); finishPairing()
         return true
     }
     private fun finishPairing() {
@@ -3444,6 +3364,7 @@ class MainActivity : Activity() {
             try { NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java)) } catch (_: Exception) {}
         }
         syncRoleServices(); checkInitialPairingConfirmation(); renderUi()
+        pairingScanner?.takeIf { it.isAttachedToWindow }?.start()
         if (GuardEngine.isChildMode(this)) {
             GuardEngine.retryPendingAlerts(this,force=true)
             if (GuardEngine.isNotificationListenerEnabledStatic(this) && !GuardEngine.cpNotifConnected)
@@ -3454,6 +3375,7 @@ class MainActivity : Activity() {
     }
     override fun onPause() {
         super.onPause(); themeReveal?.end(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
+        pairingScanner?.stop()
         refreshPending = false   // the runnable that clears it was just removed; left set, every later refresh broadcast is dropped
         importRedrawQueued = false   // same for the throttled model-copy redraw
         if (ModelImportJob.listener === importListener) ModelImportJob.listener = null
@@ -3763,21 +3685,10 @@ class MainActivity : Activity() {
         rootContainer.addView(label("主密碼用於保護角色切換及解鎖設定，請妥善保管。", 13f, t.textSecondary, topPad = 16))
     }
     private fun renderChildSetup(t: ThemeColors) {
-        heading("讓家人，安心相連。", "請家長傳送配對邀請，再將邀請貼到下方。", t)
-        val invite = inputBox(t, "貼上家長的配對邀請", "").apply { minLines = 3; gravity = Gravity.TOP }
-        rootContainer.addView(invite)
-        val error = label("", 13f, t.warmCoral); rootContainer.addView(error)
-        fun pair(raw: String) {
-            val parsed = GuardEngine.parsePairingString(raw)
-            if (parsed == null) { error.text = "未找到有效邀請，請貼上家長發出的完整配對訊息。"; return }
-            confirmPairing(parsed) { openDirectNotificationToggle() }
-        }
-        rootContainer.addView(actionButton("連結家庭", t.btnPrimaryBg, t.btnPrimaryText) { pair(invite.text.toString()) })
-        rootContainer.addView(actionButton("從剪貼簿貼上並配對", t.btnSecondaryBg, t.btnSecondaryText) {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            pair(cm?.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: "")
-        })
-        rootContainer.addView(label("配對前，請與家長核對兩部手機上的完整安全代碼及 4 個安全圖案。", 13f, t.textSecondary, topPad = 18))
+        heading("讓家人，安心相連。", "請家長在家長手機選擇「加入子女」，再用此手機掃描家長手機上的 QR 碼。", t)
+        rootContainer.addView(stateNote(Note.WARNING, "只可掃描你自己家長手機上的 QR 碼。掃描他人的 QR 碼會把此手機連到該人。\nScan only the QR code on your own parent's phone. Scanning someone else's code connects this phone to that person.", t))
+        rootContainer.addView(actionButton("掃描 QR 碼 · Scan QR code", t.btnPrimaryBg, t.btnPrimaryText) { showChildPairingSheet() }.apply { tag = "scan_qr" })
+        rootContainer.addView(label("相機只在掃描時使用，不會儲存或傳送任何影像。兩部手機需要在一起。\nThe camera is used only while scanning; no image is stored or sent. Both phones need to be together.", 13f, t.textSecondary, topPad = 18))
     }
 
     private fun renderParentOverview(t: ThemeColors) {
@@ -3786,11 +3697,14 @@ class MainActivity : Activity() {
         val card = makeCard(t)
         val handle = GuardEngine.getChildSelfHandle(this)
         card.addView(label(if (handle.isEmpty()) "子女手機" else "@$handle", 16f, t.textPrimary, true, bottomPad = 8))
+        GuardEngine.expireUnconfirmedChildPairing(this)
+        val trust = GuardEngine.childTrust(this)
         val waiting = if (connected) "" else childReportWaiting()
-        card.addView(label(if (connected) GuardEngine.getLastChildHeartbeatInfo(this) else waiting, 13f, t.textSecondary))
+        card.addView(label(if (connected) (if (trust == GuardEngine.ChildTrust.NOT_VERIFIED) "未核實 · " else "") + GuardEngine.getLastChildHeartbeatInfo(this) else waiting, 13f, t.textSecondary))
         if (connected && GuardEngine.isChildCaptureHeld(this)) card.addView(label(ScoresUi.PARENT_CAPTURE_HELD, 13f, t.textPrimary, true, topPad = 6))
-        if (!connected) card.addView(textAction("邀請子女配對") { showPairingInvite(t) })
+        if (!connected && trust == GuardEngine.ChildTrust.NO_CHILD) card.addView(textAction("加入子女 · Add a child") { startParentPairing() })
         rootContainer.addView(card)
+        renderChildTrust(trust, t)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
             rootContainer.addView(textAction("尚未授權系統通知 · 前往設定") { navigateTo("settings") })
         }
@@ -3873,7 +3787,7 @@ class MainActivity : Activity() {
     }
     private fun renderParentFamily(t: ThemeColors) {
         heading("一起建立，安心的界線。", "家庭配對、信任好友與臨時解鎖。", t)
-        rootContainer.addView(row("link", "邀請子女配對", "傳送家庭專屬配對邀請", t) { showPairingInvite(t) })
+        rootContainer.addView(row("link", "加入子女 · Add a child", "以 QR 碼當面配對子女手機", t) { startParentPairing() })
         rootContainer.addView(row("key", "15 分鐘臨時解鎖", "給需要的片刻空間，無需透露主密碼", t) { requireFreshParentAuth {
             displayed15MinCode = GuardEngine.generate15MinUnlockCode(this)
             GuardEngine.push15MinUnlockCodeFromParent(this, displayed15MinCode)
@@ -3905,18 +3819,300 @@ class MainActivity : Activity() {
         val self = GuardEngine.getChildSelfHandle(this)
         rootContainer.addView(label(if (self.isEmpty()) "子女 Instagram 帳號會在收到通知或開啟個人檔案後自動識別。" else "子女 Instagram 帳號：@$self", 13f, t.textSecondary, topPad = 12))
     }
-    private fun showPairingInvite(t: ThemeColors) {
-        showSheet("讓家人，加入這份守護。") { dialog ->
-            addView(label("邀請包含長期家庭秘密，只交予已核對的子女手機，並當面核對完整安全代碼。請勿放入公開連結或群組。剪貼簿自動清除不會刪除外部副本；懷疑外洩請使用重新安全配對。", 14f, t.textSecondary, bottomPad = 20))
-            addView(label(GuardEngine.getSafetyEmojis(this@MainActivity), 30f, t.textPrimary, bottomPad = 22).apply { gravity = Gravity.CENTER })
-            addView(label("安全代碼：${GuardEngine.getSafetyCode(this@MainActivity)}", 16f, t.textPrimary, true, bottomPad = 12))
-            addView(label("請在家長手機查看並與子女手機核對完整安全代碼；代碼同時驗證家長金鑰及密碼設定。", 13f, t.textSecondary, bottomPad = 18))
-            addView(actionButton("傳送配對邀請", t.btnPrimaryBg, t.btnPrimaryText) { requireFreshParentAuth {
-                val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, GuardEngine.buildPairingInviteText(this@MainActivity)) }
-                startActivity(Intent.createChooser(intent, "傳送配對邀請"))
-            } })
-            addView(actionButton("複製配對訊息", t.btnSecondaryBg, t.btnSecondaryText) { requireFreshParentAuth { copyText("IGGuardInvite", GuardEngine.buildPairingInviteText(this@MainActivity)); dialog.dismiss() } })
+    // ================= QR pairing screens (design m2 rev. 3, 2.5 and 8.1-8.2) =================
+    /** Parent overview: the child's verification state. NOT_VERIFIED (a 5.2 pairing) is a permanent, non-blocking banner. */
+    private fun renderChildTrust(trust: GuardEngine.ChildTrust, t: ThemeColors) {
+        when (trust) {
+            GuardEngine.ChildTrust.NOT_VERIFIED -> rootContainer.addView(noticeCard(t, cardTag = "child_not_verified").apply {
+                addView(iconLine("shield-warning", t.warmHoney, "此子女手機未核實 · This child phone is not verified", t, 15f))
+                addView(label("此配對在舊版本以聊天邀請建立，未能證明訊息來自子女手機。提醒照常運作。\nPaired with an older version through a chat invitation: messages cannot be proven to come from the child's phone. Alerts keep working.", 13f, t.textSecondary, topPad = 6))
+                addView(textAction("重新配對以核實 · Pair again to verify") { startParentPairing() })
+            })
+            GuardEngine.ChildTrust.PAIRING -> {
+                rootContainer.addView(stateNote(Note.LOADING, "配對尚未完成 · 等待子女手機首次已核實回報。\nPairing not complete yet · waiting for the child phone's first verified report.", t, cardTag = "child_pairing_pending"))
+                rootContainer.addView(textAction("立即重試傳送 · Retry now") { CloudRelay.retryNow(this); GuardEngine.retryPendingAlerts(this, force = true) })
+            }
+            GuardEngine.ChildTrust.PAIRING_FAILED -> {
+                rootContainer.addView(stateNote(Note.ERROR, "上次配對未完成：子女手機未在 10 分鐘內確認。\nThe last pairing did not complete: the child phone did not confirm within 10 minutes.", t, cardTag = "child_pairing_failed"))
+                rootContainer.addView(textAction("重新配對 · Pair again") { startParentPairing() })
+            }
+            else -> {}
         }
+    }
+
+    private var parentPairing: ParentPairingLink? = null
+    /** P1: a fresh device authentication first, then the QR sheet. */
+    private fun startParentPairing() = requireFreshParentAuth { showParentPairingSheet() }
+    /** P2-P6 on one sheet. FLAG_SECURE comes from showSheet; this sheet alone also keeps the screen on. Closing it for any reason but the
+     *  accept's own authentication prompt ends the pairing and retires its room. */
+    private fun showParentPairingSheet() {
+        val t = currentTheme()
+        parentPairing?.cancel()
+        showTrackedSheet("加入子女 · Add a child", onDismiss = { if (!parentAuthPending) parentPairing?.cancel() }) { dialog ->
+            dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            val body = this
+            var link: ParentPairingLink? = null
+            link = ParentPairingLink(this@MainActivity, { link?.let { if (parentPairing === it && !isDestroyed) fillParentPairing(body, dialog, it, t) } })
+            parentPairing = link
+            link.begin()
+        }
+    }
+    private fun parentCancelText(reason: Pairing.CancelReason): String = when (reason) {
+        Pairing.CancelReason.EXPIRED -> "QR 碼已過期，或未在 10 分鐘內接受。\nThe QR code expired, or it was not accepted within 10 minutes."
+        Pairing.CancelReason.SECOND_PHONE -> "此 QR 碼被多於一部手機使用，已停止。請再試一次。\nMore than one phone used this QR code; pairing stopped. Please try again."
+        Pairing.CancelReason.WRONG_DIGITS -> "輸入錯誤 3 次，配對已取消。請重新顯示 QR 碼。\nWrong digits 3 times; pairing cancelled. Show a new QR code."
+        Pairing.CancelReason.USER_CANCEL -> "配對已取消。\nPairing cancelled."
+        Pairing.CancelReason.BAD_MESSAGE -> "收到未能核實的回應，配對已停止。請再試一次。\nA reply could not be verified; pairing stopped. Please try again."
+        Pairing.CancelReason.KEY_UNAVAILABLE -> "未能使用此手機的簽署金鑰。\nThis phone's signing key is unavailable."
+    }
+    private fun fillParentPairing(body: LinearLayout, dialog: Dialog, link: ParentPairingLink, t: ThemeColors) {
+        val state = link.machine.state
+        val phase = listOf(state, link.relay, link.outcome, link.qrText != null)
+        val countdown = body.findViewWithTag<TextView>("pairing_countdown")
+        fun left(): String { val s = ((link.expiresAt - System.currentTimeMillis()).coerceAtLeast(0L) + 999L) / 1000L; return "尚餘 %d:%02d · %d:%02d left".format(s / 60, s % 60, s / 60, s % 60) }
+        // The ticker reports every second: only the countdown changes then, so a field being typed in is never rebuilt.
+        if (body.tag == phase) { countdown?.text = left(); return }
+        body.tag = phase
+        body.removeAllViews()
+        fun closeButton(title: String = "取消 · Cancel") = body.addView(actionButton(title, t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() })
+        fun stopped(text: String) {
+            body.addView(stateNote(Note.ERROR, text, t, cardTag = "pairing_stopped"))
+            body.addView(actionButton("再試一次 · Try again", t.btnPrimaryBg, t.btnPrimaryText) { dialog.dismiss(); startParentPairing() })
+            closeButton("關閉 · Close")
+        }
+        when {
+            link.outcome == ParentPairingLink.Outcome.ACCEPTED -> {
+                body.addView(stateNote(Note.LOADING, "正在完成… 子女手機收到確認後，會傳送第一個已核實回報。\nFinishing… once the child phone has the confirmation, it sends its first verified report.", t, cardTag = "pairing_finishing"))
+                closeButton("關閉 · Close")
+            }
+            link.outcome == ParentPairingLink.Outcome.NOT_STORED -> stopped("中繼或本機未能完成，原有配對沒有改變。請再試一次。\nThe pairing could not be stored; nothing changed. Please try again.")
+            link.relay == ParentPairingLink.Relay.TOO_OLD -> stopped("中繼站版本過舊，未能安全配對。\nThe relay is too old to pair safely.")
+            link.relay == ParentPairingLink.Relay.REFUSED -> stopped("中繼站拒絕了配對房間，配對已停止。\nThe relay refused the pairing room; pairing stopped.")
+            link.relay == ParentPairingLink.Relay.UNREACHABLE -> stopped("未能連接中繼站，請檢查網絡後再試。\nThe relay could not be reached. Check the connection and try again.")
+            state is ParentPairingState.Cancelled -> stopped(parentCancelText(state.reason))
+            state is ParentPairingState.ShowingQr -> {
+                val qr = link.qrText
+                if (qr == null) body.addView(stateNote(Note.LOADING, "正在連接中繼站…\nConnecting to the relay…", t, cardTag = "pairing_connecting"))
+                else {
+                    body.addView(label("此 QR 碼 3 分鐘內有效，只可使用一次。請在子女手機掃描，勿拍照或傳送。\nValid for 3 minutes, once. Scan it with the child's phone; do not photograph or send it.", 14f, t.textSecondary, bottomPad = 14))
+                    val size = minOf(resources.displayMetrics.widthPixels - dp(48), dp(300))
+                    body.addView(QrImageView(this).apply { show(qr, size); tag = "pairing_qr" }, LinearLayout.LayoutParams(size, size).apply { gravity = Gravity.CENTER_HORIZONTAL })
+                    body.addView(label(left(), 14f, t.textPrimary, true, topPad = 12, bottomPad = 12).apply { gravity = Gravity.CENTER; tag = "pairing_countdown" })
+                }
+                closeButton()
+            }
+            state is ParentPairingState.EnterDigits || state is ParentPairingState.ReadyToAccept -> {
+                val ready = state is ParentPairingState.ReadyToAccept
+                val pictures = (state as? ParentPairingState.EnterDigits)?.pictures ?: (state as ParentPairingState.ReadyToAccept).pictures
+                val model = (state as? ParentPairingState.EnterDigits)?.childModel ?: (state as ParentPairingState.ReadyToAccept).childModel
+                body.addView(label("已收到子女手機回應 · The child phone answered", 13f, t.textSecondary, bottomPad = 8))
+                body.addView(label("輸入子女手機上的 6 位數字\nType the 6 digits shown on the child's phone", 16f, t.textPrimary, true, bottomPad = 12))
+                if (!ready) {
+                    val tries = (state as ParentPairingState.EnterDigits).triesLeft
+                    val field = EditText(this).apply {
+                        hint = "6 位數字"; contentDescription = "子女手機上的 6 位數字 · The 6 digits on the child's phone"; textSize = 26f; typeface = font(true); gravity = Gravity.CENTER
+                        letterSpacing = .3f; setTextColor(color(t.textPrimary)); setHintTextColor(color(t.textMuted)); background = focusSurface(t.bgInput, 10, t.accentPowderSky)
+                        // Digits only, no suggestions, never offered to autofill; at most 6.
+                        inputType = InputType.TYPE_CLASS_NUMBER; importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+                        filters = arrayOf(android.text.InputFilter.LengthFilter(6)); isSaveEnabled = false; tag = "pairing_digits"
+                        minimumHeight = dp(58); setPadding(dp(14), dp(12), dp(14), dp(12))
+                        addTextChangedListener(object : TextWatcher {
+                            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                            override fun afterTextChanged(s: Editable?) {
+                                val typed = s?.toString().orEmpty()
+                                if (typed.length == 6) post { if (parentPairing === link) link.enterDigits(typed) }
+                            }
+                        })
+                    }
+                    body.addView(field, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(8)) })
+                    if (tries < Pairing.MAX_DIGIT_TRIES) body.addView(label("數字不正確，尚餘 $tries 次。\nWrong digits, $tries tries left.", 13f, t.warmCoral, bottomPad = 8).apply { tag = "pairing_tries" })
+                    field.requestFocus()
+                } else body.addView(stateNote(Note.EMPTY, "數字正確 · The digits match", t, cardTag = "pairing_digits_ok"))
+                body.addView(label(pictures, 30f, t.textPrimary, topPad = 6, bottomPad = 4).apply { gravity = Gravity.CENTER; tag = "pairing_pictures" })
+                body.addView(label("兩部手機會顯示相同圖案，只作輔助。\nBoth phones show the same pictures, as a visual aid only.", 12f, t.textMuted, bottomPad = 10).apply { gravity = Gravity.CENTER })
+                body.addView(label("子女手機型號（由該手機提供）：$model\nChild phone model (as it reports it): $model", 13f, t.textSecondary, bottomPad = 12))
+                body.addView(actionButton("接受 · Accept", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
+                    // The parent confirms with a fresh device authentication, as for every other sensitive parent action.
+                    requireFreshParentAuth {
+                        val ok = link.accept()
+                        Toast.makeText(this, if (ok) "已接受，等待子女手機確認。" else "未能完成配對，原有配對沒有改變。", Toast.LENGTH_LONG).show()
+                        renderUi()
+                    }
+                }.apply { isEnabled = ready; tag = "pairing_accept" })
+                body.addView(label("按「接受」後需要再次驗證家長身份。\nAfter Accept you confirm it with your device lock.", 12f, t.textMuted, bottomPad = 6))
+                closeButton()
+            }
+            else -> closeButton("關閉 · Close")
+        }
+        if (dialog.isShowing) fitSheet(dialog)
+    }
+
+    private val CAMERA_REQUEST = 102
+    private var childPairing: ChildPairingLink? = null
+    private var pairingScanner: QrScannerView? = null
+    private var childSheetBody: LinearLayout? = null
+    private var childSheetDialog: Dialog? = null
+    /** The scanned QR text, in memory only until the join press. */
+    private var scannedQr: String? = null
+    private var scanProblem: String? = null
+    private var cameraAsked = false
+    private var cameraDenied = false
+    /** The camera could not be opened (none, in use, failed): no preview until the person tries again. */
+    private var cameraBroken = false
+    /** A paired child's parent password, checked at the join press and held only until the pairing is stored. */
+    private var childJoinPassword: String? = null
+    private var childPairingStored: Boolean? = null
+    /** C1-C6 on one sheet: scan, join consent, digits, waiting for the parent, done. FLAG_SECURE comes from showSheet. */
+    private fun showChildPairingSheet() {
+        if (showPairingBlock()) return
+        childPairing?.cancel(); childPairing = null
+        scannedQr = null; scanProblem = null; cameraAsked = false; cameraDenied = false; cameraBroken = false; childJoinPassword = null; childPairingStored = null
+        showTrackedSheet("加入家庭 · Join a family", onDismiss = {
+            pairingScanner?.stop(); pairingScanner = null
+            if (childPairing?.machine?.state != ChildPairingState.Paired) { childPairing?.cancel(); childPairing = null; childJoinPassword = null }
+            scannedQr = null; childSheetBody = null; childSheetDialog = null
+        }) { dialog ->
+            childSheetBody = this; childSheetDialog = dialog
+            fillChildPairing()
+        }
+    }
+    /** What the scanner callback does with a decoded text (and nothing else calls it): check its form, then show the join consent. */
+    private fun onQrScanned(text: String) {
+        pairingScanner = null
+        val now = System.currentTimeMillis()
+        val fields = text.split('.')
+        scanProblem = when {
+            PairingCrypto.parsePairingQr(text, now) != null -> null
+            fields.size == 4 && fields[0] == PairingCrypto.QR_PREFIX && (fields[3].toLongOrNull() ?: Long.MAX_VALUE) <= now -> "QR 碼已過期。請在家長手機重新顯示 QR 碼。\nThe QR code has expired. Show a new one on the parent phone."
+            else -> "這不是 IG Guard 配對碼。\nThis is not an IG Guard pairing code."
+        }
+        scannedQr = if (scanProblem == null) text else null
+        fillChildPairing()
+    }
+    private fun childCancelText(link: ChildPairingLink, reason: Pairing.CancelReason): String = if (link.refused) "中繼站未能完成配對，請重新配對。\nThe relay could not complete the pairing. Please pair again." else when (reason) {
+        Pairing.CancelReason.EXPIRED -> "配對已逾時：QR 碼已過期，或家長未確認。請重新配對。\nPairing timed out: the QR code expired or the parent did not confirm. Please pair again."
+        Pairing.CancelReason.BAD_MESSAGE -> "這不是有效的 IG Guard 配對碼，或配對訊息未能核實。請重新掃描家長手機上的新 QR 碼。\nNot a valid IG Guard pairing code, or a pairing message could not be verified. Scan a new QR code."
+        Pairing.CancelReason.KEY_UNAVAILABLE -> "此手機未能建立配對金鑰，請稍後再試。\nThis phone could not create its pairing key. Please try later."
+        else -> "配對已取消。\nPairing cancelled."
+    }
+    private fun fillChildPairing() {
+        val body = childSheetBody ?: return; val dialog = childSheetDialog ?: return
+        if (isDestroyed) return
+        val t = currentTheme()
+        val link = childPairing
+        val phase = listOf(link?.machine?.state, link?.refused, scannedQr != null, scanProblem, cameraDenied, cameraBroken, childPairingStored)
+        if (body.tag == phase) return
+        body.tag = phase
+        pairingScanner?.stop(); pairingScanner = null
+        body.removeAllViews()
+        fun closeButton(title: String = "取消 · Cancel") = body.addView(actionButton(title, t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() })
+        fun again(text: String) {
+            body.addView(stateNote(Note.ERROR, text, t, cardTag = "child_pairing_stopped"))
+            body.addView(actionButton("重新掃描 · Scan again", t.btnPrimaryBg, t.btnPrimaryText) { showChildPairingSheet() })
+            closeButton("關閉 · Close")
+        }
+        val state = link?.machine?.state
+        when {
+            link == null && scannedQr == null -> {
+                // C1/C2: the camera permission is asked here, and only here.
+                body.addView(label("只可掃描你自己家長手機上的 QR 碼。\nScan only the QR code shown on your own parent's phone.", 14f, t.textSecondary, bottomPad = 12))
+                scanProblem?.let { body.addView(stateNote(Note.WARNING, it, t, cardTag = "scan_problem")) }
+                val granted = checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                when {
+                    !granted && cameraDenied -> {
+                        body.addView(stateNote(Note.WARNING, "需要相機才可掃描家長手機上的 QR 碼。\nThe camera is needed to scan the QR code on the parent's phone.", t, cardTag = "camera_denied"))
+                        body.addView(actionButton("開啟 App 設定 · Open app settings", t.btnPrimaryBg, t.btnPrimaryText) {
+                            launchSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+                        })
+                    }
+                    !granted -> {
+                        body.addView(stateNote(Note.LOADING, "正在等待相機權限…\nWaiting for camera permission…", t))
+                        if (!cameraAsked) { cameraAsked = true; requestPermissions(arrayOf(android.Manifest.permission.CAMERA), CAMERA_REQUEST) }
+                    }
+                    cameraBroken -> body.addView(actionButton("再試一次 · Try again", t.btnPrimaryBg, t.btnPrimaryText) { cameraBroken = false; scanProblem = null; fillChildPairing() })
+                    else -> {
+                        val scanner = QrScannerView(this).apply {
+                            tag = "qr_scanner"
+                            onResult = { onQrScanned(it) }
+                            onError = { e ->
+                                if (e == ScanError.NO_PERMISSION) cameraDenied = true
+                                else cameraBroken = true
+                                if (e != ScanError.NO_PERMISSION) scanProblem = when (e) {
+                                    ScanError.NO_CAMERA -> "此手機沒有可用的相機。\nThis phone has no usable camera."
+                                    ScanError.CAMERA_IN_USE -> "相機正由其他 App 使用，請關閉後再試。\nAnother app is using the camera."
+                                    else -> "未能開啟相機，請再試一次。\nThe camera could not be opened. Please try again."
+                                }
+                                pairingScanner = null; fillChildPairing()
+                            }
+                        }
+                        pairingScanner = scanner
+                        body.addView(scanner, LinearLayout.LayoutParams(-1, dp(300)).apply { setMargins(0, 0, 0, dp(12)) })
+                        body.post { if (pairingScanner === scanner && activityVisible) scanner.start() }
+                    }
+                }
+                closeButton()
+            }
+            link == null -> {
+                // C3: consent and the warning, then the join press creates K and sends M1.
+                val repair = GuardEngine.isChildMode(this)
+                body.addView(label(if (repair) "此手機已配對子女保護。更換家庭需要目前的家長主密碼，並會先通知原本的家長手機。\nThis phone is already a protected child phone: the current parent password is needed, and the old parent phone is told first."
+                    else "確認後，此手機會切換為子女模式，並加入掃描到的家庭。\nAfter you confirm, this phone switches to child mode and joins the family you scanned.", 14f, t.textSecondary, bottomPad = 12))
+                body.addView(stateNote(Note.WARNING, "只可掃描你自己家長手機上的 QR 碼。掃描他人的 QR 碼會把此手機連到該人。\nScan only the QR code on your own parent's phone. Scanning someone else's code connects this phone to that person.", t, cardTag = "join_warning"))
+                val password = if (repair) inputBox(t, "家長主密碼", "", isPassword = true, remember = false).apply { tag = "repair_password" }.also { body.addView(it) } else null
+                val error = label("", 13f, t.warmCoral); body.addView(error)
+                body.addView(actionButton("加入此家庭 · Join this family", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
+                    val qr = scannedQr ?: return@actionButton
+                    if (repair) {
+                        val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this)
+                        if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒。"; return@actionButton }
+                        val entered = password?.text?.toString().orEmpty()
+                        val ok = entered.isNotBlank() && GuardEngine.verifyParentPassword(this, entered)
+                        GuardEngine.recordPasswordAttempt(this, ok)
+                        if (!ok) { error.text = "家長主密碼不正確。"; password?.error = "請重新輸入"; return@actionButton }
+                        childJoinPassword = entered
+                    }
+                    startChildPairing(qr)
+                }.apply { tag = "join_family" })
+                closeButton()
+            }
+            state is ChildPairingState.Cancelled -> again(childCancelText(link, state.reason))
+            state == ChildPairingState.AwaitingReply -> { body.addView(stateNote(Note.LOADING, "已傳送到家長手機 · 等待家長手機回應\nSent to the parent phone · waiting for its answer", t, cardTag = "child_waiting_reply")); closeButton() }
+            state is ChildPairingState.ShowingDigits -> {
+                body.addView(label("請讓家長在家長手機輸入以下 6 位數字\nAsk your parent to type these 6 digits on the parent phone", 16f, t.textPrimary, true, bottomPad = 12))
+                body.addView(label(state.digits.chunked(3).joinToString(" "), 42f, t.textPrimary, true, bottomPad = 8).apply { gravity = Gravity.CENTER; tag = "child_digits"; letterSpacing = .08f })
+                body.addView(label(state.pictures, 30f, t.textPrimary, bottomPad = 4).apply { gravity = Gravity.CENTER; tag = "child_pictures" })
+                body.addView(label("兩部手機會顯示相同圖案，只作輔助。\nBoth phones show the same pictures, as a visual aid only.", 12f, t.textMuted, bottomPad = 12).apply { gravity = Gravity.CENTER })
+                body.addView(actionButton("確認加入 · Confirm", t.btnPrimaryBg, t.btnPrimaryText, critical = true) { link.confirm() }.apply { tag = "child_confirm" })
+                closeButton()
+            }
+            state == ChildPairingState.AwaitingComplete -> { body.addView(stateNote(Note.LOADING, "等待家長確認\nWaiting for the parent to confirm", t, cardTag = "child_waiting_parent")); closeButton() }
+            state == ChildPairingState.Paired -> when (childPairingStored) {
+                null -> body.addView(stateNote(Note.LOADING, "正在完成配對…\nFinishing the pairing…", t))
+                true -> {
+                    body.addView(stateNote(Note.EMPTY, "家長已確認此手機。\nThe parent confirmed this phone.", t, cardTag = "child_paired"))
+                    body.addView(actionButton("繼續 · Continue", t.btnPrimaryBg, t.btnPrimaryText) { dialog.dismiss(); finishPairing(); openDirectNotificationToggle() })
+                }
+                false -> again("未能完成配對：家長主密碼不正確或輸入已鎖定。原有配對沒有改變。\nThe pairing could not be completed: wrong parent password or input locked. Nothing changed.")
+            }
+            else -> closeButton("關閉 · Close")
+        }
+        if (dialog.isShowing) fitSheet(dialog)
+    }
+    private fun startChildPairing(qr: String) {
+        var link: ChildPairingLink? = null
+        link = ChildPairingLink(this, { if (childPairing === link) fillChildPairing() }, { result ->
+            val password = childJoinPassword
+            childJoinPassword = null
+            // Storing may wait up to 6 s for the old family's notice (a paired child): off the main thread.
+            thread {
+                val ok = GuardEngine.completeChildPairing(applicationContext, result, password, noticeWaitMs = 6_000L)
+                runOnUiThread { childPairingStored = ok; fillChildPairing() }
+            }
+        })
+        childPairing = link
+        if (!link.join(qr)) scannedQr = null
+        fillChildPairing()
     }
     private fun clearTrustDraft() { inputDrafts.remove("輸入好友帳號，以逗號分隔") }
     private fun addTrustedSender(handle: String) {
@@ -4285,6 +4481,14 @@ class MainActivity : Activity() {
         card.addView(label(if (noRead) "本 App 不讀取 Instagram 的通知或畫面，所以不需要通知或畫面權限。" else if (notification && screen) "通知及畫面保護已連接。" else "通知讀取保護背景訊息；畫面保護處理對話、留言回覆及防靜音。", 14f, t.textSecondary))
         rootContainer.addView(card)
         renderScoresChildBlocks(t)
+        if (GuardEngine.cpChildKeyRefused) {
+            rootContainer.addView(stateNote(Note.ERROR, "需要重新配對：中繼站未接受此手機的配對金鑰。請在家長手機選擇「加入子女」，再掃描 QR 碼。\nPair again: the relay did not accept this phone's pairing key.", t, cardTag = "child_key_refused"))
+            rootContainer.addView(actionButton("掃描 QR 碼 · Scan QR code", t.btnPrimaryBg, t.btnPrimaryText) { showChildPairingSheet() })
+        } else if (GuardEngine.childKeyAlias(this) == null) rootContainer.addView(noticeCard(t, cardTag = "child_verify").apply {
+            addView(label("請與家長核實此手機 · Verify this phone with your parent", 15f, t.textPrimary, true, bottomPad = 6))
+            addView(label("此手機在舊版本配對，家長手機會顯示為「未核實」。請在家長手機選擇「加入子女」，再用此手機掃描 QR 碼（需要家長主密碼）。\nPaired with an older version: the parent phone shows it as not verified. Choose “Add a child” on the parent phone, then scan its QR code here (parent password needed).", 13f, t.textSecondary))
+            addView(textAction("掃描 QR 碼 · Scan QR code") { showChildPairingSheet() })
+        })
         rootContainer.addView(label(childDisclaimerText(),13f,t.textSecondary,bottomPad=14))
         rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)})
         rootContainer.addView(row("shield-check","擷取範圍與停止",if(GuardEngine.collectionAllowed(this))"選擇範圍、停止新擷取與待傳送。" else "擷取及待傳送已停止。",t){showCapturePrivacy(t)})
@@ -4294,7 +4498,8 @@ class MainActivity : Activity() {
             showSheet("裝置及家庭詳情") { dialog ->
                 val handle = GuardEngine.getChildSelfHandle(this@MainActivity)
                 val offenders = GuardEngine.getFlaggedOffenders(this@MainActivity)
-                addView(label("家庭核對圖案：${GuardEngine.getSafetyEmojis(this@MainActivity)}\n安全代碼：${GuardEngine.getSafetyCode(this@MainActivity).ifEmpty { "需要更新家庭配對" }}\n\nInstagram 帳號：${if (handle.isEmpty()) "等待自動識別" else "@$handle"}\n\n高危帳號：${if (offenders.isEmpty()) "暫無記錄" else offenders.joinToString(", ") { "@$it" }}", 14f, t.textPrimary, bottomPad = 20))
+                val pairing = if (GuardEngine.childKeyAlias(this@MainActivity) != null) "配對方式：QR 碼（已核實）" else "家庭核對圖案：${GuardEngine.getSafetyEmojis(this@MainActivity)}\n安全代碼：${GuardEngine.getSafetyCode(this@MainActivity).ifEmpty { "需要更新家庭配對" }}"
+                addView(label("$pairing\n\nInstagram 帳號：${if (handle.isEmpty()) "等待自動識別" else "@$handle"}\n\n高危帳號：${if (offenders.isEmpty()) "暫無記錄" else offenders.joinToString(", ") { "@$it" }}", 14f, t.textPrimary, bottomPad = 20))
                 addView(actionButton("關閉", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() })
             }
         })
@@ -5068,12 +5273,12 @@ class MainActivity : Activity() {
     }
     private fun showCompromiseRecovery(t: ThemeColors) {
         showSheet("重新安全配對") { dialog ->
-            addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對及核對完整安全代碼。已被複製的舊資料無法收回。 可先要求中繼刪除舊房間：App 會先向子女手機送出解除指令，中繼確認後舊房間即永久停用，金鑰不能再使用。若中繼未能確認，舊房間上未被取走的密文最多保留 7 天。",14f,t.textSecondary,bottomPad=18))
+            addView(label("請先確認兩部手機及解鎖憑證安全。此操作建立全新的家庭秘密與家長簽署身份，不經舊通道傳送。舊本機封存保留；未傳送內容及舊信任設定會捨棄，子女手機須當面重新配對（掃描 QR 碼並輸入 6 位數字）。已被複製的舊資料無法收回。 可先要求中繼刪除舊房間：App 會先向子女手機送出解除指令，中繼確認後舊房間即永久停用，金鑰不能再使用。若中繼未能確認，舊房間上未被取走的密文最多保留 7 天。",14f,t.textSecondary,bottomPad=18))
             fun create(resetSent: Boolean, roomDeleted: Boolean = false) {
                     try {
                         GuardEngine.createFreshFamilyForRecovery(this@MainActivity)
                         parentAccess.authenticated(GuardEngine.captureRelaySession(this@MainActivity))
-                        dialog.dismiss();syncRoleServices();renderUi();showPairingInvite(currentTheme())
+                        dialog.dismiss();syncRoleServices();renderUi();showParentPairingSheet()
                     } catch(_:Exception){
                         // After a deletion the current invite points at a room that no longer exists: only a fresh pairing helps.
                         val message = if (roomDeleted) "舊中繼房間已刪除，但此手機沒有完成重新配對；原有本機資料已保留。舊邀請已不能使用，請重試「重新安全配對」以建立新配對。"
@@ -5144,12 +5349,13 @@ class MainActivity : Activity() {
         setContentView(content)
     }
     private val uiDialogs = mutableSetOf<Dialog>()
-    private fun trackDialog(dialog: Dialog) {
+    private fun trackDialog(dialog: Dialog, onDismiss: (() -> Unit)? = null) {
         dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         uiDialogs.add(dialog)
         dialog.setOnDismissListener {
             uiDialogs.remove(dialog)
             if (activeSheet === dialog) activeSheet = null
+            onDismiss?.invoke()
         }
     }
     private fun dismissUiDialogs() {
@@ -5199,7 +5405,9 @@ class MainActivity : Activity() {
                 }
         }
     }
-    private fun showSheet(title: String, content: LinearLayout.(Dialog) -> Unit) {
+    private fun showSheet(title: String, content: LinearLayout.(Dialog) -> Unit) = showTrackedSheet(title, null, content)
+    /** [showSheet] with [onDismiss] run however the sheet closes (the QR pairing sheets end their pairing then). */
+    private fun showTrackedSheet(title: String, onDismiss: (() -> Unit)?, content: LinearLayout.(Dialog) -> Unit) {
         if(!parentUnlocked()){renderParentLock();return}
         activeSheet?.dismiss()
         val t = currentTheme(); val dialog = Dialog(this)
@@ -5219,13 +5427,18 @@ class MainActivity : Activity() {
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             attributes = attributes.apply { windowAnimations = if (ValueAnimator.areAnimatorsEnabled()) resources.getIdentifier("GuardSheetAnimation", "style", packageName) else 0 }
         }
-        trackDialog(dialog)
+        trackDialog(dialog, onDismiss)
         dialog.show()
+        fitSheet(dialog)
+        if (Build.VERSION.SDK_INT >= 28) wrap.accessibilityPaneTitle = title
+        activeSheet = dialog
+    }
+    /** Sizes a sheet to its content (at most 82 % of the screen); again after a sheet's content changed (QR pairing states). */
+    private fun fitSheet(dialog: Dialog) {
+        val scroll = dialog.findViewById<ViewGroup>(android.R.id.content)?.getChildAt(0) ?: return
         val width = resources.displayMetrics.widthPixels
         scroll.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec((resources.displayMetrics.heightPixels * .82f).toInt(), View.MeasureSpec.AT_MOST))
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, scroll.measuredHeight.coerceAtMost((resources.displayMetrics.heightPixels * .82f).toInt()))
-        if (Build.VERSION.SDK_INT >= 28) wrap.accessibilityPaneTitle = title
-        activeSheet = dialog
     }
     private fun copyText(title: String, value: String) {
         if(!parentUnlocked()){renderParentLock();return}
@@ -5411,6 +5624,10 @@ class MainActivity : Activity() {
         if (requestCode == 101) {
             GuardEngine.refreshMonitoringDisclosure(this)
             renderUi()
+        }
+        if (requestCode == CAMERA_REQUEST) {
+            cameraDenied = grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED
+            fillChildPairing()
         }
     }
 
