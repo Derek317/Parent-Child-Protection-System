@@ -47,6 +47,22 @@ class ThemeRevealTest {
             assertNull(reveal.get(a))
         } finally { c.pause().stop().destroy(); durationScale.invoke(null, 0f) }
     }
+    @Test fun pausingAParentScreenEndsTheRevealSoTheLockIsNotCoveredByTheOldScreen() {
+        ParentUiAuthFixture.autoApprove = true
+        AppConsent.accept(ctx, AppConsent.acknowledgments)
+        GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, "ParentPrivate928!"); GuardEngine.setBrightTheme(ctx, true)
+        durationScale.invoke(null, 1f)
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            val overlayEmpty = { ViewOverlay::class.java.getDeclaredMethod("isEmpty").apply { isAccessible = true }.invoke(a.window.decorView.overlay) as Boolean }
+            switch.invoke(a, false, a.window.decorView)
+            assertTrue("the reveal should be running", !overlayEmpty() && reveal.get(a) != null)
+            c.pause()
+            assertTrue("old parent pixels left over the lock", overlayEmpty())
+            assertNull(reveal.get(a))
+            assertNotNull(a.window.decorView.findViewWithTag<View>("parent_privacy_lock"))
+        } finally { c.stop().destroy(); durationScale.invoke(null, 0f) }
+    }
     @Test fun withAnimatorsOffTheSwitchIsInstantAndLeavesNoOverlay() {
         durationScale.invoke(null, 0f)
         GuardEngine.setBrightTheme(ctx, false)

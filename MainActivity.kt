@@ -2713,6 +2713,7 @@ class MainActivity : Activity() {
 
     private fun renderParentLock() {
         if(isDestroyed)return
+        themeReveal?.end() // the reveal's snapshot of the old parent screen sits on the decor overlay, above this lock
         val box=LinearLayout(this).apply {
             orientation=LinearLayout.VERTICAL;setPadding(dp(24),dp(48),dp(24),dp(24));tag="parent_privacy_lock"
             isSaveFromParentEnabled=false
@@ -3227,7 +3228,7 @@ class MainActivity : Activity() {
         uiHandler.removeCallbacks(statusTicker); uiHandler.post(statusTicker)
     }
     override fun onPause() {
-        super.onPause(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
+        super.onPause(); themeReveal?.end(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
         if (ModelImportJob.listener === importListener) ModelImportJob.listener = null
         if (InstagramImport.listener === exportListener) InstagramImport.listener = null
         parentAccess.lock()
