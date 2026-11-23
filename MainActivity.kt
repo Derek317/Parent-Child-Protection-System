@@ -4451,6 +4451,8 @@ class MainActivity : Activity() {
             val lead = noticeCard(t, true, "scores_lead_card")
             lead.addView(label(c.title, 14f, t.textSecondary, true, bottomPad = 6))
             lead.addView(label(c.body, 18f, t.textPrimary, true).apply { tag = "scores_lead" })
+            ScoresUi.latestAnalysis(m)?.let { lead.addView(label(ScoresUi.latestAnalysisLine(it), 13f, t.textSecondary, topPad = 10).apply { tag = "scores_latest_analysis" }) }
+            ScoresUi.oldAnalysisHint(m)?.let { lead.addView(label(it, 13f, t.textPrimary, topPad = 6).apply { tag = "scores_old_analysis" }) }
             out.addView(lead)
         }
         // The banner sits above everything else whenever a child state exists and is out of date.

@@ -178,3 +178,35 @@ class CollectionGuideTest : UploadTestBase() {
         try { InstagramExportLink.intent("http://accountscenter.instagram.com/"); fail("plain http must be refused") } catch (_: IllegalArgumentException) {}
     }
 }
+
+/** C5: the parent sees how fresh the analysis is, derived only from score times already received. Invented labels only. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
+class CollectionFreshnessTest {
+    private val ctx get() = ShotSupport.ctx
+    private val day = 86_400_000L
+    private val now = System.currentTimeMillis()
+    private fun policy(method: String) = ScoresModePolicy("p1", true, now - day, method)
+    private fun state() = ScoresModeState("p1", "valid", "accepted", false, null, now - 3_600_000L, 1, 0, now, now, false, true)
+    private fun rows(newest: Long) = listOf(RiskScoreRow("test_account_a", 40.0, null, newest), RiskScoreRow("test_account_b", 10.0, null, newest - 2 * day))
+
+    @Test fun theLatestAnalysisIsTheNewestScoreTimeAndTheHintNeedsUploadAndNineDays() {
+        val fresh = ScoresUi.classify(policy(ScoresMethod.UPLOAD), state(), rows(now - 8 * day), now, active = true)
+        assertEquals(now - 8 * day, ScoresUi.latestAnalysis(fresh)); assertNull(ScoresUi.oldAnalysisHint(fresh, now))
+        val old = ScoresUi.classify(policy(ScoresMethod.UPLOAD), state(), rows(now - 10 * day), now, active = true)
+        assertEquals(ScoresUi.OLD_ANALYSIS_HINT, ScoresUi.oldAnalysisHint(old, now))
+        val capture = ScoresUi.classify(policy(ScoresMethod.CAPTURE), state(), rows(now - 10 * day), now, active = true)
+        assertNull("under capture a quiet week is normal", ScoresUi.oldAnalysisHint(capture, now))
+        assertNull(ScoresUi.latestAnalysis(ScoresUi.classify(policy(ScoresMethod.UPLOAD), state(), emptyList(), now, active = true)))
+    }
+    @Test fun theParentScoresPageShowsTheDateAndTheCalmHint() {
+        ShotSupport.parentReset(); ShotSupport.report(); check(GuardEngine.sendScoresModePolicy(ctx, true, ScoresMethod.UPLOAD))
+        ShotSupport.report(rows = listOf(ScoresReportRow("test_account_a", 62.0, null, now - 10 * day)))
+        val c = ShotSupport.open("scores")
+        try {
+            val texts = UiSupport.texts(c.get().window.decorView)
+            assertTrue(texts.contains(ScoresUi.latestAnalysisLine(now - 10 * day)))
+            assertTrue(texts.contains(ScoresUi.OLD_ANALYSIS_HINT))
+        } finally { c.pause().stop().destroy() }
+    }
+}

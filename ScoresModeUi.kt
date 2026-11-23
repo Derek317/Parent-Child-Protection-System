@@ -24,7 +24,9 @@ internal data class ScoresPageModel(
     /** Set on PAUSED when the model is also not valid: both facts are shown. */
     val alsoModelProblem: String? = null,
     /** The child has not answered the current policy for more than a moment: offer to send it again. */
-    val offerResend: Boolean = false
+    val offerResend: Boolean = false,
+    /** The collection method of the parent's current policy. */
+    val method: String = ScoresMethod.CAPTURE
 )
 
 /**
@@ -80,7 +82,7 @@ internal object ScoresUi {
         val attention = sorted.count { it.score != null && whole(it.score) >= NEEDS_ATTENTION_FROM }
         val review = sorted.count { it.score == null }
         fun model(page: ScoresPage, noReport: Boolean = false, also: String? = null, resend: Boolean = false) =
-            ScoresPageModel(page, sorted, attention, review, state, noReport, state != null && state.stale && page != ScoresPage.OFF, also, resend)
+            ScoresPageModel(page, sorted, attention, review, state, noReport, state != null && state.stale && page != ScoresPage.OFF, also, resend, policy?.method ?: ScoresMethod.CAPTURE)
         if (policy == null || !policy.enabled) return model(ScoresPage.OFF)
         // A report about an older policy says nothing about the current one: the child has not answered yet.
         if (state == null || state.policyId != policy.policyId) return model(ScoresPage.WAITING, noReport = true, resend = now - policy.sentAt > RESEND_AFTER_MS)
@@ -129,6 +131,16 @@ internal object ScoresUi {
         val old = "分數可能已過時 · 最後報告 ${m.state?.receivedAt?.let(::time) ?: ""}"
         return if (m.page == ScoresPage.LIST || m.page == ScoresPage.EMPTY) old else "$base · 分數可能已過時"
     }
+
+    // ---------------- freshness (derived only from score times the parent already has) ----------------
+    const val FRESH_DAYS = 9
+    /** The newest score time on the list: a thread is scored again only when it has new messages, so this is the last analysis that found something new. */
+    fun latestAnalysis(m: ScoresPageModel): Long? = m.rows.maxOfOrNull { it.scoredAt }
+    fun latestAnalysisLine(ms: Long) = "最近一次有新分數的分析：${day(ms)}\nLatest analysis with a new score: ${day(ms)}"
+    const val OLD_ANALYSIS_HINT = "已超過 $FRESH_DAYS 天沒有新的分數。在手動上載方式下，這可能只是子女最近沒有匯入新的 Instagram 資料；可以在方便時輕鬆地問一問。\nNo new scores for more than $FRESH_DAYS days. With manual upload this may simply mean your child has not imported a new Instagram file lately; you could ask lightly when it suits you."
+    /** Only under manual upload, where a gap most likely means no import: under capture a quiet week is normal. */
+    fun oldAnalysisHint(m: ScoresPageModel, now: Long = System.currentTimeMillis()): String? =
+        latestAnalysis(m)?.takeIf { m.method == ScoresMethod.UPLOAD && now - it > FRESH_DAYS * 86_400_000L }?.let { OLD_ANALYSIS_HINT }
 
     // ---------------- dates ----------------
     fun day(ms: Long): String = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date(ms))
