@@ -1,0 +1,7 @@
+# Source files are stored with LF so diffs show only real changes.
+*.kt text eol=lf
+*.js text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.jar binary
