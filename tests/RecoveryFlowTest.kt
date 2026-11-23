@@ -34,7 +34,9 @@ class RecoveryFlowTest {
         GuardEngine.pauseTamperUntilMs=0
     }
     private fun all(v: View):List<View> = listOf(v)+if(v is ViewGroup)(0 until v.childCount).flatMap{all(v.getChildAt(it))}else emptyList()
-    private fun inviteIntent()=Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?token=01234567-89ab-cdef-0123-456789abcdef&pw="+FamilySecurity.encode("ParentPassword928!")))
+    private val inviteKey by lazy { FamilySecurity.newSigningIdentity().publicKey }
+    private fun inviteIntent()=Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?version=43&token=01234567-89ab-cdef-0123-456789abcdef&pw="+
+        FamilySecurity.encode(FamilySecurity.passwordVerifier("ParentPassword928!"))+"&parent="+inviteKey))
     @Test fun externalInviteRequiresExplicitAcceptanceAndIsConsumed() {
         GuardEngine.setRole(ctx,"unconfigured")
         val c=Robolectric.buildActivity(MainActivity::class.java,inviteIntent()).setup()

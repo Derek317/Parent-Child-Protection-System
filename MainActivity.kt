@@ -269,8 +269,6 @@ object GuardEngine {
         "🚀", "🌈", "🍀", "🌻", "🍎", "🍉", "⚽", "🎸"
     )
 
-    private val PAIR_V42_REGEX = Regex("IGGUARD-PAIR-V42:([a-zA-Z0-9\\-]{8,64}):([a-zA-Z0-9_\\-=]+)")
-    private val PAIR_LEGACY_REGEX = Regex("IGGUARD-PAIR:([a-zA-Z0-9\\-]{8,64}):([^\\]\\s]+)")
     private val VALID_IG_HANDLE_REGEX = Regex("^[a-z0-9._]{2,30}$")
 
     // shortcut: regex keyword matching for sexual/grooming DMs, upgrade to on-device classifier if false positives arise
@@ -1050,28 +1048,22 @@ object GuardEngine {
         if (text.length > 16_384) null
         else {
             val v43 = Regex("IGGUARD-PAIR-V43:([a-zA-Z0-9-]{8,64}):([a-zA-Z0-9_=-]+):([a-zA-Z0-9_=-]+)").find(text)
-            val v42 = PAIR_V42_REGEX.find(text)
-            val legacy = PAIR_LEGACY_REGEX.find(text)
             val link = Regex("igguard://pair\\?[^\\s]+", RegexOption.IGNORE_CASE).find(text)?.value
             val uri = link?.let { Uri.parse(it) }
             val token: String; val credential: String; val publicKey: String
             when {
                 v43 != null -> { token = v43.groupValues[1]; credential = FamilySecurity.decode(v43.groupValues[2]); publicKey = v43.groupValues[3] }
-                v42 != null -> { token = v42.groupValues[1]; credential = FamilySecurity.decode(v42.groupValues[2]); publicKey = "" }
-                legacy != null -> { token = legacy.groupValues[1]; credential = legacy.groupValues[2]; publicKey = "" }
                 uri != null && uri.scheme.equals("igguard", true) && uri.host.equals("pair", true) -> {
                     token = uri.getQueryParameter("token") ?: ""
-                    credential = uri.getQueryParameter("pw")?.let { FamilySecurity.decode(it) } ?: uri.getQueryParameter("pin") ?: ""
+                    credential = uri.getQueryParameter("pw")?.let { FamilySecurity.decode(it) } ?: ""
                     publicKey = uri.getQueryParameter("parent") ?: ""
-                    if (uri.getQueryParameter("version") == "43" && publicKey.isEmpty()) return null
                 }
                 else -> return null
             }
-            if (!FamilySecurity.validToken(token)) null
-            else if (publicKey.isNotEmpty()) {
-                if (FamilySecurity.validPublicKey(publicKey) && FamilySecurity.isVerifier(credential)) FamilySecurity.Invite(token, credential, publicKey) else null
-            } else if (isStrongPasswordValid(credential) && !FamilySecurity.isVerifier(credential))
-                FamilySecurity.Invite(token, FamilySecurity.passwordVerifier(credential), "")
+            // New pairings need the parent's command key: a keyless (v42, legacy or pin) invite has no safety code to compare
+            // and the relay refuses such a family. Families paired earlier keep their stored state; nothing re-parses it.
+            if (!FamilySecurity.validToken(token) || publicKey.isEmpty()) null
+            else if (FamilySecurity.validPublicKey(publicKey) && FamilySecurity.isVerifier(credential)) FamilySecurity.Invite(token, credential, publicKey)
             else null
         }
         } catch (_: Exception) { null }
@@ -1092,7 +1084,7 @@ object GuardEngine {
     @Volatile internal var beforeFamilySwitch: ((Context) -> Unit)? = null
     private fun inviteUsable(ctx: Context, invite: FamilySecurity.Invite): Boolean =
         AppConsent.hasAccepted(ctx) && FamilySecurity.validToken(invite.token) && FamilySecurity.isVerifier(invite.passwordVerifier) &&
-            (invite.parentPublicKey.isEmpty() || FamilySecurity.validPublicKey(invite.parentPublicKey)) && pairingBlock(ctx) == null
+            FamilySecurity.validPublicKey(invite.parentPublicKey) && pairingBlock(ctx) == null
 
     /**
      * Only an unconfigured phone may pair freely. A child phone may be re-paired only with the current parent password

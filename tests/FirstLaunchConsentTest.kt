@@ -150,7 +150,7 @@ class FirstLaunchConsentTest {
         GuardEngine.sendAlertFromChild(ctx, "stranger_message", "contact", "private received content")
         assertEquals(0, GuardEngine.pendingDeliveryCount(ctx))
         assertTrue(GuardEngine.captureMessages(ctx, emptyList()).isEmpty())
-        val invite = FamilySecurity.Invite(UUID.randomUUID().toString(), FamilySecurity.passwordVerifier("synthetic928"), "")
+        val invite = FamilySecurity.Invite(UUID.randomUUID().toString(), FamilySecurity.passwordVerifier("synthetic928"), FamilySecurity.newSigningIdentity().publicKey)
         assertFalse(GuardEngine.applyPairing(ctx, invite))
         assertEquals(RelayConsumption.RETRY, GuardEngine.processIncomingRelayLine(ctx, "{}", "child", null))
         GuardEngine.setRole(ctx, "parent")
@@ -174,8 +174,8 @@ class FirstLaunchConsentTest {
         } finally { connection.close(); server.shutdown() }
     }
     @Test fun pairingDeepLinkIsHeldUntilConsentAndStillRequiresPairingConfirmation() {
-        val invite = FamilySecurity.Invite(UUID.randomUUID().toString(), FamilySecurity.passwordVerifier("synthetic928"), "")
-        val link = "igguard://pair?token=${invite.token}&pin=synthetic928"
+        val invite = FamilySecurity.Invite(UUID.randomUUID().toString(), FamilySecurity.passwordVerifier("synthetic928"), FamilySecurity.newSigningIdentity().publicKey)
+        val link = "igguard://pair?version=43&token=${invite.token}&pw=${FamilySecurity.encode(invite.passwordVerifier)}&parent=${invite.parentPublicKey}"
         assertNotNull(GuardEngine.parsePairingString(link))
         val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(link))
         val controller = Robolectric.buildActivity(MainActivity::class.java, intent).setup()

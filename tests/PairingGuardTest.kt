@@ -45,6 +45,25 @@ class PairingGuardTest {
             assertEquals(parentPictures,sheet.findViewWithTag<android.widget.TextView>("pairing_safety_emojis").text.toString())
         } finally {c.pause().stop().destroy()}
     }
+    @Test fun newPairingRefusesAnInviteWithoutTheParentKey() {
+        AppConsent.accept(ctx,AppConsent.acknowledgments)
+        val token="01234567-89ab-cdef-0123-456789abcdef"
+        val keyed=foreignInvite().copy(token=token)
+        val pw=FamilySecurity.encode(keyed.passwordVerifier)
+        for (raw in listOf("[IGGUARD-PAIR-V42:$token:$pw]", "[IGGUARD-PAIR:$token:ParentPassword928]",
+                "igguard://pair?token=$token&pin=ParentPassword928", "igguard://pair?token=$token&pw=$pw",
+                "igguard://pair?version=42&token=$token&pw=$pw", "igguard://pair?version=43&token=$token&pw=$pw&parent="))
+            assertNull(raw,GuardEngine.parsePairingString(raw))
+        assertEquals(keyed,GuardEngine.parsePairingString(link(keyed).toString()))
+        assertFalse("applyPairing refuses a keyless invite too",GuardEngine.applyPairing(ctx,keyed.copy(parentPublicKey="")))
+        assertEquals("unconfigured",GuardEngine.getRole(ctx))
+        val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?token=$token&pin=ParentPassword928"))).setup()
+        try {
+            val sheet=ShadowDialog.getLatestDialog()
+            assertTrue("no confirmation sheet for a keyless link",sheet==null || all(sheet.window!!.decorView).filterIsInstance<Button>().none{it.text.toString().contains("確認配對")})
+            assertEquals("unconfigured",GuardEngine.getRole(ctx))
+        } finally {c.pause().stop().destroy()}
+    }
     @Test fun parentPhoneRefusesPairingAndKeepsEverySecret() {
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
         val token=GuardEngine.getOrCreateFamilyToken(ctx)

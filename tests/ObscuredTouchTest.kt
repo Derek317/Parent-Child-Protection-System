@@ -50,7 +50,8 @@ class ObscuredTouchTest {
     }
     @Test fun pairingConfirmationIsGuarded() {
         val token=UUID.randomUUID().toString()
-        val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?token=$token&pw=${FamilySecurity.encode("ParentPassword928!")}"))).setup()
+        val pw=FamilySecurity.encode(FamilySecurity.passwordVerifier("ParentPassword928!"));val key=FamilySecurity.newSigningIdentity().publicKey
+        val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,Uri.parse("igguard://pair?version=43&token=$token&pw=$pw&parent=$key"))).setup()
         try { assertGuarded(button(ShadowDialog.getLatestDialog().window!!.decorView,"確認配對並切換為子女手機"),"pairing confirm") } finally {c.pause().stop().destroy()}
     }
     @Test fun twoWayCaptureConfirmationsAreGuarded() {
