@@ -1279,9 +1279,11 @@ object GuardEngine {
     fun retireLeftoverRendezvous(ctx: Context, now: Long = System.currentTimeMillis()) {
         try {
             val tokens = synchronized(pollLock) {
+                // Age and count bounds first, whatever runs: a running pairing's own token is fresh, so it is never the one dropped.
+                val kept = storedRendezvous(ctx, now).also { if (prefs(ctx).contains(RENDEZVOUS_TOKENS)) storeRendezvous(ctx, it) }
                 if (pairingInProgress(prefs(ctx).getString(CHILD_KEY_ALIAS, null))) return
                 if (!isParentMode(ctx)) { if (prefs(ctx).contains(RENDEZVOUS_TOKENS)) check(prefs(ctx).edit().remove(RENDEZVOUS_TOKENS).commit()); return }
-                storedRendezvous(ctx, now).also { storeRendezvous(ctx, it) }.map { it.second } // drops expired and surplus entries
+                kept.map { it.second }
             }
             for (token in tokens) CloudRelay.retirePairingRoom(ctx, token) { settled -> if (settled) forgetRendezvous(ctx, token) }
         } catch (_: Exception) {}

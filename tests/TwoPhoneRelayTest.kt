@@ -171,6 +171,7 @@ class TwoPhoneRelayTest {
         TestKeyStore.privateKeys.clear(); TestKeyStore.certificates.clear()
         relay = FakeRelay(); relay.server.start()
         CloudRelay.endpoint = relay.url; CloudRelay.PAIRING_RETRY_MS = 300L
+        GuardEngine.forgetLivePairingsForTest() // machines other tests left in this JVM (e.g. Paired child machines) are not this test's
         GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
     }
     @After fun stop() {
@@ -370,6 +371,17 @@ class TwoPhoneRelayTest {
         relay.server.shutdown(); GuardEngine.retireLeftoverRendezvous(ctx); settle(2_000)
         assertEquals("kept after a network error", setOf(token), rendezvousTokens())
         relay = FakeRelay(); relay.server.start() // for @After
+    }
+
+    /** Storage stays bounded while a pairing runs: an aged entry is dropped, no DELETE is sent, the running pairing's token stays. */
+    @Test fun agedRendezvousEntriesAreDroppedEvenWhileAPairingRuns() {
+        val now = System.currentTimeMillis()
+        val live = GuardEngine.newParentPairing(ctx)                     // a pairing in progress in this process
+        prefs.edit().putStringSet("pairing_rendezvous_tokens", setOf("${now - GuardEngine.RENDEZVOUS_MAX_AGE_MS - 1}:stale", "$now:running")).commit()
+        val before = relay.deletes.get()
+        GuardEngine.retireLeftoverRendezvous(ctx, now); settle(500)
+        assertEquals(setOf("running"), rendezvousTokens()); assertEquals("no request while a pairing runs", before, relay.deletes.get())
+        assertEquals(PS.Idle, live.state)
     }
 
     @Test fun rememberedRendezvousTokensAreBoundedByAgeAndCount() {
