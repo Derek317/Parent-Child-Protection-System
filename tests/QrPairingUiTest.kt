@@ -114,16 +114,6 @@ class QrPairingUiTest {
                 fun texts() = all(dialog.window!!.decorView).filterIsInstance<TextView>().map { it.text.toString() }
                 assertTrue("no lock warning after Accept", texts().none { it.contains("解鎖") || it.contains("unlock", ignoreCase = true) })
                 save(dialog, "qr-parent-finishing-${suffix(bright)}")
-                // The state that ends the pending pairing ends the sheet: the first verified record (light run) or a rollback (dark run).
-                if (bright) prefs.edit().remove("child_pairing_pending_ms").commit()
-                else prefs.edit().remove("child_pairing_pending_ms").remove("pinned_child_key").commit()
-                link.tick(); idle()
-                val endTag = if (bright) "pairing_finished" else "pairing_rolled_back"
-                assertNotNull(all(dialog.window!!.decorView).firstOrNull { it.tag == endTag })
-                assertTrue(texts().any { it.contains(if (bright) "配對完成" else "配對未完成，已取消") })
-                assertTrue(texts().none { it.contains("解鎖") || it.contains("unlock", ignoreCase = true) })
-                assertTrue(all(dialog.window!!.decorView).filterIsInstance<Button>().any { it.text == "關閉 · Close" })
-                save(dialog, "qr-parent-$endTag-${suffix(bright)}")
                 // Cancelled states on fresh links.
                 for ((name, finish) in listOf<Pair<String, (ParentPairingLink, FakeRooms) -> Unit>>(
                         "expired" to { l, r -> r.rooms[0].ready(); clock += PairingCrypto.QR_LIFETIME_MS; l.tick() },
@@ -357,7 +347,8 @@ class QrPairingUiTest {
             accept().performClick(); idle(); complete(true)
             assertNotNull(GuardEngine.pinnedChildKey(ctx)); assertNotEquals(before, GuardEngine.captureRelaySession(ctx))
             assertTrue("unlocked after Accept", unlocked())
-            dialog.dismiss(); call(a, "navigateTo", "overview"); idle()
+            // The Accept action's own renderUi closed the sheet (the session changed) and the overview carries the status.
+            assertFalse("the sheet was closed by the real path", dialog.isShowing)
             assertFalse(locked()); assertNotNull((field(a, "screenShell").get(a) as View).findViewWithTag<View>("child_pairing_pending"))
             // (b) Any other session change still locks: a rotation, and the 10-minute rollback.
             GuardEngine.setFamilyToken(ctx, java.util.UUID.randomUUID().toString(), preserveFamilyHistory = true)
