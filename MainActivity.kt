@@ -2921,6 +2921,15 @@ class MainActivity : Activity() {
             )
         }
     }
+    /**
+     * The palette for everything inside an emphasised notice card ([noticeCard] with hero = true). Light: a solid navy card, so it takes
+     * the dark inks (white titles, #9CCBFF links, dark status and risk colours) with white-on-navy / navy-on-white buttons. Dark: [t] itself.
+     */
+    private fun onNotice(t: ThemeColors): ThemeColors = if (t != themeColors(true)) t else themeColors(false).copy(
+        bgCard = "#12345A", bgHero = "#12345A", borderSubtle = "#12345A", textPrimary = "#FFFFFF",
+        accentSeafoam = "#9CCBFF", accentPowderSky = "#9CCBFF",
+        btnPrimaryBg = "#FFFFFF", btnPrimaryText = "#12345A", btnSecondaryBg = "#12345A", btnSecondaryText = "#FFFFFF"
+    )
     /** The system font, so Chinese and Latin text in one line come from one family (no bundled font). */
     internal fun font(bold: Boolean = false): Typeface = fonts.getOrPut(bold) { Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL) }
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
@@ -4208,7 +4217,8 @@ class MainActivity : Activity() {
             addView(icon(glyph, tint, 24))
             addView(label(text, sizeSp, t.textPrimary, bold).apply { setPadding(dp(10), 0, 0, 0); if (tag != null) this.tag = tag }, LinearLayout.LayoutParams(0, -2, 1f))
         }
-    private fun noticeCard(t: ThemeColors, hero: Boolean = false, cardTag: String? = null): LinearLayout = makeCard(t, hero).apply { if (cardTag != null) tag = cardTag }
+    /** hero = an emphasised card: drawn with [onNotice], and everything added inside must use that palette too. */
+    private fun noticeCard(t: ThemeColors, hero: Boolean = false, cardTag: String? = null): LinearLayout = makeCard(if (hero) onNotice(t) else t, hero).apply { if (cardTag != null) tag = cardTag }
     /** Empty, loading, error and inline-warning states: one notice card with one icon line. The icon carries the kind, so colour is never the only signal. */
     private enum class Note(val glyph: String) { EMPTY("info"), LOADING("clock"), ERROR("shield-warning"), WARNING("shield-warning") }   // ERROR (coral) also marks danger warnings
     private fun stateNote(kind: Note, text: String, t: ThemeColors, cardTag: String? = null): LinearLayout = noticeCard(t, cardTag = cardTag).apply {
@@ -4240,37 +4250,37 @@ class MainActivity : Activity() {
     private fun renderScoresDecisionCards(t: ThemeColors) {
         val s = RiskLocal.status(this)
         if (RiskLocal.captureHeld(this)) {
-            val card = noticeCard(t, true, "scores_hold_card")
-            card.addView(label(ScoresChildCopy.HOLD_TITLE, 16f, t.textPrimary, true, bottomPad = 6))
-            card.addView(label(ScoresChildCopy.HOLD_BODY, 14f, t.textSecondary, bottomPad = 8))
-            card.addView(label(ScoresChildCopy.HOLD_ASK, 14f, t.textPrimary, true, bottomPad = 8))
-            card.addView(actionButton(ScoresChildCopy.HOLD_ALLOW, t.btnSecondaryBg, t.btnSecondaryText, critical = true) { RiskLocal.releaseCaptureHold(this); ScoresEngineBridge.acknowledgeNotice(this, "off"); renderUi() }.apply { tag = "scores_hold_agree" })
+            val card = noticeCard(t, true, "scores_hold_card"); val n = onNotice(t)
+            card.addView(label(ScoresChildCopy.HOLD_TITLE, 16f, n.textPrimary, true, bottomPad = 6))
+            card.addView(label(ScoresChildCopy.HOLD_BODY, 14f, n.textSecondary, bottomPad = 8))
+            card.addView(label(ScoresChildCopy.HOLD_ASK, 14f, n.textPrimary, true, bottomPad = 8))
+            card.addView(actionButton(ScoresChildCopy.HOLD_ALLOW, n.btnSecondaryBg, n.btnSecondaryText, critical = true, t = n) { RiskLocal.releaseCaptureHold(this); ScoresEngineBridge.acknowledgeNotice(this, "off"); renderUi() }.apply { tag = "scores_hold_agree" })
             rootContainer.addView(card)
         }
         if (s.pendingPolicy) {
-            val card = noticeCard(t, true, "scores_consent_card")
+            val card = noticeCard(t, true, "scores_consent_card"); val n = onNotice(t)
             val again = s.consent == "reconsent"
             val changed = s.consent == "accepted"   // agreed before; the parent now asks for another method
-            card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_TITLE else if (again) ScoresChildCopy.RECONSENT_CARD_TITLE else ScoresChildCopy.CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 8))
-            card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_BODY else if (again) ScoresChildCopy.RECONSENT_CARD_BODY else ScoresChildCopy.CARD_BODY, 14f, t.textSecondary, bottomPad = 8))
-            card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") }.apply { tag = "scores_consent_open" })
+            card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_TITLE else if (again) ScoresChildCopy.RECONSENT_CARD_TITLE else ScoresChildCopy.CARD_TITLE, 16f, n.textPrimary, true, bottomPad = 8))
+            card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_BODY else if (again) ScoresChildCopy.RECONSENT_CARD_BODY else ScoresChildCopy.CARD_BODY, 14f, n.textSecondary, bottomPad = 8))
+            card.addView(actionButton(ScoresChildCopy.CARD_ACTION, n.btnPrimaryBg, n.btnPrimaryText, t = n) { scoresReadOnly = false; navigateTo("scores_consent") }.apply { tag = "scores_consent_open" })
             rootContainer.addView(card)
         }
         // The parent asked for a fresh export. The child may ignore it; nothing waits on it.
         if (RiskLocal.importRequestPending(this)) {
-            val card = noticeCard(t, true, "scores_import_request_card")
-            card.addView(label(ScoresChildCopy.REQUEST_CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 8))
-            card.addView(actionButton(ScoresChildCopy.EXPORT_GUIDE_TITLE, t.btnPrimaryBg, t.btnPrimaryText) { showExportGuide(t) }.apply { tag = "scores_import_request_guide" })
-            card.addView(actionButton(ScoresChildCopy.OK_DISMISS, t.btnSecondaryBg, t.btnSecondaryText) { RiskLocal.dismissImportRequest(this); renderUi() }.apply { tag = "scores_import_request_dismiss" })
+            val card = noticeCard(t, true, "scores_import_request_card"); val n = onNotice(t)
+            card.addView(label(ScoresChildCopy.REQUEST_CARD_TITLE, 16f, n.textPrimary, true, bottomPad = 8))
+            card.addView(actionButton(ScoresChildCopy.EXPORT_GUIDE_TITLE, n.btnPrimaryBg, n.btnPrimaryText, t = n) { showExportGuide(t) }.apply { tag = "scores_import_request_guide" })
+            card.addView(actionButton(ScoresChildCopy.OK_DISMISS, n.btnSecondaryBg, n.btnSecondaryText, t = n) { RiskLocal.dismissImportRequest(this); renderUi() }.apply { tag = "scores_import_request_dismiss" })
             rootContainer.addView(card)
         }
     }
     private fun renderScoresChildBlocks(t: ThemeColors) {
         val s = RiskLocal.status(this)
         ScoresEngineBridge.pendingNotice(this)?.let {
-            val card = noticeCard(t, true, "scores_change_card")
-            card.addView(label(ScoresChildCopy.CHANGE_CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 6))
-            card.addView(textAction(ScoresChildCopy.CHANGE_CARD_ACTION) { navigateTo("scores_change") })
+            val card = noticeCard(t, true, "scores_change_card"); val n = onNotice(t)
+            card.addView(label(ScoresChildCopy.CHANGE_CARD_TITLE, 16f, n.textPrimary, true, bottomPad = 6))
+            card.addView(textAction(ScoresChildCopy.CHANGE_CARD_ACTION, t = n) { navigateTo("scores_change") })
             rootContainer.addView(card)
         }
         if (s.policyEnabled || s.consent != "none") renderScoresStatus(s, t)
@@ -4504,11 +4514,11 @@ class MainActivity : Activity() {
     private fun showScoresModel(out: LinearLayout, m: ScoresPageModel, t: ThemeColors) {
         val c = ScoresUi.copy(m)
         if (m.page == ScoresPage.LIST) {
-            val lead = noticeCard(t, true, "scores_lead_card")
-            lead.addView(label(c.title, 14f, t.textSecondary, true, bottomPad = 6))
-            lead.addView(label(c.body, 18f, t.textPrimary, true).apply { tag = "scores_lead" })
-            ScoresUi.latestAnalysis(m)?.let { lead.addView(label(ScoresUi.latestAnalysisLine(it), 13f, t.textSecondary, topPad = 10).apply { tag = "scores_latest_analysis" }) }
-            ScoresUi.oldAnalysisHint(m)?.let { lead.addView(label(it, 13f, t.textPrimary, topPad = 6).apply { tag = "scores_old_analysis" }) }
+            val lead = noticeCard(t, true, "scores_lead_card"); val n = onNotice(t)
+            lead.addView(label(c.title, 14f, n.textSecondary, true, bottomPad = 6))
+            lead.addView(label(c.body, 18f, n.textPrimary, true).apply { tag = "scores_lead" })
+            ScoresUi.latestAnalysis(m)?.let { lead.addView(label(ScoresUi.latestAnalysisLine(it), 13f, n.textSecondary, topPad = 10).apply { tag = "scores_latest_analysis" }) }
+            ScoresUi.oldAnalysisHint(m)?.let { lead.addView(label(it, 13f, n.textPrimary, topPad = 6).apply { tag = "scores_old_analysis" }) }
             out.addView(lead)
         }
         // The banner sits above everything else whenever a child state exists and is out of date.
@@ -4519,18 +4529,18 @@ class MainActivity : Activity() {
             out.addView(banner)
         }
         if (m.page != ScoresPage.LIST) {
-            val card = noticeCard(t, true, "scores_state_card")
-            card.addView(iconLine(scoresStateIcon(m.page), t.warmHoney, c.title, t, 20f, "scores_state_title"))
-            card.addView(label(c.body, 15f, t.textSecondary, bottomPad = 10))
-            card.addView(label(c.next, 15f, t.textPrimary, true).apply { tag = "scores_next_step" })
+            val card = noticeCard(t, true, "scores_state_card"); val n = onNotice(t)
+            card.addView(iconLine(scoresStateIcon(m.page), n.warmHoney, c.title, n, 20f, "scores_state_title"))
+            card.addView(label(c.body, 15f, n.textSecondary, bottomPad = 10))
+            card.addView(label(c.next, 15f, n.textPrimary, true).apply { tag = "scores_next_step" })
             when (m.page) {
-                ScoresPage.OFF, ScoresPage.WITHDRAWN -> card.addView(actionButton("前往「家庭」", t.btnPrimaryBg, t.btnPrimaryText) { navigateTo("family") }.apply { tag = "scores_go_family" })
-                ScoresPage.ERROR -> card.addView(actionButton("重試", t.btnPrimaryBg, t.btnPrimaryText) { renderUi() }.apply { tag = "scores_retry" })
+                ScoresPage.OFF, ScoresPage.WITHDRAWN -> card.addView(actionButton("前往「家庭」", n.btnPrimaryBg, n.btnPrimaryText, t = n) { navigateTo("family") }.apply { tag = "scores_go_family" })
+                ScoresPage.ERROR -> card.addView(actionButton("重試", n.btnPrimaryBg, n.btnPrimaryText, t = n) { renderUi() }.apply { tag = "scores_retry" })
                 else -> {}
             }
             if (m.offerResend) {
-                card.addView(label(ScoresUi.RESEND_HINT, 13f, t.textSecondary, topPad = 8, bottomPad = 4))
-                card.addView(actionButton(ScoresUi.RESEND, t.btnSecondaryBg, t.btnSecondaryText) {
+                card.addView(label(ScoresUi.RESEND_HINT, 13f, n.textSecondary, topPad = 8, bottomPad = 4))
+                card.addView(actionButton(ScoresUi.RESEND, n.btnSecondaryBg, n.btnSecondaryText, t = n) {
                     val ok = ScoresEngineBridge.resendPolicy(this)
                     Toast.makeText(this, if (ok) "已再次送出。" else ScoresUi.RESEND_FAILED, Toast.LENGTH_LONG).show(); renderUi()
                 }.apply { tag = "scores_resend" })
@@ -5083,9 +5093,9 @@ class MainActivity : Activity() {
         minimumHeight = dp(54); setPadding(dp(14), dp(14), dp(14), dp(14)); isSaveEnabled = false
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(12)) }
     }
-    private fun actionButton(title: String, hexBg: String, hexText: String, critical: Boolean = false, onClick: () -> Unit): Button =
+    private fun actionButton(title: String, hexBg: String, hexText: String, critical: Boolean = false, t: ThemeColors = currentTheme(), onClick: () -> Unit): Button =
         (if (critical) ObscuredAwareButton(this, { pageMotion?.isRunning == true || themeReveal?.isRunning == true }) { warnObscured() } else Button(this)).apply {
-        text = title; actionLook(this, hexBg, hexText); setOnClickListener(sessionClick(onClick))
+        text = title; actionLook(this, hexBg, hexText, t); setOnClickListener(sessionClick(onClick))
     }
     /** The action-button look only (no click handling). Disabled = the same fill at half alpha and the text at 70 % (still readable on the dark fill), no ripple. */
     internal fun actionLook(button: Button, hexBg: String, hexText: String, t: ThemeColors = currentTheme()) = button.apply {
@@ -5126,8 +5136,8 @@ class MainActivity : Activity() {
         setPadding(dp(10), dp(12), dp(10), dp(12))
     }
     /** The third button level: a text link (no fill, no border, 48 dp target). [ink] is the text colour; deletes pass the danger token so they stay as visible as before. */
-    private fun textAction(title: String, ink: String? = null, onClick: () -> Unit): Button = Button(this).apply {
-        val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
+    private fun textAction(title: String, ink: String? = null, t: ThemeColors = currentTheme(), onClick: () -> Unit): Button = Button(this).apply {
+        text = title; textSize = 13f; typeface = font(true); isAllCaps = false
         setTextColor(color(ink ?: t.accentSeafoam)); background = ripple(TRANSPARENT_FILL, 10, t = t); minimumHeight = dp(48)
         gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(dp(12), dp(10), dp(12), dp(10)); setOnClickListener(sessionClick(onClick))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply{setMargins(-dp(12),dp(4),0,dp(6))}   // text lines up with the content edge; the ripple uses the gutter

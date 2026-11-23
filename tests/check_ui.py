@@ -85,6 +85,15 @@ class Checks(unittest.TestCase):
               ('textPrimary','bgCanvas'),('textSecondary','bgCanvas'),('accentSeafoam','bgCanvas'),('warmHoney','bgCanvas'),('warmCoral','bgCanvas'),('riskLow','bgCanvas'),
               ('textPrimary','bgHero'),('textSecondary','bgHero'),('textMuted','bgCard')]:
     self.assertGreaterEqual(contrast(p[a],p[b]),4.5,(a,b,p[a],p[b]))
+ def test_contrast_inside_emphasised_notice_cards(self):
+  # The dark palette with the onNotice() overrides (light mode's navy card).
+  palettes=re.findall(r'ThemeColors\(\s*bgCanvas.*?\n            \)',S,re.S)
+  block=S.split('fun onNotice(',1)[1].split('\n    )',1)[0]
+  n={**dict(re.findall(r'(\w+) = "(#[0-9A-Fa-f]{6})"',palettes[1])),**dict(re.findall(r'(\w+) = "(#[0-9A-Fa-f]{6})"',block))}
+  self.assertEqual(n['bgCard'],'#12345A')
+  for a,b in [('textPrimary','bgCard'),('textSecondary','bgCard'),('textMuted','bgCard'),('accentSeafoam','bgCard'),('warmHoney','bgCard'),('warmCoral','bgCard'),('riskLow','bgCard'),
+              ('btnPrimaryText','btnPrimaryBg'),('btnSecondaryText','btnSecondaryBg')]:
+   self.assertGreaterEqual(contrast(n[a],n[b]),4.5,('notice',a,b,n[a],n[b]))
  def test_dialogs_are_built_only_through_the_themed_alert_helper(self):
   self.assertEqual(S.count('AlertDialog.Builder('),1,'build dialogs with alert() so they are themed, tracked and session-guarded')
 if __name__=='__main__': unittest.main()
