@@ -1,5 +1,6 @@
 package app.family.igguard
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
 import java.security.MessageDigest
@@ -38,6 +39,51 @@ object FamilyRelay {
     fun childAuthorization(publicKey:String,scope:String,token:String):String = authorization(JSONObject().put("v",1).put("role","child")
         .put("room",room(publicKey,scope)).put("scope",scope).put("capability",childCapability(token)))
     private fun authorization(value:JSONObject)="IGGuard "+encoded(value.toString().toByteArray(Charsets.UTF_8))
+
+    /** A v2 parent proof registers or replaces the room's child key. [childKey] is the child's P-256 SPKI text; it is sent unpadded,
+     * the form the relay compares byte for byte with the child's own v2 proof. The signature is DER (base64url), as in v1. */
+    fun parentAuthorizationV2(identity:FamilySecurity.SigningIdentity,scope:String,token:String,childKey:String,now:Long=System.currentTimeMillis(),nonce:String=UUID.randomUUID().toString()):String {
+        require(PairingCrypto.validP256Key(childKey)) { "Invalid child key" }
+        val room=room(identity.publicKey,scope)
+        val capabilityHash=capabilityHash(childCapability(token))
+        val child=encoded(decoder.decode(childKey))
+        val proof=listOf("igguard-relay-auth-v2","parent",room,scope,now.toString(),nonce,capabilityHash,child).joinToString("\n")
+        val signature=encoded(FamilySecurity.signBytes(proof.toByteArray(Charsets.UTF_8),identity.privateKey))
+        return authorization(JSONObject().put("v",2).put("role","parent").put("room",room).put("scope",scope)
+            .put("public_key",encoded(decoder.decode(identity.publicKey))).put("capability_hash",capabilityHash).put("child_key",child)
+            .put("ts_ms",now).put("nonce",nonce).put("signature",signature))
+    }
+    /** A v2 child proof: the v1 capability plus a signature by [child]'s Keystore key over the room, time, nonce and sha256(capability).
+     * [sign] returns a DER ECDSA-P256-SHA256 signature; it is injectable only so JVM vectors can sign with a raw test key. */
+    fun childAuthorizationV2(publicKey:String,scope:String,token:String,child:FamilySecurity.ChildSigningKey,now:Long=System.currentTimeMillis(),
+        nonce:String=UUID.randomUUID().toString(),sign:(ByteArray)->ByteArray={FamilySecurity.signChildBytes(it,child.alias)}):String {
+        val room=room(publicKey,scope)
+        val capability=childCapability(token)
+        val proof=listOf("igguard-relay-auth-v2","child",room,scope,now.toString(),nonce,capabilityHash(capability)).joinToString("\n")
+        val signature=encoded(sign(proof.toByteArray(Charsets.UTF_8)))
+        return authorization(JSONObject().put("v",2).put("role","child").put("room",room).put("scope",scope).put("capability",capability)
+            .put("child_key",encoded(decoder.decode(child.publicKey))).put("ts_ms",now).put("nonce",nonce).put("signature",signature))
+    }
+
+    /** True only for a `ready` whose `features` array lists "child_proof"; an older relay omits the field. */
+    fun supportsChildProof(ready:JSONObject):Boolean {
+        val features=ready.opt("features") as? JSONArray ?: return false
+        return ready.opt("type")=="ready" && (0 until features.length()).any{features.opt(it)=="child_proof"}
+    }
+
+    enum class ChildConnectOutcome { PARENT_NOT_REGISTERED, CHILD_KEY_NOT_REGISTERED, UNAUTHORIZED, ROOM_RETIRED, OTHER }
+    /** Classifies a failed child socket upgrade from its HTTP status and the relay body `{"error":{"code":…,"retry_after_ms":…}}`.
+     * 401 and 410 are decided by status alone, as CloudRelay does; the two 409s need the code because they mean different waits. */
+    fun childConnectOutcome(status:Int?,body:String?):ChildConnectOutcome {
+        val code=body?.takeIf{it.length<=8192}?.let{try{JSONObject(it).optJSONObject("error")?.opt("code") as? String}catch(_:Exception){null}}
+        return when {
+            status==401 -> ChildConnectOutcome.UNAUTHORIZED
+            status==410 -> ChildConnectOutcome.ROOM_RETIRED
+            status==409 && code=="parent_not_registered" -> ChildConnectOutcome.PARENT_NOT_REGISTERED
+            status==409 && code=="child_key_not_registered" -> ChildConnectOutcome.CHILD_KEY_NOT_REGISTERED
+            else -> ChildConnectOutcome.OTHER
+        }
+    }
 
     fun socketUrl(endpoint:String,room:String,allowLocal:Boolean=false):String {
         require(room.matches(Regex("[a-f0-9]{64}")))
