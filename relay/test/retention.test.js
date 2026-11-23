@@ -87,6 +87,22 @@ test('idle registration expiry purges data and retires the room for good', async
   } finally { await mf.dispose(); }
 });
 
+test('a parent DELETE answers 204 for a never-registered, an already-retired and an expired room', async () => {
+  const mf = runtime();
+  try {
+    const remove = f => mf.dispatchFetch(`https://relay.example/v1/rooms/${f.room}`, { method: 'DELETE', headers: { Authorization: header(f) } });
+    const fresh = family();
+    assert.equal((await remove(fresh)).status, 204);                       // never registered
+    assert.equal((await remove(fresh)).status, 204);                       // already retired
+    const idle = family('01234567-89ab-cdef-0123-456789abcdef'), p = await connection(mf, idle); p.close();
+    const metadata = await owner(mf, idle);
+    metadata.last_active = Date.now() - 90 * day - 1;
+    await sql(mf, idle.room, "UPDATE metadata SET value=? WHERE key='owner'", JSON.stringify(metadata));
+    assert.equal((await remove(idle)).status, 204);                        // registration expired
+    assert.deepEqual((await sql(mf, idle.room, 'SELECT key FROM metadata')).map(r => r.key), ['retired']);
+  } finally { await mf.dispose(); }
+});
+
 test('retirement survives restart and in-flight publish cannot recreate the room', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ig-retention-'));
   let mf = runtime(directory);
