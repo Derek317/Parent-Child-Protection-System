@@ -78,6 +78,92 @@ class RenderTest {
     }
 }
 
+/** Light and dark renders of the screens rebuilt on the theme tokens: consent, parent lock, storage failure, a sheet's Close, a disabled button. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], qualifiers = "w390dp-h844dp-mdpi")
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class ThemedScreensRenderTest {
+    private val ctx get() = RuntimeEnvironment.getApplication()
+    private fun suffix(bright: Boolean) = if (bright) "light" else "dark"
+    private fun content(a: MainActivity) = a.findViewById<View>(android.R.id.content)
+    private fun views(v: View): List<View> = listOf(v) + if (v is android.view.ViewGroup) (0 until v.childCount).flatMap { views(v.getChildAt(it)) } else emptyList()
+    @Test fun firstRunConsentInBothThemes() {
+        for (bright in listOf(true, false)) {
+            ctx.getSharedPreferences("ig_guard_consent", Context.MODE_PRIVATE).edit().clear().commit()
+            LocalVault.preferences(ctx).edit().clear().commit(); GuardEngine.setBrightTheme(ctx, bright)
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+            try {
+                val page = content(c.get())
+                ShotSupport.save(page, "tier1-consent-top-" + suffix(bright), 390, 844)
+                val scroll = page.findViewWithTag<android.widget.ScrollView>("first_launch_consent")
+                scroll.scrollTo(0, scroll.getChildAt(0).height)
+                ShotSupport.save(page, "tier1-consent-choice-disabled-" + suffix(bright), 390, 844)
+                for (tag in AppConsent.acknowledgments) page.findViewWithTag<android.widget.CheckBox>(tag).isChecked = true
+                assertTrue(page.findViewWithTag<View>("consent_accept").isEnabled)
+                scroll.scrollTo(0, scroll.getChildAt(0).height)
+                ShotSupport.save(page, "tier1-consent-choice-ready-" + suffix(bright), 390, 844)
+            } finally { c.stop().destroy() }
+        }
+        GuardEngine.setBrightTheme(ctx, true)
+    }
+    @Test fun parentLockInBothThemes() {
+        ParentUiAuthFixture.autoApprove = false
+        try {
+            for (bright in listOf(true, false)) {
+                LocalVault.preferences(ctx).edit().clear().commit(); GuardEngine.setRole(ctx, "parent"); GuardEngine.setBrightTheme(ctx, bright)
+                val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+                try {
+                    assertTrue(views(c.get().window.decorView).any { it.tag == "parent_privacy_lock" })
+                    ShotSupport.save(content(c.get()), "tier1-parent-lock-" + suffix(bright), 390, 844)
+                } finally { c.pause().stop().destroy() }
+            }
+        } finally { ParentUiAuthFixture.autoApprove = true; GuardEngine.setBrightTheme(ctx, true) }
+    }
+    @Test fun storageFailureInBothThemes() {
+        val raw = ctx.getSharedPreferences("ig_guard_prefs", Context.MODE_PRIVATE)
+        for (bright in listOf(true, false)) {
+            ctx.deleteDatabase("family_evidence.db"); raw.edit().clear().commit()
+            LocalVault.preferences(ctx).edit().putString("role", "parent").putString("parent_master_password", "SyntheticOnly928!").commit()
+            GuardEngine.setBrightTheme(ctx, bright)
+            raw.edit().putString("parent_master_password", "corrupted encrypted value").commit()
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+            try {
+                assertTrue(views(c.get().window.decorView).filterIsInstance<android.widget.TextView>().any { it.text.toString().contains("無法開啟加密儲存空間") })
+                ShotSupport.save(content(c.get()), "tier1-storage-failure-" + suffix(bright), 390, 844)
+            } finally { c.pause().stop().destroy() }
+        }
+        raw.edit().clear().commit(); GuardEngine.setBrightTheme(ctx, true)
+    }
+    @Test fun alertDetailSheetWithSecondaryCloseInBothThemes() {
+        for (bright in listOf(true, false)) {
+            ctx.deleteDatabase("family_evidence.db"); LocalVault.preferences(ctx).edit().clear().commit()
+            GuardEngine.setFamilyToken(ctx, java.util.UUID.randomUUID().toString()); GuardEngine.setRole(ctx, "parent"); GuardEngine.setBrightTheme(ctx, bright)
+            GuardEngine.recordParentAlert(ctx, org.json.JSONObject().put("type", "alert").put("event_id", "e1").put("sender", "test_account_a").put("text", "Synthetic test message").put("reason", "stranger_message").put("ts_ms", System.currentTimeMillis()), "relay:e1")
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+            try {
+                val t = MainActivity::class.java.getDeclaredMethod("currentTheme").apply { isAccessible = true }.invoke(a)
+                MainActivity::class.java.declaredMethods.first { it.name == "showAlertDetails" }.apply { isAccessible = true }.invoke(a, GuardEngine.getParentAlerts(ctx).first(), t)
+                ShotSupport.shootDialog("tier1-sheet-alert-detail-" + suffix(bright), 390, 1800)
+            } finally { c.pause().stop().destroy() }
+        }
+        GuardEngine.setBrightTheme(ctx, true)
+    }
+    @Test fun rolePageWithDisabledContinueInBothThemes() {
+        for (bright in listOf(true, false)) {
+            ctx.deleteDatabase("family_evidence.db"); LocalVault.preferences(ctx).edit().clear().commit()
+            GuardEngine.setRole(ctx, "unconfigured"); GuardEngine.setBrightTheme(ctx, bright)
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+            try {
+                UiSupport.nav(c.get(), "role")
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+                assertFalse(views(c.get().window.decorView).single { it.tag == "continue_role" }.isEnabled)
+                ShotSupport.shoot(c.get(), "tier1-role-disabled-continue-" + suffix(bright), 390, 844)
+            } finally { c.pause().stop().destroy() }
+        }
+        GuardEngine.setBrightTheme(ctx, true)
+    }
+}
+
 /** Seeds and renders the scores-only screens to PNG. Labels are invented; no message text is ever seeded. */
 internal object ShotSupport {
     val ctx get() = RuntimeEnvironment.getApplication()
