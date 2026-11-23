@@ -37,7 +37,9 @@ internal class ParentPairingLink(
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     enum class Relay { CONNECTING, READY, TOO_OLD, REFUSED, UNREACHABLE }
-    enum class Outcome { NONE, ACCEPTED, NOT_STORED }
+    /** After ACCEPTED the pairing is pending in GuardEngine; it ends FINISHED (the child's first verified record cleared the
+     *  pending state with K still pinned) or ROLLED_BACK (10-minute rollback or the parent's own cancel unpinned K). */
+    enum class Outcome { NONE, ACCEPTED, NOT_STORED, FINISHED, ROLLED_BACK }
 
     val machine = GuardEngine.newParentPairing(ctx)
     var relay = Relay.CONNECTING; private set
@@ -47,7 +49,8 @@ internal class ParentPairingLink(
     private var start: ParentPairing.Start? = null
     private var sent: Outgoing? = null
     private var retired = false
-    private val ticker = object : Runnable { override fun run() { tick(); if (!ended) main.postDelayed(this, 1_000L) } }
+    private var pinned: String? = null
+    private val ticker = object : Runnable { override fun run() { tick(); if (!ended || outcome == Outcome.ACCEPTED) main.postDelayed(this, 1_000L) } }
     val ended get() = machine.state is ParentPairingState.Cancelled || outcome != Outcome.NONE
     /** The QR text, only while it may be on screen: shown, not expired, and the relay proved it supports child keys (design 4.5). */
     val qrText: String? get() = start?.qrText?.takeIf { relay == Relay.READY && machine.state is ParentPairingState.ShowingQr }
@@ -101,18 +104,30 @@ internal class ParentPairingLink(
         outcome = if (stored != null) Outcome.ACCEPTED else Outcome.NOT_STORED
         socket?.close(); socket = null
         // Nothing was stored: the rendezvous room has no further use.
-        if (stored == null) retire(token)
-        main.removeCallbacks(ticker)
+        if (stored == null) { retire(token); main.removeCallbacks(ticker) }
+        else pinned = GuardEngine.pinnedChildKey(ctx) // the ticker keeps watching the pending pairing
         onChange()
         return stored != null
     }
 
     fun tick() {
+        if (outcome == Outcome.ACCEPTED) { settle(); return }
         if (ended) return
         machine.expire(clock())
         if (ended) finish() else onChange()
     }
-    fun cancel() { if (!ended) { machine.cancel(); finish() } }
+    /** After Accept a closed sheet stops watching; the pending pairing itself goes on (overview, GuardEngine). */
+    fun cancel() { if (outcome == Outcome.ACCEPTED) main.removeCallbacks(ticker); if (!ended) { machine.cancel(); finish() } }
+
+    /** After Accept: the same state that ends the pending pairing ends this sheet. The 10-minute rollback is checked here too,
+     *  because the overview that normally runs it is not rendered while the parent UI is locked. */
+    private fun settle() {
+        GuardEngine.expireUnconfirmedChildPairing(ctx, clock())
+        if (GuardEngine.childPairingPending(ctx)) return
+        outcome = if (pinned != null && GuardEngine.pinnedChildKey(ctx) == pinned) Outcome.FINISHED else Outcome.ROLLED_BACK
+        main.removeCallbacks(ticker)
+        onChange()
+    }
 
     private fun finish() {
         socket?.close(); socket = null

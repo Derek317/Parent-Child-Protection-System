@@ -111,7 +111,17 @@ class QrPairingUiTest {
                 assertTrue(acceptTexts.any { it.contains("用此手機的螢幕鎖或生物辨識確認") && it.contains("this phone's screen lock or biometric") })
                 assertTrue(acceptTexts.none { it.contains("密碼") || it.contains("password", ignoreCase = true) })
                 assertTrue(link.accept())
+                fun texts() = all(dialog.window!!.decorView).filterIsInstance<TextView>().map { it.text.toString() }
                 save(dialog, "qr-parent-finishing-${suffix(bright)}")
+                // The state that ends the pending pairing ends the sheet: the first verified record (light run) or a rollback (dark run).
+                if (bright) prefs.edit().remove("child_pairing_pending_ms").commit()
+                else prefs.edit().remove("child_pairing_pending_ms").remove("pinned_child_key").commit()
+                link.tick(); idle()
+                val endTag = if (bright) "pairing_finished" else "pairing_rolled_back"
+                assertNotNull(all(dialog.window!!.decorView).firstOrNull { it.tag == endTag })
+                assertTrue(texts().any { it.contains(if (bright) "配對完成" else "配對未完成，已取消") })
+                assertTrue(all(dialog.window!!.decorView).filterIsInstance<Button>().any { it.text == "關閉 · Close" })
+                save(dialog, "qr-parent-$endTag-${suffix(bright)}")
                 // Cancelled states on fresh links.
                 for ((name, finish) in listOf<Pair<String, (ParentPairingLink, FakeRooms) -> Unit>>(
                         "expired" to { l, r -> r.rooms[0].ready(); clock += PairingCrypto.QR_LIFETIME_MS; l.tick() },

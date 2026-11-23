@@ -3983,6 +3983,14 @@ class MainActivity : Activity() {
                 body.addView(stateNote(Note.LOADING, "正在完成… 子女手機收到確認後，會傳送第一個已核實回報。\nFinishing… once the child phone has the confirmation, it sends its first verified report.", t, cardTag = "pairing_finishing"))
                 closeButton("關閉 · Close")
             }
+            link.outcome == ParentPairingLink.Outcome.FINISHED -> {
+                body.addView(stateNote(Note.EMPTY, "配對完成：已收到子女手機的第一個已核實回報。\nPairing complete: the child phone's first verified report has arrived.", t, cardTag = "pairing_finished"))
+                closeButton("關閉 · Close")
+            }
+            link.outcome == ParentPairingLink.Outcome.ROLLED_BACK -> {
+                body.addView(stateNote(Note.ERROR, "配對未完成，已取消。此手機現時沒有與任何子女手機配對；請用 QR 碼重新配對。\nThe pairing did not complete and was cancelled. This phone is now not paired with any child phone. Pair again with the QR code.", t, cardTag = "pairing_rolled_back"))
+                closeButton("關閉 · Close")
+            }
             link.outcome == ParentPairingLink.Outcome.NOT_STORED -> stopped("中繼或本機未能完成，原有配對沒有改變。請再試一次。\nThe pairing could not be stored; nothing changed. Please try again.")
             link.relay == ParentPairingLink.Relay.TOO_OLD -> stopped("中繼站版本過舊，未能安全配對。\nThe relay is too old to pair safely.")
             link.relay == ParentPairingLink.Relay.REFUSED -> stopped("中繼站拒絕了配對房間，配對已停止。\nThe relay refused the pairing room; pairing stopped.")

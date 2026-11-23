@@ -192,6 +192,33 @@ class QrPairingTest {
         assertFalse(GuardEngine.childPairingCancelled(ctx)); assertEquals(GuardEngine.ChildTrust.PAIRING, GuardEngine.childTrust(ctx))
     }
 
+    /** The parent sheet's link ends with the pending pairing: FINISHED on the first verified record, ROLLED_BACK on a rollback. */
+    @Test fun theParentLinkFinishesOnTheFirstVerifiedRecordOrRollsBack() {
+        parentPhone()
+        var clock = now
+        val run = parentUpToDigits { clock }
+        assertTrue(run.link.enterDigits((run.child.state as CS.ShowingDigits).digits))
+        val family = run.child.confirm(now + 3_000)!!
+        assertTrue(run.link.accept()); assertEquals(ParentPairingLink.Outcome.ACCEPTED, run.link.outcome)
+        run.link.tick(); assertEquals("still pending", ParentPairingLink.Outcome.ACCEPTED, run.link.outcome)
+        val m3 = GuardEngine.decryptPayload(family.token, FamilyEvidence(ctx).use { it.due(family.scope, Long.MAX_VALUE, "parent") }.single().wire)!!
+        val done = run.child.onComplete(m3, now + 4_000)!!
+        val record = JSONObject().put("type", "alert").put("event_id", java.util.UUID.randomUUID().toString()).put("capture_source", "app_or_visible_screen")
+            .put("reason", "pairing_verified").put("sender", "Pixel 7").put("text", "子女手機已用 QR 碼完成配對。").put("ts_ms", System.currentTimeMillis()).put("time", "x")
+            .put("trusted_csv", "").put("child_self_handle", "")
+        val frame = ChildRecords.wrapForParent(record.toString(), record.getString("event_id"), GuardEngine.relayPublicKey(ctx), done.childKey, { FamilySecurity.signChildBytes(it, done.childKeyAlias) }, true)
+        assertEquals(RelayConsumption.CONSUMED, GuardEngine.processIncomingRelayLine(ctx, JSONObject().put("event", "message").put("id", java.util.UUID.randomUUID().toString())
+            .put("message", GuardEngine.encryptPayload(family.token, frame.toString())).toString(), "parent", null))
+        run.link.tick()
+        assertEquals(ParentPairingLink.Outcome.FINISHED, run.link.outcome); assertEquals(GuardEngine.ChildTrust.VERIFIED, GuardEngine.childTrust(ctx))
+        // A second pairing that nobody confirms: the sheet's own ticker runs the 10-minute rollback (the overview may be locked).
+        val again = parentUpToDigits { clock }
+        assertTrue(again.link.enterDigits((again.child.state as CS.ShowingDigits).digits)); again.child.confirm(now + 3_000); assertTrue(again.link.accept())
+        clock = now + Pairing.CONFIRM_WINDOW_MS
+        again.link.tick()
+        assertEquals(ParentPairingLink.Outcome.ROLLED_BACK, again.link.outcome); assertTrue(GuardEngine.childPairingFailed(ctx)); assertNull(GuardEngine.pinnedChildKey(ctx))
+    }
+
     @Test fun childEngineStoresAliasParentKeyTokenAndVerifier() {
         val identity = FamilySecurity.newSigningIdentity()
         val r = QrPairing.pairChild(ctx, identity)
