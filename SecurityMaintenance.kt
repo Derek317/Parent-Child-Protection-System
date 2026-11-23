@@ -67,7 +67,7 @@ class ArchiveMaintenanceJob : JobService() {
         worker=Thread({
             val retry=try {
                 if(params.jobId==ArchiveMaintenance.HEARTBEAT_ID)ArchiveMaintenance.backgroundTick(applicationContext)
-                else ArchiveMaintenance.pruneAll(applicationContext)
+                else { ArchiveMaintenance.pruneAll(applicationContext); RiskLocal.remindImportIfDue(applicationContext) }
                 false
             } catch(_:Exception){true}
             val current=Thread.currentThread()

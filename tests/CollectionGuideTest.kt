@@ -130,6 +130,50 @@ class CollectionGuideTest : UploadTestBase() {
         val c = launch()
         try { assertTrue(UiSupport.texts(c.get().window.decorView).contains(ScoresChildCopy.EXPORT_CHARGING)) } finally { c.pause().stop().destroy() }
     }
+    // ---------- C4: weekly reminder ----------
+    private val day = 86_400_000L
+    private fun reminder() = shadowOf(ctx.getSystemService(android.app.NotificationManager::class.java)).allNotifications
+        .firstOrNull { it.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString() == ScoresChildCopy.REMINDER_TITLE }
+
+    @Test fun onlyTheTimeOfASuccessfulImportIsKeptAndTheReminderIsDueAfterSevenDays() {
+        activate(ScoresMethod.UPLOAD)
+        val before = System.currentTimeMillis()
+        assertEquals(ImportResult.OK, import(export()).result)
+        val at = RiskLocal.lastImport(ctx)
+        assertTrue(at >= before)
+        assertFalse(RiskLocal.importReminderDue(ctx, at + 6 * day))
+        assertTrue(RiskLocal.importReminderDue(ctx, at + 8 * day))
+        import("not an export".toByteArray()); assertEquals("a failed import does not count", at, RiskLocal.lastImport(ctx))
+    }
+    @Test fun theReminderIsContentFreeOpensTheUploadCardAndComesFromTheDailyJob() {
+        activate(ScoresMethod.UPLOAD); import(export())
+        RiskLocal.recordImport(ctx, System.currentTimeMillis() - 8 * day)
+        val controller = Robolectric.buildService(ArchiveMaintenanceJob::class.java).create()
+        try {
+            assertTrue(controller.get().onStartJob(org.robolectric.shadow.api.Shadow.newInstanceOf(android.app.job.JobParameters::class.java)))
+            val deadline = System.nanoTime() + 10_000_000_000L
+            while (reminder() == null && System.nanoTime() < deadline) Thread.sleep(25)
+        } finally { controller.destroy() }
+        val n = reminder()!!
+        val words = listOfNotNull(n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT), n.extras.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT)).joinToString()
+        assertFalse("no message text in the reminder", words.contains("invented test words") || words.contains("Bea"))
+        val open = shadowOf(n.contentIntent).savedIntent
+        assertEquals(RiskLocal.OPEN_UPLOAD_ACTION, open.action); assertNull(open.data); assertNull(open.extras)
+        // Opening it lands on the overview, where the upload card is.
+        val c = Robolectric.buildActivity(MainActivity::class.java, open).setup()
+        try { assertTrue(UiSupport.all(c.get().window.decorView).any { it.tag == "scores_export_open" }) } finally { c.pause().stop().destroy() }
+    }
+    @Test fun noReminderWhilePausedAfterWithdrawalOrUnderCaptureAndTheTimeIsWipedWithTheStore() {
+        activate(ScoresMethod.UPLOAD); import(export())
+        val late = System.currentTimeMillis() + 8 * day
+        assertTrue(RiskLocal.pause(ctx)); assertFalse("paused", RiskLocal.importReminderDue(ctx, late))
+        RiskLocal.remindImportIfDue(ctx, late); assertNull(reminder())
+        assertTrue(RiskLocal.resume(ctx)); assertTrue(RiskLocal.importReminderDue(ctx, late))
+        assertTrue(RiskLocal.withdraw(ctx)); assertFalse("withdrawn", RiskLocal.importReminderDue(ctx, late))
+        assertEquals("withdrawal wipes the time with the store", 0L, RiskLocal.lastImport(ctx))
+        RiskLocal.remindImportIfDue(ctx, late); assertNull(reminder())
+        switchOff(); assertEquals(0L, RiskLocal.lastImport(ctx)); assertFalse(RiskLocal.importReminderDue(ctx, late))
+    }
     @Test fun onlyHttpsLinksCanBeOpened() {
         try { InstagramExportLink.intent("http://accountscenter.instagram.com/"); fail("plain http must be refused") } catch (_: IllegalArgumentException) {}
     }

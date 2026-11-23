@@ -263,6 +263,10 @@ internal object RiskLocal {
     private const val PARENT_POLICY_METHOD = "scores_parent_policy_method"
     private const val PARENT_POLICY_AT = "scores_parent_policy_at_ms"
     private const val POLICY_REPOST = "scores_policy_repost_ms"
+    /** Time of the last successful Instagram import, nothing else about it. Wiped with the store. */
+    private const val LAST_IMPORT = "scores_last_import_ms"
+    const val REMIND_AFTER_MS = 7L * 86_400_000L
+    const val OPEN_UPLOAD_ACTION = "app.family.igguard.OPEN_UPLOAD"
     private val messageReasons = setOf("stranger_message", "sexual_or_grooming_content", "flagged_contact_follow_up")
 
     private fun prefs(ctx: Context) = LocalVault.preferences(ctx)
@@ -452,7 +456,7 @@ internal object RiskLocal {
     /** Store and results only: queued reports (such as the "model is valid" state) are left alone. */
     private fun wipeStore(ctx: Context) = retrying("store") {
         FamilyEvidence(ctx).use { it.wipeRisk() }
-        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(WIPE_PENDING).commit()
+        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(LAST_IMPORT).remove(WIPE_PENDING).commit()
     }
 
     /** Leaving the child role, a new family, or a remote reset: data plus all mode state and the consent receipt. */
@@ -544,6 +548,34 @@ internal object RiskLocal {
                 .setContentIntent(open).setAutoCancel(true).build()
             manager.notify(7002, notice)
         } catch (_: RuntimeException) { /* The notice is best effort; the persisted change flag is the record. */ }
+    }
+
+    fun recordImport(ctx: Context, now: Long = System.currentTimeMillis()) { prefs(ctx).edit().putLong(LAST_IMPORT, now).commit() }
+    fun lastImport(ctx: Context): Long = prefs(ctx).getLong(LAST_IMPORT, 0L)
+
+    /** Upload agreed and analysis on (not paused, not withdrawn), and no successful import for 7 days (counted from the agreement if none yet). */
+    fun importReminderDue(ctx: Context, now: Long = System.currentTimeMillis()): Boolean {
+        if (!InstagramImport.allowed(ctx)) return false
+        val since = lastImport(ctx).takeIf { it > 0 } ?: prefs(ctx).getLong(BASELINE, 0L)
+        return since > 0 && now - since > REMIND_AFTER_MS
+    }
+
+    /** Called from the daily maintenance job, so at most once a day. Content-free; posted only where notifications are already allowed. */
+    fun remindImportIfDue(ctx: Context, now: Long = System.currentTimeMillis()) {
+        try {
+            if (!importReminderDue(ctx, now)) return
+            val manager = ctx.getSystemService(android.app.NotificationManager::class.java) ?: return
+            manager.createNotificationChannel(android.app.NotificationChannel("child_disclosure", "子女模式監察提示", android.app.NotificationManager.IMPORTANCE_LOW))
+            if (Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) return
+            val open = android.app.PendingIntent.getActivity(ctx, 7003, Intent(ctx, MainActivity::class.java).setAction(OPEN_UPLOAD_ACTION), android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+            val text = ScoresChildCopy.REMINDER_TEXT
+            val notice = android.app.Notification.Builder(ctx, "child_disclosure").setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+                .setContentTitle(ScoresChildCopy.REMINDER_TITLE)
+                .setContentText(text.replace("\n", " "))
+                .setStyle(android.app.Notification.BigTextStyle().bigText(text))
+                .setContentIntent(open).setAutoCancel(true).build()
+            manager.notify(7003, notice)
+        } catch (_: RuntimeException) { /* A reminder is best effort. */ }
     }
 
     private fun carriesText(token: String, wire: String): Boolean {

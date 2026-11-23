@@ -400,6 +400,8 @@ internal object InstagramImport {
                     sql.setTransactionSuccessful()
                 } finally { sql.endTransaction() }
             }
+            // Under the same lock as the store, so a withdrawal or switch-off cannot leave the time behind its wipe.
+            if (conversations > 0) RiskLocal.recordImport(app, now)
             true } }
             if (!stillAllowed) return ImportSummary(ImportResult.NOT_ALLOWED)
             try { RiskScoringSchedule.sync(app) } catch (_: RuntimeException) {}

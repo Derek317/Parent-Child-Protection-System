@@ -3140,6 +3140,12 @@ class MainActivity : Activity() {
         }
         if (incoming?.action == "app.family.igguard.OPEN_EVIDENCE") { handleEvidenceNotification(incoming); return }
         if (incoming?.action == ScoresUi.OPEN_SCORES_ACTION) { handleScoresNotification(incoming); return }
+        // The import reminder: the upload card lives on the child's overview. Carries no data.
+        if (incoming?.action == RiskLocal.OPEN_UPLOAD_ACTION) {
+            setIntent(Intent(incoming).apply { action = Intent.ACTION_MAIN; data = null })
+            if (GuardEngine.isChildMode(this)) { section = "overview"; if (activityVisible) renderUi() }
+            return
+        }
         val data = incoming?.data ?: return
         setIntent(Intent(incoming).apply { this.data = null })
         if (incoming.action != Intent.ACTION_VIEW || !data.scheme.equals("igguard", true) || !data.host.equals("pair", true)) return
