@@ -513,7 +513,7 @@ internal object ModelImportJob {
             try {
                 var last = 0L
                 outcome = work { n -> copied = n; if (n - last >= 8L * 1024 * 1024) { last = n; notifyChange() } }
-            } catch (_: Exception) { outcome = RiskImportResult.IO_ERROR }
+            } catch (_: Throwable) { outcome = RiskImportResult.IO_ERROR }   // an Error too: `running` must never stay true (bug-review B-6)
             synchronized(this) { wasCancelled = cancelled && outcome != RiskImportResult.OK; result = outcome; running = false }
             // A wrong copy or a cancel is not retried on its own until the app is updated; the screen offers Retry.
             if (isBundled && (wasCancelled || outcome == RiskImportResult.WRONG_FILE)) RiskModelStore.blockAuto(app)

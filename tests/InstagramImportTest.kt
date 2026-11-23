@@ -123,6 +123,28 @@ class InstagramImportTest {
         CapturedText(conversation, body, direction, if (direction == "outgoing") "子女" else "", "", "visible_dm", 0L, "", false, "unknown", true)
 
     // ---------- the import ----------
+    @Test fun anErrorInTheImportOrModelCopyThreadEndsInAFailureNotAStuckScreen() {
+        // Bug-review B-6: an Error (not an Exception) left `running` true, so the card said "Reading the file..." for ever.
+        val importRunner = InstagramImport.runner; val modelRunner = ModelImportJob.runner; val importer = ModelImportJob.importer
+        try {
+            InstagramImport.runner = { it.run() }; ModelImportJob.runner = { it.run() }
+            val export = android.net.Uri.parse("content://igguard.test/export.zip")
+            org.robolectric.Shadows.shadowOf(ctx.contentResolver).registerInputStream(export, object : java.io.InputStream() {
+                override fun read(): Int = throw StackOverflowError()
+                override fun close() = throw StackOverflowError()
+            })
+            assertTrue(InstagramImport.start(ctx, export))
+            assertFalse(InstagramImport.running); assertEquals(ImportResult.IO_ERROR, InstagramImport.last?.result)
+            val model = android.net.Uri.parse("content://igguard.test/model.gguf")
+            org.robolectric.Shadows.shadowOf(ctx.contentResolver).registerInputStream(model, ByteArrayInputStream(tinyBytes))
+            ModelImportJob.importer = { _, _, _ -> throw OutOfMemoryError() }
+            assertTrue(ModelImportJob.start(ctx, model))
+            assertFalse(ModelImportJob.running); assertEquals(RiskImportResult.IO_ERROR, ModelImportJob.result)
+        } finally {
+            InstagramImport.runner = importRunner; ModelImportJob.runner = modelRunner; ModelImportJob.importer = importer
+            InstagramImport.running = false; InstagramImport.dismiss(); ModelImportJob.running = false; ModelImportJob.dismissResult()
+        }
+    }
     @Test fun htmlAndJsonImportsStoreTheSameMessagesOldestFirstUnderTheSameConversation() {
         activate(ScoresMethod.UPLOAD); GuardEngine.setChildSelfHandle(ctx, teen)
         val a = import(html(chat).toByteArray(), "message_1.html")

@@ -354,7 +354,7 @@ internal object InstagramImport {
             val summary = try {
                 val stream = app.contentResolver.openInputStream(uri)
                 if (stream == null) ImportSummary(ImportResult.IO_ERROR) else stream.use { run(app, it, uri.lastPathSegment) }
-            } catch (_: Exception) { ImportSummary(ImportResult.IO_ERROR) }
+            } catch (_: Throwable) { ImportSummary(ImportResult.IO_ERROR) }   // an Error too: `running` must never stay true (bug-review B-6)
             synchronized(this) { last = summary; running = false }
             listener?.invoke()
         })
