@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.text.util.Linkify
 import android.view.View
@@ -109,10 +108,9 @@ object AppConsent {
             "consent_transfer" to "我了解並同意：在子女模式中，按已確認範圍擷取的訊息會加密轉傳至指定、已核對配對的家長／法定監護人；本機、中繼保護與保留期限如上。\nI understand and agree to the disclosed message transfer to my verified paired parent/legal guardian when this phone is in child mode, with the protections and retention described above.",
             "consent_family" to "我只會在有合法權限的私人家庭保障情況下使用，並已與子女／家長了解用途；不作其他監視用途，也不把第 52 條當作自動合法授權。\nI will use this only for authorised private family safeguarding, with the child/parent informed, and will not treat section 52 as automatic legal permission."
         )) {
-            boxes[tag] = CheckBox(activity).apply {
-                this.tag = tag; text = caption; textSize = 16f; setTextColor(Color.parseColor(t.textPrimary)); typeface = activity.font()
+            boxes[tag] = activity.checkLook(CheckBox(activity), t, 16f).apply {   // the app's one checkbox look; still a real, unticked CheckBox
+                this.tag = tag; text = caption
                 isChecked = false; isSaveEnabled = false; setPadding(0, dp(12), 0, dp(12))
-                buttonTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(Color.parseColor(t.accentSeafoam), Color.parseColor(t.textSecondary)))
                 setOnCheckedChangeListener { _, _ -> accept.isEnabled = boxes.size == acknowledgments.size && boxes.values.all { it.isChecked } }
                 content.addView(this)
             }

@@ -120,6 +120,41 @@ class Tier2UiTest {
         } finally { c.pause().stop().destroy() }
     }
 
+    private fun checked(v: View): Boolean = android.view.accessibility.AccessibilityNodeInfo.obtain().also { v.onInitializeAccessibilityNodeInfo(it) }.let { it.isCheckable && it.isChecked }
+
+    @Test fun choicesAnnounceTheirStateAndTheMethodChooserHasNoGlyphsOrPreTickedBox() {
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            UiSupport.nav(a, "settings"); settle()
+            val modes = UiSupport.all(UiSupport.current(a)).filterIsInstance<android.widget.Button>().filter { it.text.toString() in setOf("淺色模式", "深色模式") }
+            assertEquals(listOf(true, false), modes.map { checked(it) })
+            assertEquals(listOf(true, false), modes.map { it.contentDescription.toString().endsWith("已選") })
+        } finally { c.pause().stop().destroy() }
+        ShotSupport.parentReset(); ShotSupport.report()
+        val d = ShotSupport.open("family")
+        try {
+            UiSupport.all(d.get().window.decorView).first { it.tag == "scores_mode_switch" }.performClick(); idle()
+            val sheet = ShadowDialog.getLatestDialog().window!!.decorView
+            assertTrue(UiSupport.texts(sheet).none { it.contains("●") || it.contains("○") })
+            val upload = UiSupport.all(sheet).single { it.tag == "scores_method_upload" }; val capture = UiSupport.all(sheet).single { it.tag == "scores_method_capture" }
+            assertTrue(checked(upload)); assertFalse(checked(capture))
+            capture.performClick(); idle()
+            val box = UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).single { it.tag == "scores_capture_ack" } as android.widget.CheckBox
+            assertFalse("the warning box starts unticked", box.isChecked)
+        } finally { d.pause().stop().destroy() }
+    }
+
+    @Test fun theConsentBoxesStayRealUntickedCheckBoxesWithTheAllThreeRule() {
+        ctx.getSharedPreferences("ig_guard_consent", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val page = c.get().findViewById<View>(android.R.id.content)
+        try {
+            val boxes = AppConsent.acknowledgments.map { page.findViewWithTag<android.widget.CheckBox>(it) }
+            assertTrue(boxes.none { it.isChecked }); assertFalse(page.findViewWithTag<View>("consent_accept").isEnabled)
+            boxes.take(2).forEach { it.isChecked = true }; assertFalse(page.findViewWithTag<View>("consent_accept").isEnabled)
+            boxes.last().isChecked = true; assertTrue(page.findViewWithTag<View>("consent_accept").isEnabled)
+        } finally { c.pause().stop().destroy() }
+    }
+
     @Test fun aLockedParentGetsNoBackLinkPastTheLock() {
         ParentUiAuthFixture.autoApprove = false
         try {

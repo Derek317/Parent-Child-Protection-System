@@ -3603,13 +3603,8 @@ class MainActivity : Activity() {
         card.addView(label("${stats.dates.first()} — ${stats.dates.last()} · ${stats.zone.id}", 12f, t.textMuted, bottomPad = 16))
         val tabs = LinearLayout(this)
         for ((mode, title) in listOf("trend" to "每日趨勢", "types" to "警報分類")) {
-            tabs.addView(Button(this).apply {
-                text = title; textSize = 13f; typeface = font(chartMode == mode); isAllCaps = false
-                setTextColor(color(if (chartMode == mode) t.accentSeafoam else t.textMuted))
-                background = ripple(if (chartMode == mode) t.bgChip else t.bgCard, 10, t.accentPowderSky)
-                minimumHeight = dp(48); isSelected = chartMode == mode
-                setOnClickListener { chartMode = mode; renderUi(animate = true) }
-            }, LinearLayout.LayoutParams(0, -2, 1f))
+            tabs.addView(choiceButton(title, chartMode == mode, t) { chartMode = mode; renderUi(animate = true) },
+                LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, if (mode == "trend") dp(8) else 0, 0) })
         }
         card.addView(tabs)
         val line = chartMode == "trend"
@@ -3787,13 +3782,8 @@ class MainActivity : Activity() {
         else {
             val tabs=LinearLayout(this)
             for((key,title) in listOf("conversations" to "對話記錄","review" to "需要跟進","device" to "裝置與傳送")) {
-                tabs.addView(Button(this).apply {
-                    text=title;textSize=12f;isAllCaps=false;minimumHeight=dp(48);typeface=font(evidenceSection==key)
-                    setTextColor(color(if(evidenceSection==key)t.btnPrimaryText else t.textSecondary))
-                    background=ripple(if(evidenceSection==key)t.btnPrimaryBg else t.bgCanvas,10)
-                    isSelected=evidenceSection==key
-                    setOnClickListener(sessionClick{evidenceSection=key;evidencePage=0;alertFilter="all";evidenceDirection="all";renderUi(animate=true)})
-                },LinearLayout.LayoutParams(0,-2,1f))
+                tabs.addView(choiceButton(title,evidenceSection==key,t){evidenceSection=key;evidencePage=0;alertFilter="all";evidenceDirection="all";renderUi(animate=true)}.apply{textSize=13f},
+                    LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(0,0,if(key=="device")0 else dp(8),0)})
             }
             rootContainer.addView(tabs)
             rootContainer.addView(textAction(if(GuardEngine.parentFullCaptureConfirmed(this))"雙向擷取已確認 · 查看範圍" else "雙向擷取尚未確認 · 前往設定"){showFullCaptureSetup(t)})
@@ -4054,8 +4044,8 @@ class MainActivity : Activity() {
                     GuardEngine.resumeCollection(this@MainActivity);dialog.dismiss();syncRoleServices();renderUi()
                 })
             } else {
-                val outgoing=CheckBox(this@MainActivity).apply{text="允許已送出的傳出訊息（不含草稿）";isChecked=GuardEngine.outgoingCaptureAllowed(this@MainActivity)}
-                val trusted=CheckBox(this@MainActivity).apply{text="允許信任對象的一般對話脈絡";isChecked=GuardEngine.trustedContextAllowed(this@MainActivity)}
+                val outgoing=checkRow("允許已送出的傳出訊息（不含草稿）",GuardEngine.outgoingCaptureAllowed(this@MainActivity),t)
+                val trusted=checkRow("允許信任對象的一般對話脈絡",GuardEngine.trustedContextAllowed(this@MainActivity),t)
                 addView(outgoing);addView(trusted)
                 addView(label("選項只在已確認的擴展模式生效。儲存會捨棄舊範圍的未傳送記錄；擴大範圍須重新閱讀及確認。",13f,t.textSecondary,bottomPad=12))
                 addView(actionButton("儲存範圍選擇",t.btnPrimaryBg,t.btnPrimaryText){
@@ -4606,9 +4596,9 @@ class MainActivity : Activity() {
             choice.addView(label(ScoresUi.METHOD_TITLE, 15f, t.textPrimary, true, bottomPad = 6))
             for (m in listOf(ScoresMethod.UPLOAD, ScoresMethod.CAPTURE)) {
                 val selected = m == method
-                choice.addView(actionButton((if (selected) "● " else "○ ") + ScoresUi.methodName(m), if (selected) t.btnPrimaryBg else t.btnSecondaryBg, if (selected) t.btnPrimaryText else t.btnSecondaryText) {
+                choice.addView(choiceButton(ScoresUi.methodName(m), selected, t) {
                     method = m; acked = false; draw()
-                }.apply { tag = "scores_method_$m"; contentDescription = ScoresUi.methodName(m) + if (selected) "，已選" else "" })
+                }.apply { tag = "scores_method_$m" })
             }
             choice.addView(label(if (method == ScoresMethod.UPLOAD) ScoresUi.METHOD_UPLOAD_BODY else ScoresUi.METHOD_CAPTURE_BODY, 14f, t.textSecondary, topPad = 4, bottomPad = 12).apply { tag = "scores_method_body" })
             if (method == ScoresMethod.CAPTURE) {
@@ -4616,8 +4606,8 @@ class MainActivity : Activity() {
                 choice.addView(label(ScoresUi.WARNING_ZH_BODY, 14f, t.textPrimary, bottomPad = 10))
                 choice.addView(label(ScoresUi.WARNING_EN_TITLE, 15f, t.warmCoral, true, bottomPad = 4))
                 choice.addView(label(ScoresUi.WARNING_EN_BODY, 14f, t.textPrimary, bottomPad = 10))
-                choice.addView(CheckBox(this).apply {
-                    text = ScoresUi.WARNING_ACK; tag = "scores_capture_ack"; setTextColor(color(t.textPrimary)); isChecked = false
+                choice.addView(checkRow(ScoresUi.WARNING_ACK, false, t).apply {
+                    tag = "scores_capture_ack"
                     setOnCheckedChangeListener { _, on -> acked = on; confirm?.isEnabled = allowed() }
                 })
             }
@@ -4684,9 +4674,7 @@ class MainActivity : Activity() {
         val modes = LinearLayout(this)
         for ((bright, text) in listOf(true to "淺色模式", false to "深色模式")) {
             lateinit var mode: Button
-            mode = actionButton(text, if (GuardEngine.isBrightTheme(this) == bright) t.bgChip else t.bgCard, t.accentSeafoam) {
-                switchTheme(bright, mode)
-            }.apply{isSelected=GuardEngine.isBrightTheme(this@MainActivity)==bright}
+            mode = choiceButton(text, GuardEngine.isBrightTheme(this) == bright, t) { switchTheme(bright, mode) }
             modes.addView(mode, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, dp(8), 0) })
         }
         rootContainer.addView(modes)
@@ -4798,7 +4786,7 @@ class MainActivity : Activity() {
             addView(label("目前的家長主密碼（請先記下）：", 13f, t.textPrimary, true))
             addView(label(password, 18f, t.textPrimary, true, bottomPad = 10).apply { setTextIsSelectable(true) })
             addView(label("子女手機在解除前仍受保護。若解除指令沒有送達，子女手機換家庭時，需要在子女手機輸入這個主密碼。", 13f, t.textSecondary, bottomPad = 14))
-            val send = CheckBox(this@MainActivity).apply { text = "同時送出解除指令，讓子女手機回到未設定狀態（建議）"; isChecked = true; tag = "release_child" }
+            val send = checkRow("同時送出解除指令，讓子女手機回到未設定狀態（建議）", true, t).apply { tag = "release_child" }
             addView(send)
             val status = label("", 13f, t.textSecondary, topPad = 8, bottomPad = 8); addView(status)
             lateinit var go: Button
@@ -5059,6 +5047,28 @@ class MainActivity : Activity() {
     /** The one back affordance at the top of a sub-page; it does exactly what system Back does there. */
     private fun backLink(title: String = "返回總覽", onClick: () -> Unit = { navigateTo("overview") }) =
         rootContainer.addView(textAction(title, onClick = onClick).apply { tag = "back_link" })
+    /** The one checkbox look (no state read, so the consent page can use it): token text and box colours, app font, 48 dp row. */
+    internal fun checkLook(box: CheckBox, t: ThemeColors, sizeSp: Float = 14f) = box.apply {
+        textSize = sizeSp; typeface = font(); setTextColor(color(t.textPrimary)); minimumHeight = dp(48)
+        buttonTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(color(t.accentSeafoam), color(t.textSecondary)))
+    }
+    private fun checkRow(text: String, checked: Boolean, t: ThemeColors = currentTheme()): CheckBox =
+        checkLook(CheckBox(this), t).apply { this.text = text; isChecked = checked; setPadding(dp(4), dp(8), 0, dp(8)) }
+    /**
+     * The one choice control (one of a few options): the primary look plus a check icon when selected, the secondary look otherwise.
+     * TalkBack hears a radio button and its checked state; the selected state is never colour alone.
+     */
+    private fun choiceButton(title: String, selected: Boolean, t: ThemeColors = currentTheme(), onClick: () -> Unit): Button =
+        actionButton(title, if (selected) t.btnPrimaryBg else t.btnSecondaryBg, if (selected) t.btnPrimaryText else t.btnSecondaryText, onClick = onClick).apply {
+        isSelected = selected; describeAsControl(choice = true)
+        contentDescription = title + if (selected) "，已選" else ""
+        if (Build.VERSION.SDK_INT >= 30) stateDescription = if (selected) "已選" else "未選"
+        if (selected) {
+            val id = drawableIds.getOrPut("check") { resources.getIdentifier("ic_guard_check", "drawable", packageName) }
+            if (id != 0) { setCompoundDrawablesRelative(resources.getDrawable(id, theme).mutate().apply { setTint(color(t.btnPrimaryText)); setBounds(0, 0, dp(18), dp(18)) }, null, null, null); compoundDrawablePadding = dp(8) }
+        }
+        setPadding(dp(10), dp(12), dp(10), dp(12))
+    }
     /** The third button level: a text link (no fill, no border, 48 dp target). [ink] is the text colour; deletes pass the danger token so they stay as visible as before. */
     private fun textAction(title: String, ink: String? = null, onClick: () -> Unit): Button = Button(this).apply {
         val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
