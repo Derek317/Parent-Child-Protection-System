@@ -292,8 +292,11 @@ object CloudRelay {
                         require(message.optString("delivery_id").matches(Regex("[a-f0-9-]{36}")))
                         require(AlertFrames.digest(message.getString("wire").toByteArray(Charsets.UTF_8))==message.getString("digest"))
                         if(route!=null) {
-                            // Only a record that decrypts under the pairing token goes on; the relay copy is consumed either way.
-                            GuardEngine.decryptPayload(route.token,message.getString("wire"))?.let(route.onRecord)
+                            // Only a pairing record (M1/M2/M3) that decrypts under the pairing token goes on and is consumed. Anything
+                            // else stays at the relay untouched: a parent command queued in the new family room is redelivered to the
+                            // child's own family connection once the pairing is stored (a new socket starts with nothing in flight).
+                            val record=GuardEngine.decryptPayload(route.token,message.getString("wire"))?.takeIf{Pairing.isPairingRecord(it)} ?: return
+                            route.onRecord(record)
                             if(message.getBoolean("buffered"))ws.send(JSONObject().put("type","consume").put("id",message.getString("id")).put("digest",message.getString("digest")).toString())
                             return
                         }

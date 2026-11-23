@@ -180,7 +180,10 @@ internal class ChildPairingLink(
                 socket?.close(); socket = null; hello = null
             }
             is ChildPairingState.ShowingDigits -> machine.onReply(record, clock())
-            ChildPairingState.AwaitingComplete -> machine.onComplete(record, clock())?.let { result -> stop(); onResult(result); return }
+            // Only M3 is the pairing's: anything else here (a parent command already queued in the new room) is neither acted on nor
+            // allowed to cancel. A pair_complete that fails the machine's checks still cancels.
+            ChildPairingState.AwaitingComplete -> if (Pairing.signedType(record) == "pair_complete")
+                machine.onComplete(record, clock())?.let { result -> stop(); onResult(result); return } else return
             else -> {}
         }
         if (ended) stop() else onChange()

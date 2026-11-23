@@ -239,6 +239,36 @@ class TwoPhoneRelayTest {
         assertFalse(p.parent.accept()); assertNull(GuardEngine.pinnedChildKey(ctx))
     }
 
+    /** Commands the parent sends after Accept wait in the new room's child mailbox beside M3 (for "Pair again to verify" too:
+     *  a 5.2 parent's commands still queued for the OLD family are not moved, FamilyEvidence.rotate moves only child rows). */
+    @Test fun parentCommandsBesideM3HaveNoEffectAndStayForTheChildsFamilyConnection() {
+        val p = Phones(); p.upToDigits()
+        fun relayKey(frameId: String) = "c0" + MessageDigest.getInstance("SHA-256").digest(frameId.toByteArray()).joinToString("") { "%02x".format(it) }
+        assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
+        val token = GuardEngine.getOrCreateFamilyToken(ctx); val family = roomOf(token)
+        waitUntil("M3 at the relay") { synchronized(relay) { family.published.size == 1 } }
+        repeat(3) { GuardEngine.requestFullCapture(ctx) } // three signed capture_policy commands into the new room
+        waitUntil("the commands reached the new room") { synchronized(relay) { family.published.size == 4 && family.inbox.getValue("child").size == 4 } }
+        val keys = synchronized(relay) { family.published.drop(1).map { relayKey(it.second) } }
+        assertTrue(p.child.confirm())
+        assertPaired(p)
+        settle(500)
+        synchronized(relay) {
+            assertTrue("the pairing route consumed none of them", family.inbox.getValue("child").keys.containsAll(keys))
+            assertTrue("the unpaired child sent nothing (no receipt, no ack)", family.published.none { it.first == "child" })
+        }
+        // What happens to them afterwards: the child's own family connection (a new socket) gets them again.
+        p.child.cancel()
+        val received = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val key = FamilySecurity.loadChildSigningKey(ctx, p.result!!.childKeyAlias)
+        val auth = FamilyRelay.childAuthorizationV2(GuardEngine.relayPublicKey(ctx), GuardEngine.getChannelTopicForToken(token), token, key)
+        val socket = OkHttpClient().newWebSocket(Request.Builder().url(FamilyRelay.socketUrl(relay.url, FamilyRelay.room(GuardEngine.relayPublicKey(ctx),
+            GuardEngine.getChannelTopicForToken(token)), true)).header("Authorization", auth).build(), object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) { JSONObject(text).optString("id").let { if (it.isNotEmpty()) received += it } }
+        })
+        try { waitUntil("redelivered to the child's family connection") { received.containsAll(keys) } } finally { socket.cancel() }
+    }
+
     @Test fun threeWrongDigitsCancelAndPinNothing() {
         val p = Phones(); p.upToDigits()
         val token = GuardEngine.getOrCreateFamilyToken(ctx)

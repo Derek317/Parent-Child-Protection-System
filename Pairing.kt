@@ -58,6 +58,14 @@ object Pairing {
     }
 
     internal fun validModel(model: Any?): Boolean = model is String && model.length in 1..MODEL_MAX
+
+    /** The type named inside a room record (child_signed text or a command envelope's payload), UNVERIFIED: for routing only. */
+    internal fun signedType(record: JSONObject): String? = try {
+        val text = record.opt("child_signed") as? String ?: (record.opt("envelope") as? JSONObject)?.opt("payload") as? String
+        text?.let { JSONObject(it).opt("type") as? String }
+    } catch (_: Exception) { null }
+    /** M1, M2 or M3. Anything else in a pairing room (a parent command queued in the new family room) is not the pairing's. */
+    internal fun isPairingRecord(record: JSONObject): Boolean = signedType(record) in setOf("pair_hello", "pair_reply", "pair_complete")
 }
 
 sealed class ParentPairingState {

@@ -202,6 +202,35 @@ class QrPairingTest {
         assertTrue(TestKeyStore.privateKeys.keys.none { it.startsWith("ig_guard.child_signing") })
     }
 
+    /** "Pair again to verify" keeps the family history: parent commands can reach the new room before M3. */
+    @Test fun aParentCommandAheadOfM3IsIgnoredAndOnlyABadM3Cancels() {
+        val identity = FamilySecurity.newSigningIdentity(); val parent = QrPairing.bareParent(identity)
+        val start = parent.start(identity.publicKey, now)
+        val rooms = FakeRooms(); var result: ChildPairing.Result? = null
+        val link = ChildPairingLink(ctx, {}, { result = it }, rooms.opener, { now + 1_000 })
+        link.join(start.qrText); rooms.rooms[0].ready()
+        rooms.rooms[0].deliver(parent.onHello(rooms.rooms[0].records().single(), now + 2_000)!!)
+        assertTrue(parent.digitsEntered((link.machine.state as CS.ShowingDigits).digits)); assertTrue(link.confirm())
+        val done = parent.accept(FamilySecurity.passwordVerifier(QrPairing.PASSWORD), now + 3_000)!!
+        val id = java.util.UUID.randomUUID().toString()
+        val command = Pairing.commandRecord(FamilySecurity.signCommand(JSONObject().put("type", "capture_policy").put("scope", done.family.scope)
+            .put("command_id", id).put("ts_ms", now).put("schema_version", 2).put("mode", "full_visible_conversation").put("policy_id", id), identity.privateKey), id)
+        assertFalse(Pairing.isPairingRecord(command)); assertTrue(Pairing.isPairingRecord(done.complete))
+        rooms.rooms[1].deliver(command)
+        assertEquals("not acted on, not a cancel", CS.AwaitingComplete, link.machine.state)
+        assertEquals("nothing stored, no receipt sent", 0, rooms.rooms[1].published.size); assertNull(prefs.getString("capture_policy_id", null))
+        rooms.rooms[1].deliver(done.complete)
+        assertNotNull(result); assertEquals(CS.Paired, link.machine.state)
+        // A pair_complete that fails the machine's checks still cancels.
+        val again = QrPairing.bareParent(identity); val s2 = again.start(identity.publicKey, now)
+        val r2 = FakeRooms(); val l2 = ChildPairingLink(ctx, {}, {}, r2.opener, { now + 1_000 })
+        l2.join(s2.qrText); r2.rooms[0].ready()
+        r2.rooms[0].deliver(again.onHello(r2.rooms[0].records().single(), now + 2_000)!!)
+        assertTrue(again.digitsEntered((l2.machine.state as CS.ShowingDigits).digits)); assertTrue(l2.confirm())
+        r2.rooms[1].deliver(done.complete) // M3 of the other pairing: wrong scope and key hash
+        assertEquals(CS.Cancelled(Pairing.CancelReason.BAD_MESSAGE), l2.machine.state)
+    }
+
     @Test fun aPairedChildNeedsTheParentPasswordToJoinByQrAndANewPairingDeletesTheOldKey() {
         // A 5.2 pairing in the store.
         parentPhone(); val invite = QrPairing.legacyInvite(ctx)
