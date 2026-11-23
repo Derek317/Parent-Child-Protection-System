@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — final review build (local, not published)
+
+Local build for the final review. Not released; version name and code are unchanged (5.1). Bundled Terms revision `2026-11-23-v7`. The Terms have not been reviewed by a lawyer and are not legal advice. Nothing here is approved by Meta, and the scores still do not reliably detect grooming.
+
+- Upload card on the child's phone: a short bilingual guide to Instagram's own "Export your information" tool and a button that opens its fixed address. The child still does the export inside Instagram's own screens.
+- The file picker for the import opens at Downloads and lists zip, JSON and HTML files. The import still checks the file's content.
+- After a successful import, analysis starts at the next charge without waiting for the phone to be idle. It still runs only while charging.
+- A content-free reminder on the child's phone only, at most once a day, when the last successful import is more than 7 days old (upload agreed, analysis on). Only the time of the last successful import is kept, and it is deleted with the stored chat text.
+- Optional links to Instagram's own repeating export to the child's own Google Drive or Dropbox, behind a confirmation that says it is Meta's feature, that a copy of the messages then sits in the child's cloud drive under that provider's terms, and that IG Guard never sees the Instagram password. Not tested on a Hong Kong teen account.
+- The parent's score list shows the date of the latest analysis with a new score and, under manual upload, a calm hint when it is more than 9 days old. Derived from score times the parent already has; the child sends nothing new.
+- Terms revision `2026-11-23-v7`: section 2B (both languages) describes the above; the privacy policy, the deletion guide and the data-flow note say the same. No existing clause changed meaning. Existing users see the one-time 條款已更新 notice; nobody is asked to accept again.
+
 ## 5.1 — 21 November 2026 (Hong Kong)
 
 Version 5.1 is 5.0 with a new look. Nothing else changed. Full notes: [5.1 release notes](docs/releases/5.1.md).

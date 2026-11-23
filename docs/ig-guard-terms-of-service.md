@@ -1,8 +1,8 @@
 # IG Guard 使用條款 / Terms of Service
 
-更新 / Updated: 20 November 2026（香港 / Hong Kong）
+更新 / Updated: 23 November 2026（香港 / Hong Kong）
 版本 / Release: 5.0
-條款修訂 / Terms revision: 2026-11-20-v6
+條款修訂 / Terms revision: 2026-11-23-v7
 營運 / Operator: Safe Guard — ppefyp2026@gmail.com
 
 ## 繁體中文
@@ -49,6 +49,14 @@
 **手動上載。** App 不讀取 Instagram：通知或畫面內容不會被儲存、評分、轉傳或用於提醒。青少年自行匯入 Instagram「下載你的資料」得到的檔案（.zip，或其中一個 message_N.html／message_N.json）。檔案以串流讀取，不會複製到 App；只保留一對一對話的訊息文字、方向、時間及對話標籤，存於子女手機的加密儲存；群組對話會略過。上限同上：每個對話最新60則，不超過14天。此方式沒有即時關鍵字提醒及非核准聯絡人提醒。檔案由子女提供，父母無法得知它是否完整或未經修改。App 不能代子女關閉通知存取及無障礙。
 
 **擷取暫停。** 如子女曾同意手動上載，其後父母關閉僅分數模式，App 不會自動恢復讀取 Instagram。擷取保持關閉，直至子女在自己的手機上的提示卡允許；父母會看到擷取已暫停。
+
+**匯出指引及連結（手動上載）。** 子女手機的上載卡顯示如何使用 Instagram 自己的「匯出你的資料」工具的步驟，並有一個按鈕以瀏覽器或 Instagram App 開啟該工具的固定網址（https://accountscenter.instagram.com/info_and_permissions/dyi）。網址不含子女或家庭的任何資料。匯出由子女在 Instagram 自己的畫面內完成；App 不會代子女操作 Instagram，亦不會讀取 Instagram 的畫面。檔案選擇器預設開啟「下載」資料夾並列出 zip、JSON 及 HTML 檔案；這只是方便，App 仍會檢查檔案內容。
+
+**每週提醒。** 手動上載已同意、分析開啟（未暫停、未撤回）時，如上次成功匯入（或未曾匯入則由同意時起計）已超過7天，子女手機每日最多顯示一次提醒，請子女更新 Instagram 資料。提醒只在子女手機出現，不含任何訊息內容，亦不會傳給父母。為此，子女手機的加密儲存只保留上次成功匯入的時間，並與儲存的聊天文字一同刪除。在 Android 13 或以上，只有在已允許本 App 顯示通知時才會出現。
+
+**匯入後在充電時分析。** 成功匯入後，子女手機會在下一次充電時開始分析新匯入的對話，不必等手機閒置。分析仍然只在充電時進行；暫停、撤回、關閉模式或更改收集方式會取消這項安排。
+
+**可選的重複匯出（Meta 的功能）。** 上載卡亦提供可選的連結，開啟 Instagram 自己的「匯出至外部服務」設定，每星期把訊息匯出到子女自己的 Google Drive 或 Dropbox。這是 Meta 的功能，不是 IG Guard 的功能；設定後，訊息副本會存放在子女自己的雲端硬碟，受該服務供應商的條款約束，並須在該處另行刪除。Instagram 會要求輸入 Instagram 密碼；IG Guard 永遠不會看到或取得該密碼。IG Guard 不會讀取該雲端硬碟；匯入仍須子女以同一個檔案選擇器自行選取檔案。開啟連結前，App 會先顯示此說明並要求確認。此功能未在香港青少年帳戶上測試；Instagram 可能不提供或不包括訊息。
 
 ### 2C. 模型
 
@@ -134,6 +142,14 @@ This warning tells you about a risk. It does not by itself remove anyone else's 
 **Manual upload.** The app reads nothing from Instagram: no notification or screen is stored, scored, forwarded or alerted on. The teen imports the file from Instagram's own "Download your information" (a .zip, or one message_N.html / message_N.json). The file is read as a stream and is not copied into the app. Only message text, direction, time and conversation label of one-to-one chats are kept, in the child phone's encrypted store; group chats are skipped. The same limits apply: the latest 60 messages per conversation, nothing older than 14 days. Real-time keyword and unapproved-contact alerts are not available in this method. The file is supplied by the child, so the parent cannot know that it is complete or unedited. The app cannot switch off Notification access or Accessibility for the child.
 
 **Capture hold.** If the child agreed to manual upload and the parent later switches the scores-only mode off, the app does not go back to reading Instagram. Capture stays off until the child allows it on a card on their own phone, and the parent is told that capture is held.
+
+**Export guide and link (manual upload).** The child phone's upload card shows the steps for Instagram's own "Export your information" tool and a button that opens the tool's fixed address (https://accountscenter.instagram.com/info_and_permissions/dyi) in the browser or the Instagram app. The address carries no data about the child or the family. The child does the export inside Instagram's own screens; the app does not operate Instagram for the child and does not read Instagram's screens. The file picker opens at the Downloads folder and lists zip, JSON and HTML files; this is a convenience only, and the app still checks the file's content.
+
+**Weekly reminder.** While manual upload is agreed and analysis is on (not paused, not withdrawn), if the last successful import (or, with none yet, the agreement) is more than 7 days old, the child phone shows at most one reminder a day asking the child to refresh the Instagram export. The reminder appears on the child phone only, contains no message content and is not sent to the parent. For this, the child phone's encrypted store keeps only the time of the last successful import, which is deleted together with the stored chat text. On Android 13 or later it appears only if the app is already allowed to show notifications.
+
+**Analysis when charging after an import.** After a successful import, the child phone starts analysing the newly imported chats at the next charge, without waiting for the phone to be idle. Analysis still runs only while charging; pausing, withdrawing, switching the mode off or changing the method cancels this.
+
+**Optional repeating export (Meta's feature).** The upload card also offers optional links that open Instagram's own "Export to external service" set-up to export messages every week to the child's own Google Drive or Dropbox. This is Meta's feature, not IG Guard's. Once set up, a copy of the messages sits in the child's own cloud drive under that provider's terms and must be deleted there separately. Instagram asks for the Instagram password; IG Guard never sees or receives it. IG Guard does not read that cloud drive; the child still imports by picking the file in the same file picker. Before a link opens, the app shows this explanation and asks for confirmation. This has not been tested on a Hong Kong teen account; Instagram may not offer it or may not include messages.
 
 ### 2C. The model
 
