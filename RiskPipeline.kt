@@ -799,10 +799,14 @@ internal object RiskReporter {
         Merged(RiskReportRow("", latest.label.take(RiskLimits.MAX_LABEL), best, if (best != null) null else latest.reason, latest.scoredAt), group, group.any { it.changed })
     }.sortedBy { it.row.scoredAt }
 
-    private fun tracked(ctx: Context): List<Pair<String, String>> = try {
+    /** Entries "scope|id|sent_at_ms" (older entries have no send time: 0). */
+    private fun trackedWithTime(ctx: Context): List<Triple<String, String, Long>> = try {
         val array = JSONArray(prefs(ctx).getString(IDS, "[]") ?: "[]")
-        (0 until array.length()).map { array.getString(it).substringBefore('|') to array.getString(it).substringAfter('|') }
+        (0 until array.length()).map { val p = array.getString(it).split('|'); Triple(p[0], p.getOrElse(1) { "" }, p.getOrNull(2)?.toLongOrNull() ?: 0L) }
     } catch (_: Exception) { emptyList() }
+    private fun tracked(ctx: Context): List<Pair<String, String>> = trackedWithTime(ctx).map { it.first to it.second }
+    /** Send time of the newest scores report this phone queued for [scope] and has not purged (0: none). For the heartbeat. */
+    fun newestReportSentAt(ctx: Context, scope: String): Long = trackedWithTime(ctx).filter { it.first == scope }.maxOfOrNull { it.third } ?: 0L
 
     /** Event ids of the scores reports this phone queued for [scope] (they may already be delivered). */
     fun queuedEventIds(ctx: Context, scope: String): List<String> = tracked(ctx).filter { it.first == scope }.map { "control:${it.second}" }
@@ -820,8 +824,8 @@ internal object RiskReporter {
         return found
     }
 
-    private fun track(ctx: Context, scope: String, id: String) {
-        val kept = tracked(ctx).takeLast(63).map { "${it.first}|${it.second}" } + "$scope|$id"
+    private fun track(ctx: Context, scope: String, id: String, sentAt: Long) {
+        val kept = trackedWithTime(ctx).takeLast(63).map { "${it.first}|${it.second}|${it.third}" } + "$scope|$id|$sentAt"
         prefs(ctx).edit().putString(IDS, JSONArray(kept).toString()).commit()
     }
 
@@ -849,7 +853,7 @@ internal object RiskReporter {
                     .put("score", m.row.score ?: JSONObject.NULL).put("review_reason", m.row.reason ?: JSONObject.NULL).put("scored_at_ms", m.row.scoredAt))
                 val payload = JSONObject().put("type", "scores_mode_report").put("sent_at_ms", now).put("state", stateJson(app, unknown)).put("conversations", conversations)
                 val id = GuardEngine.queueScoresReport(app, payload) ?: return@withSessionLock false
-                track(app, scope, id)
+                track(app, scope, id, now)
                 db.markRiskSent(scope, chunk.flatMap { it.members })
             }
         }

@@ -456,7 +456,7 @@ object GuardEngine {
             val stillQueued = known.filter { db.hasQueuedEvent(scope, it) }.toSet()
             check(prefs(ctx).edit().putStringSet(DeliveryHealth.HEARTBEAT_IDS, stillQueued + heartbeatId).commit())
             val (waiting, oldest) = db.receiptWaiting(scope, stillQueued + heartbeatId)
-            DeliveryHealth.fields(waiting, oldest, prefs(ctx).getLong(DeliveryHealth.EXPIRED_AT_MS, 0L) > 0L, now)
+            DeliveryHealth.fields(waiting, oldest, prefs(ctx).getLong(DeliveryHealth.EXPIRED_AT_MS, 0L) > 0L, now, RiskReporter.newestReportSentAt(ctx, scope))
         }
     }
     /** Child, on a parent receipt for [eventId]: a counted record queued after the last unreceipted expiry clears the sticky bit. */
@@ -2079,6 +2079,8 @@ object GuardEngine {
                 val report=ScoresReportCodec.parse(inner,topic,received)
                 if(report!=null) {
                     val reached=FamilyEvidence(ctx).use{it.storeScoresReport(topic,report,received)}
+                    // The newest child send time stored here, compared with the one a verified heartbeat names (DeliveryHealth).
+                    if(reached>=0 && report.sentAt>prefs(ctx).getLong(DeliveryHealth.REPORT_APPLIED_MS,0L))check(prefs(ctx).edit().putLong(DeliveryHealth.REPORT_APPLIED_MS,report.sentAt).commit())
                     // Generic notice only: no account label, no score, no text.
                     if(reached>=0)repostUnappliedScoresPolicy(ctx,report.state)
                     if(reached>0)onNewAlertForParent?.invoke(JSONObject().put("type","alert").put("reason","scores_threshold").put("event_id","scores:"+UUID.randomUUID()).put("sender","").put("text","").put("ts_ms",received))
@@ -2205,7 +2207,7 @@ object GuardEngine {
     /** Parent, on a verified heartbeat: one content-free notice at most once an hour while the child reports records that wait over
      *  an hour (or expired) without a receipt, and only after 15 minutes of continuous relay connection here (receipts could flow). */
     private fun noteDeliveryHealth(ctx: Context, record: JSONObject, onNewAlertForParent: ((JSONObject) -> Unit)?, now: Long) {
-        val report = DeliveryHealth.parse(record) ?: return
+        val report = DeliveryHealth.parse(record, record.optLong("ts_ms", 0L), prefs(ctx).getLong(DeliveryHealth.REPORT_APPLIED_MS, 0L)) ?: return
         // Only a heartbeat sent after the last one acted on counts: a delayed or replayed older one neither clears nor raises.
         val sentAt = record.optLong("ts_ms", 0L)
         if (sentAt <= prefs(ctx).getLong(DeliveryHealth.LAST_SENT_MS, 0L)) return
