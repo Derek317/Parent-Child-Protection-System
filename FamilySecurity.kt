@@ -28,7 +28,7 @@ import javax.security.auth.x500.X500Principal
 
 /** Parent authority is separate from the encryption token shared with a child. */
 object FamilySecurity {
-    val controlTypes = setOf("sync_trusted", "unlock_code", "key_rotated", "remote_reset_child", "alert_receipt", "capture_policy", "scores_mode_policy")
+    val controlTypes = setOf("sync_trusted", "unlock_code", "key_rotated", "remote_reset_child", "alert_receipt", "capture_policy", "scores_mode_policy", "import_request")
     private const val ITERATIONS = 600_000
     private val encoder = Base64.getUrlEncoder()
     private val decoder = Base64.getUrlDecoder()

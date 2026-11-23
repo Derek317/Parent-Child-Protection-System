@@ -364,6 +364,10 @@ internal object ScoresChildCopy {
         .putExtra(Intent.EXTRA_MIME_TYPES, EXPORT_MIME_TYPES).putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, DOWNLOADS_URI)
     const val REMINDER_TITLE = "IG Guard · 是時候更新 Instagram 資料 (Time to refresh your Instagram export)"
     const val REMINDER_TEXT = "你上次匯入 Instagram 資料已超過 7 天。打開 IG Guard，按指引再下載及匯入一份新的資料。\nYour last Instagram import is more than 7 days old. Open IG Guard and follow the guide to download and import a fresh export."
+    // The parent asked for a fresh export: no content, and the parent is not told whether it was seen.
+    const val REQUEST_TITLE = "IG Guard · 你的家長請你更新 Instagram 資料 (Your parent asks you to refresh your Instagram export)"
+    const val REQUEST_TEXT = "打開 IG Guard，按指引下載及匯入一份新的資料。你也可以不理會。\nOpen IG Guard and follow the guide to download and import a fresh export. You can also ignore this."
+    const val REQUEST_CARD_TITLE = "你的家長請你更新 Instagram 資料 / Your parent asks you to refresh your Instagram export"
     const val EXPORT_RUNNING = "正在讀取檔案…\nReading the file…"
     const val EXPORT_PICKER_MISSING = "找不到檔案選擇器。\nNo file picker is available."
     /** Title and body for the outcome of an import; every failure says that nothing was stored. */

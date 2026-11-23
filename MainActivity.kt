@@ -1779,6 +1779,8 @@ object GuardEngine {
                 }
             }
             "scores_mode_policy" -> if(role=="child")RiskLocal.receivePolicy(ctx,inner.getString("policy_id"),inner.getBoolean("enabled"),inner.optString("method",ScoresMethod.CAPTURE))
+            // Content-free: no field of it is read. Shown or ignored on the child's side; consumed either way.
+            "import_request" -> if(role=="child")RiskLocal.receiveImportRequest(ctx)
             "scores_mode_report" -> if(role=="parent") {
                 val received=System.currentTimeMillis();val topic=getChannelTopicForToken(token)
                 val report=ScoresReportCodec.parse(inner,topic,received)
@@ -4237,6 +4239,14 @@ class MainActivity : Activity() {
             card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_TITLE else if (again) ScoresChildCopy.RECONSENT_CARD_TITLE else ScoresChildCopy.CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 8))
             card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_BODY else if (again) ScoresChildCopy.RECONSENT_CARD_BODY else ScoresChildCopy.CARD_BODY, 14f, t.textSecondary, bottomPad = 8))
             card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") }.apply { tag = "scores_consent_open" })
+            rootContainer.addView(card)
+        }
+        // The parent asked for a fresh export. The child may ignore it; nothing waits on it.
+        if (RiskLocal.importRequestPending(this)) {
+            val card = noticeCard(t, true, "scores_import_request_card")
+            card.addView(label(ScoresChildCopy.REQUEST_CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 8))
+            card.addView(actionButton(ScoresChildCopy.EXPORT_GUIDE_TITLE, t.btnPrimaryBg, t.btnPrimaryText) { showExportGuide(t) }.apply { tag = "scores_import_request_guide" })
+            card.addView(actionButton(ScoresChildCopy.OK_DISMISS, t.btnSecondaryBg, t.btnSecondaryText) { RiskLocal.dismissImportRequest(this); renderUi() }.apply { tag = "scores_import_request_dismiss" })
             rootContainer.addView(card)
         }
     }
