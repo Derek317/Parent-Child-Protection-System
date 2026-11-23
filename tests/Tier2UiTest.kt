@@ -222,6 +222,26 @@ class Tier2UiTest {
         } finally { RuntimeEnvironment.setQualifiers("+notnight"); GuardEngine.setBrightTheme(ctx, true) }
     }
 
+    @Test fun theAlertDetailSheetUsesOneButtonStyleAndDeleteStillConfirms() {
+        GuardEngine.setFamilyToken(ctx, java.util.UUID.randomUUID().toString())
+        GuardEngine.recordParentAlert(ctx, org.json.JSONObject().put("type", "alert").put("event_id", "e1").put("sender", "test_account_a").put("text", "Synthetic test message").put("reason", "stranger_message").put("conversation_key", "k1").put("ts_ms", System.currentTimeMillis()), "relay:e1")
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            val t = UiSupport.theme(a)
+            MainActivity::class.java.declaredMethods.first { it.name == "showAlertDetails" }.apply { isAccessible = true }.invoke(a, GuardEngine.getParentAlerts(ctx).first(), t)
+            val sheet = ShadowDialog.getLatestDialog().window!!.decorView
+            val buttons = UiSupport.all(sheet).filterIsInstance<android.widget.Button>()
+            assertTrue("no text links among the buttons", buttons.none { it.background is android.graphics.drawable.RippleDrawable })   // text links are a bare ripple
+            assertTrue("all centred", buttons.all { it.gravity and android.view.Gravity.HORIZONTAL_GRAVITY_MASK == android.view.Gravity.CENTER_HORIZONTAL })
+            val delete = buttons.single { it.text.toString() == "刪除此記錄" }
+            assertEquals(android.graphics.Color.parseColor(UiSupport.token(t, "warmCoral")), delete.currentTextColor)
+            delete.performClick(); idle()
+            val confirm = ShadowDialog.getLatestDialog() as AlertDialog
+            assertEquals("此操作會移除本機文字及收藏，無法復原。", confirm.findViewById<TextView>(android.R.id.message).text.toString())
+            assertTrue(confirm.getButton(AlertDialog.BUTTON_POSITIVE).filterTouchesWhenObscured)
+        } finally { c.pause().stop().destroy() }
+    }
+
     @Test fun aLockedParentGetsNoBackLinkPastTheLock() {
         ParentUiAuthFixture.autoApprove = false
         try {

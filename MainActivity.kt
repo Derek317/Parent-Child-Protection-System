@@ -3957,7 +3957,8 @@ class MainActivity : Activity() {
                 addView(stateNote(Note.ERROR,"關鍵字相符，不代表已確認誘導或侵害。\n"+phrases.joinToString("；"),t))
             }
             if(stored.optBoolean("possible_duplicate"))addView(stateNote(Note.WARNING,"此項擷取可能與其他來源重複；無法確認為獨立訊息。",t))
-            if(stored.optString("_conversation_key").isNotEmpty())addView(textAction("查看此對象的對話") {
+            // One button style in this sheet: every action is a secondary button; delete keeps the danger colour on its label.
+            if(stored.optString("_conversation_key").isNotEmpty())addView(actionButton("查看此對象的對話",t.btnSecondaryBg,t.btnSecondaryText) {
                 dialog.dismiss();evidenceSearch="";evidenceSaved=false;openConversation(stored.optString("_conversation_key"),ConversationCapture.displayLabel(stored.optString("_conversation_label",sender),unidentified))
             })
             val handle = sender.trim().lowercase(Locale.US).removePrefix("@")
@@ -3966,7 +3967,7 @@ class MainActivity : Activity() {
                 handle !in GuardEngine.getTrustedHandles(this@MainActivity) && !GuardEngine.isChildSelfHandle(this@MainActivity,handle) && !handle.contains("instagram")) {
                 addView(actionButton("加入信任好友並解除封鎖",t.btnSecondaryBg,t.btnSecondaryText) { addTrustedSender(handle);GuardEngine.syncTrustedFromParent(this@MainActivity);dialog.dismiss() })
             }
-            addView(textAction("刪除此記錄", t.warmCoral) {
+            addView(actionButton("刪除此記錄",t.btnSecondaryBg,t.warmCoral) {
                 alert(critical = true).setTitle("永久刪除此記錄？").setMessage("此操作會移除本機文字及收藏，無法復原。")
                     .setNegativeButton("取消",null).setPositiveButton("刪除") { _,_ ->
                         FamilyEvidence(this@MainActivity).use{it.deleteMessage(scope,id)};dialog.dismiss();renderUi()
