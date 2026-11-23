@@ -37,6 +37,14 @@ internal object RiskLimits {
     const val FALLBACK_MS = 48L * 3_600_000L
     const val MAX_REPORT_ROWS = 200
     const val MAX_LABEL = 64
+    /** Parent: report ids are kept this long (by arrival) to refuse replays. */
+    const val REPLAY_KEEP_MS = 30L * 86_400_000L
+    /** Parent: how far ahead of the parent's clock a report's send time may be. */
+    const val REPORT_FUTURE_MS = 86_400_000L
+    /** Parent: a report sent earlier than this before arrival is refused. With the future allowance it ends inside [REPLAY_KEEP_MS], so its id is still kept. */
+    const val REPORT_HORIZON_MS = REPLAY_KEEP_MS - REPORT_FUTURE_MS
+    /** Parent: a report's state still applies when sent up to this much before the stored one (clock correction, skew between phones). */
+    const val STATE_ORDER_SLACK_MS = 5L * 60_000L
 }
 
 /** Parent copy of one conversation score. Rows come newest first. [score] is 0..100, or null with a [reviewReason]. */
@@ -784,7 +792,7 @@ internal object RiskReporter {
      * Sends the state plus every conversation row that changed since it was last sent (200 per record). Rows go out only
      * while consent is `accepted`; otherwise the record is state-only. The whole build-and-queue runs under the session
      * lock, so rows cannot be queued after a withdrawal. A newer report replaces any older one still queued (the parent
-     * follows arrival order); rows are resent in full only after such an undelivered report was purged. True if all records were queued.
+     * orders state by send time); rows are resent in full only after such an undelivered report was purged. True if all records were queued.
      */
     fun send(ctx: Context, now: Long = System.currentTimeMillis()): Boolean = GuardEngine.withSessionLock {
         val app = ctx.applicationContext
@@ -838,7 +846,8 @@ internal object ScoresReportCodec {
         require(json.get("type") == "scores_mode_report" && json.get("scope") == scope)
         UUID.fromString(json.getString("command_id"))
         val sentAt = long(json.get("sent_at_ms"))
-        require(sentAt > 0 && sentAt <= now + 86_400_000L)
+        // Older than the horizon: its id may already be forgotten, so it could be a replay. Refused whole.
+        require(sentAt > 0 && sentAt <= now + RiskLimits.REPORT_FUTURE_MS && sentAt >= now - RiskLimits.REPORT_HORIZON_MS)
         val state = json.get("state") as JSONObject
         require(keys(state) == setOf("policy_id", "model", "consent", "active", "paused", "paused_at_ms", "last_run_ms", "scored_count", "unknown_threads"))
         val policy = state.get("policy_id").let { if (it == JSONObject.NULL) null else (it as String).also { id -> require(UUID.fromString(id).toString() == id) } }
@@ -866,8 +875,10 @@ internal object ScoresReportCodec {
             val reason = if (reasonValue == JSONObject.NULL) null else (reasonValue as String).also { require(it in reasons) }
             require((score == null) == (reason != null))
             val at = long(o.get("scored_at_ms"))
-            require(at > 0 && at <= sentAt)
-            ScoresReportRow(label.trim(), score, reason, at)
+            require(at > 0)
+            // A child clock that moved back between scoring and sending: clamp, as the state's time is clamped, rather than
+            // drop rows the child has already marked as sent.
+            ScoresReportRow(label.trim(), score, reason, minOf(at, sentAt))
         }
         ParsedScoresReport(json.getString("command_id"), sentAt, ChildScoresState(policy, model, consent, paused, pausedAt, lastRun, scored, unknown, active), rows)
     } catch (_: Exception) { null }

@@ -502,7 +502,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         tombstoneScores(db,scope,now,now-retentionDays(scope)*DAY)
         db.execSQL("DELETE FROM risk_scores WHERE scope=? AND scored_at<=?",arrayOf(scope,retention))
         db.execSQL("DELETE FROM risk_tombstones WHERE scope=? AND deleted_at<?",arrayOf(scope,(now-30*DAY).toString()))
-        db.execSQL("DELETE FROM risk_replay WHERE scope=? AND stored_at<?",arrayOf(scope,(now-30*DAY).toString()))
+        db.execSQL("DELETE FROM risk_replay WHERE scope=? AND stored_at<?",arrayOf(scope,(now-RiskLimits.REPLAY_KEEP_MS).toString()))
         db.execSQL("DELETE FROM risk_state WHERE scope=? AND received_at<=?",arrayOf(scope,retention))
     }
     /** Child: content-free marker so a re-read message is neither stored nor alerted twice. True when [id] is new. */
@@ -652,13 +652,17 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             // A bounded table: an authenticated but misbehaving child cannot grow the parent database without limit.
             db.execSQL("DELETE FROM risk_scores WHERE scope=? AND label_index NOT IN (SELECT label_index FROM risk_scores WHERE scope=? ORDER BY scored_at DESC LIMIT 2000)",arrayOf(scope,scope))
             val s=report.state
-            // State follows arrival order; the child's clock is only kept (clamped) for display.
-            db.insertWithOnConflict("risk_state",null,ContentValues().apply {
+            // State follows the child's send time, not arrival order, so a relay cannot hand over an older state after a newer one.
+            // The stored time is clamped to arrival, so a clock that was ahead does not block later states; a report sent less than
+            // STATE_ORDER_SLACK_MS before the stored one still applies (small clock corrections, skew between the phones). The stored
+            // time never goes down, so the slack cannot be chained to bring back an older state step by step.
+            val storedSent=db.rawQuery("SELECT sent_at FROM risk_state WHERE scope=?",arrayOf(scope)).use{if(it.moveToFirst())it.getLong(0) else null}
+            if(storedSent==null || report.sentAt>storedSent-RiskLimits.STATE_ORDER_SLACK_MS) db.insertWithOnConflict("risk_state",null,ContentValues().apply {
                 put("scope",scope);if(s.policyId!=null)put("policy_id",s.policyId) else putNull("policy_id")
                 put("model",s.model);put("consent",s.consent);put("paused",if(s.paused)1 else 0)
                 if(s.pausedAt!=null)put("paused_at",s.pausedAt) else putNull("paused_at")
                 if(s.lastRun!=null)put("last_run",s.lastRun) else putNull("last_run")
-                put("scored_count",s.scoredCount);put("unknown_threads",s.unknownThreads);put("active",if(s.active)1 else 0);put("sent_at",minOf(report.sentAt,receivedAt));put("received_at",receivedAt)
+                put("scored_count",s.scoredCount);put("unknown_threads",s.unknownThreads);put("active",if(s.active)1 else 0);put("sent_at",maxOf(storedSent ?: 0L,minOf(report.sentAt,receivedAt)));put("received_at",receivedAt)
             },SQLiteDatabase.CONFLICT_REPLACE)
             db.setTransactionSuccessful();return reached
         }finally{db.endTransaction()}

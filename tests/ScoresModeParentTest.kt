@@ -82,7 +82,7 @@ class ScoresModeParentTest {
             "unknown reason" to { getJSONArray("conversations").getJSONObject(0).put("score", JSONObject.NULL).put("review_reason", "because") },
             "empty label" to { getJSONArray("conversations").getJSONObject(0).put("account_label", " ") },
             "long label" to { getJSONArray("conversations").getJSONObject(0).put("account_label", "x".repeat(65)) },
-            "scored after sent" to { getJSONArray("conversations").getJSONObject(0).put("scored_at_ms", now + 10_000) },
+            "sent before the replay horizon" to { put("sent_at_ms", now - RiskLimits.REPORT_HORIZON_MS - 60_000) },
             "active missing" to { getJSONObject("state").remove("active") },
             "active not boolean" to { getJSONObject("state").put("active", "yes") },
             "bad model" to { getJSONObject("state").put("model", "other") },
@@ -120,9 +120,9 @@ class ScoresModeParentTest {
         deliver(report(listOf(row("alice", 10.0, now - 5000)), sentAt = now - 4000))
         deliver(report(listOf(row("Alice", 30.0, now - 3000)), sentAt = now - 2000, state = state("mismatch")))
         assertEquals(30.0, scores().single().score!!, 0.0001); assertEquals("mismatch", childState()!!.model)
-        deliver(report(listOf(row("alice", 99.0, now - 4500)), sentAt = now - 3500, state = state("missing")))   // an older report arriving late
+        deliver(report(listOf(row("alice", 99.0, now - 11 * 60_000)), sentAt = now - 10 * 60_000, state = state("missing")))   // an older report arriving late
         assertEquals(30.0, scores().single().score!!, 0.0001)   // scores keep the newest scored_at
-        assertEquals("missing", childState()!!.model)           // state follows arrival order
+        assertEquals("mismatch", childState()!!.model)          // state follows the send time, not arrival order
     }
     @Test fun firstReachingFiftyNotifiesOncePerFourteenDaysWithoutNamesOrScores() {
         val now = System.currentTimeMillis()
@@ -266,6 +266,27 @@ class ScoresModeParentTest {
         deliver(report(sentAt = now + 1, state = state("valid").put("consent", "withdrawn")))
         assertEquals("withdrawn", childState()!!.consent)
         assertTrue(childState()!!.sentAt <= System.currentTimeMillis())   // the far-future clock is clamped for display
+    }
+    @Test fun aChildClockThatMovedBackKeepsRowsAndOrderingAndTheReplayHorizonHolds() {
+        val now = System.currentTimeMillis()
+        // B6: scored before the clock moved back, sent after: the row is kept, its time clamped to the send time.
+        assertEquals(RelayConsumption.CONSUMED, deliver(report(listOf(row("alice", 42.0, now + 60_000)), sentAt = now)))
+        assertEquals(now, scores().single().scoredAt); assertEquals("valid", childState()!!.model)
+        // A small step back (inside the slack) still applies the state.
+        deliver(report(listOf(row("bob", 10.0, now - 3 * 60_000)), sentAt = now - 2 * 60_000, state = state("mismatch")))
+        assertEquals("mismatch", childState()!!.model); assertEquals(2, scores().size)
+        // Further back: rows are still stored, the state is not applied, and the slack cannot be chained (stored time never drops).
+        deliver(report(listOf(row("carol", 11.0, now - 7 * 60_000)), sentAt = now - 6 * 60_000, state = state("missing")))
+        assertEquals("mismatch", childState()!!.model); assertEquals(3, scores().size)
+        assertEquals(now, childState()!!.sentAt)
+        // Replay horizon: just inside is accepted, just outside is refused whole.
+        val received = childState()!!.receivedAt
+        deliver(report(listOf(row("dave", 12.0, now - RiskLimits.REPORT_HORIZON_MS - 120_000)), sentAt = now - RiskLimits.REPORT_HORIZON_MS - 60_000))
+        assertEquals(3, scores().size); assertEquals(received, childState()!!.receivedAt)
+        deliver(report(listOf(row("dave", 12.0, now - RiskLimits.REPORT_HORIZON_MS + 60_000)), sentAt = now - RiskLimits.REPORT_HORIZON_MS + 120_000))
+        assertEquals(4, scores().size)
+        // A horizon-old report's id outlives the horizon: ids are kept REPLAY_KEEP_MS by arrival.
+        assertTrue(RiskLimits.REPORT_HORIZON_MS + RiskLimits.REPORT_FUTURE_MS <= RiskLimits.REPLAY_KEEP_MS)
     }
     @Test fun enablingTwiceResendsTheSamePolicyIdAndDisablingThenEnablingMakesANewOne() {
         GuardEngine.relayPublicKey(ctx)
