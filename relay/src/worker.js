@@ -1,4 +1,4 @@
-import { parseAuthorization, verifyParentAuthorization, capabilityHash, sameHash, digest } from './protocol.js';
+import { parseAuthorization, verifyParentAuthorization, verifyChildAuthorization, capabilityHash, sameHash, digest } from './protocol.js';
 import { DurableObject } from 'cloudflare:workers';
 
 const TTL = 7 * 24 * 60 * 60 * 1000;
@@ -24,6 +24,7 @@ const send = (socket, message) => socket.send(JSON.stringify(message));
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // Body must stay exactly this: scripts/relay-config.py --probe (CI) compares the whole object. Features are in `ready`.
     if (request.method === 'GET' && url.pathname === '/health' && !url.search) {
       return Response.json({ service: 'ig-guard-relay', protocol: 1 }, { headers: { 'Cache-Control': 'no-store' } });
     }
@@ -121,9 +122,11 @@ export class FamilyRoom extends DurableObject {
     let auth;
     try {
       auth = parseAuthorization(request.headers.get('Authorization'));
-      if (auth.room !== room || auth.v !== 1) return json(401, 'unauthorized'); // v2 rooms are not served yet
+      if (auth.room !== room) return json(401, 'unauthorized');
       if (request.method === 'DELETE' && auth.role !== 'parent') return json(401, 'unauthorized');
       if(auth.role === 'parent')await verifyParentAuthorization(auth, room);
+      // Before any room state is read: a child proof that does not verify touches nothing.
+      else if (auth.v === 2) await verifyChildAuthorization(auth, room);
     } catch { return json(401, 'unauthorized'); }
     try {
       this.cleanupRegistration();
@@ -143,20 +146,44 @@ export class FamilyRoom extends DurableObject {
           const nonces = (owner?.nonces ?? []).filter(n => n[1] >= Date.now());
           if (nonces.some(n => n[0] === auth.nonce) || nonces.length >= 128) throw new AccessDenied();
           nonces.push([auth.nonce, auth.ts_ms + 120_000]);
+          // A v1 parent keeps the child lock; only a v2 parent proof sets or replaces child_key.
+          const childKey = auth.v === 2 ? auth.child_key : owner?.child_key;
           this.sql.exec("INSERT OR REPLACE INTO metadata(key,value) VALUES('owner',?)", JSON.stringify({
             public_key: auth.public_key, scope: auth.scope, capability_hash: auth.capability_hash, nonces,
             last_active: Date.now(), epoch: owner ? owner.epoch : crypto.randomUUID(),
+            ...(childKey ? { child_key: childKey } : {}), ...(owner?.child_nonces ? { child_nonces: owner.child_nonces } : {}),
           }));
         });
         this.schemaReady = true; // only after the transaction committed
         } finally { this.registering = false; }
+        if (auth.v === 2) {
+          for (const child of this.ctx.getWebSockets('child')) {
+            if (child.deserializeAttachment()?.child_key !== auth.child_key) child.close(1000, 'Child key replaced');
+          }
+        }
       } else {
         const owner = this.metadata();
         if (!owner) return json(409, 'parent_not_registered', 15_000);
+        // A locked room answers anything but its own child key here, before the code below can replace the proven socket.
+        if (owner.child_key && (auth.v !== 2 || auth.child_key !== owner.child_key)) return json(401, 'unauthorized');
         if (owner.scope !== auth.scope || typeof auth.capability !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(auth.capability) ||
             !sameHash(owner.capability_hash, await capabilityHash(auth.capability))) return json(401, 'unauthorized');
-        // Hashing yields; a concurrent parent purge must win over an in-flight child upgrade.
-        if (this.metadata()?.epoch !== owner.epoch || this.retired()) return json(410, 'room_retired', REGISTRATION_TTL);
+        // Hashing yields; a concurrent parent purge, lock or key replacement must win over an in-flight child upgrade.
+        const current = this.metadata();
+        if (current?.epoch !== owner.epoch || this.retired()) return json(410, 'room_retired', REGISTRATION_TTL);
+        if (current?.child_key !== owner.child_key) return json(401, 'unauthorized');
+        // Not locked yet: a child with a key waits for its parent rather than evicting the socket in use.
+        if (auth.v === 2 && !current.child_key) return json(409, 'child_key_not_registered', 15_000);
+        if (auth.v === 2) {
+          // No await between replay check and commit, as for the parent; only verified proofs reach this.
+          this.ctx.storage.transactionSync(() => {
+            const latest = this.metadata();
+            const childNonces = (latest.child_nonces ?? []).filter(n => n[1] >= Date.now());
+            if (childNonces.some(n => n[0] === auth.nonce) || childNonces.length >= 128) throw new AccessDenied();
+            childNonces.push([auth.nonce, auth.ts_ms + 120_000]);
+            this.sql.exec("UPDATE metadata SET value=? WHERE key='owner'", JSON.stringify({ ...latest, child_nonces: childNonces }));
+          });
+        }
         this.touch();
       }
     } catch(error) { return error instanceof AccessDenied ? json(401, 'unauthorized') : json(503, 'relay_unavailable'); }
@@ -172,8 +199,9 @@ export class FamilyRoom extends DurableObject {
     // The current app supports one parent and one child endpoint in a family.
     for (const old of this.ctx.getWebSockets(auth.role)) old.close(1000, 'Replaced by authenticated reconnect');
     this.ctx.acceptWebSocket(server, [auth.role]);
-    server.serializeAttachment({ role: auth.role, epoch: this.metadata().epoch, inFlight: [], rateAt: Date.now(), rateCount: 0 });
-    send(server, { type: 'ready', protocol: 1, role: auth.role, peer_online: Boolean(this.peer(auth.role)) });
+    server.serializeAttachment({ role: auth.role, epoch: this.metadata().epoch, inFlight: [], rateAt: Date.now(), rateCount: 0,
+      child_key: auth.role === 'child' && auth.v === 2 ? auth.child_key : null });
+    send(server, { type: 'ready', protocol: 1, role: auth.role, peer_online: Boolean(this.peer(auth.role)), features: ['child_proof'] });
     const peer = this.peer(auth.role);
     if (peer) send(peer, { type: 'peer', online: true });
     this.pump(server);

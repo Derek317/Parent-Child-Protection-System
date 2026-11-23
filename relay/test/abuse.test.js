@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { family, header, runtime, connection, publish, wire, sql, vector } from './helpers.js';
+import { family, header, headerV2, childIdentity, runtime, connection, publish, wire, sql, vector } from './helpers.js';
 
 // Miniflare's local simulator keeps its own bookkeeping tables (__miniflare_*, _cf_*); only the relay's tables matter.
 const tables = async (mf, room) => (await sql(mf, room, "SELECT name FROM sqlite_master WHERE type='table'")).map(r => r.name).filter(n => !/^(__miniflare|_cf_)/.test(n));
@@ -74,5 +74,34 @@ test('daily budget limits only ordinary data; no other class or direction is eve
     await sql(mf, f.room, "UPDATE metadata SET value=? WHERE key='budget'", JSON.stringify({ day: today - 1, data: 5000 }));
     assert.equal((await publish(child, 'budget:tomorrow')).mode, 'buffered');
     child.close();
+  } finally { await mf.dispose(); }
+});
+
+test('200 bad child logins to a locked room write no storage and do not grow the nonce list', async () => {
+  const mf = runtime();
+  try {
+    const f = family(), key = childIdentity(), other = childIdentity();
+    const parent = await connection(mf, f, 'parent', headerV2(f, 'parent', key)); await parent.next(m => m.type === 'ready');
+    const proven = headerV2(f, 'child', key);
+    const child = await connection(mf, f, 'child', proven); await child.next(m => m.type === 'ready');
+    const snapshot = async () => ({ tables: await tables(mf, f.room), metadata: await sql(mf, f.room, 'SELECT key,value FROM metadata ORDER BY key'),
+      rows: await sql(mf, f.room, 'SELECT (SELECT COUNT(*) FROM parent_inbox) AS p, (SELECT COUNT(*) FROM child_inbox) AS c, (SELECT COUNT(*) FROM packet_lifetimes) AS l') });
+    const before = await snapshot();
+    assert.equal(JSON.parse(before.metadata.find(r => r.key === 'owner').value).child_nonces.length, 1);
+    const attempts = [
+      () => header(f, 'child'),
+      () => headerV2(f, 'child', other),
+      () => headerV2(f, 'child', key, { signer: other }),
+      () => headerV2(f, 'child', key, { ts: Date.now() - 121_000 }),
+      () => proven,
+      () => headerV2(f, 'child', key, { capability: randomBytes(32).toString('base64url') }),
+    ];
+    for (let n = 0; n < 200; n++) {
+      assert.equal((await connection(mf, f, 'child', attempts[n % attempts.length]())).response.status, 401, `attempt ${n}`);
+    }
+    assert.deepEqual(await snapshot(), before);
+    assert.equal((await publish(parent, 'survived')).mode, 'forwarded');
+    assert.equal((await child.next(m => m.type === 'message')).wire, wire('survived'));
+    parent.close(); child.close();
   } finally { await mf.dispose(); }
 });

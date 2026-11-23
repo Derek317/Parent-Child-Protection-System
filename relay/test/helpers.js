@@ -1,6 +1,6 @@
 import { Miniflare } from 'miniflare';
 import { readFile } from 'node:fs/promises';
-import { createHash, createHmac, createPrivateKey, sign, randomUUID } from 'node:crypto';
+import { createHash, createHmac, createPrivateKey, generateKeyPairSync, sign, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 export const vector = JSON.parse(await readFile(new URL('./protocol-vector.json', import.meta.url)));
@@ -24,6 +24,25 @@ export function header(f, role = 'parent', nonce = randomUUID()) {
     const key = createPrivateKey({ key: Buffer.from(f.privateKey, 'base64url'), type: 'pkcs8', format: 'der' });
     auth.signature = sign('sha256', Buffer.from(text), key).toString('base64url');
   }
+  return 'IGGuard ' + Buffer.from(JSON.stringify(auth)).toString('base64url');
+}
+
+export function childIdentity() {
+  const keys = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  return { publicKey: keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'),
+    privateKey: keys.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64url') };
+}
+
+// v2 proof: the parent signs with its key and names `child.publicKey`; the child signs with `signer` (default: its own key).
+export function headerV2(f, role, child, { nonce = randomUUID(), ts = Date.now(), signer = child, capability = f.capability } = {}) {
+  const auth = role === 'parent'
+    ? { v: 2, role, room: f.room, scope: f.scope, public_key: f.publicKey, capability_hash: f.capability_hash, child_key: child.publicKey, ts_ms: ts, nonce }
+    : { v: 2, role, room: f.room, scope: f.scope, capability, child_key: child.publicKey, ts_ms: ts, nonce };
+  const text = role === 'parent'
+    ? ['igguard-relay-auth-v2','parent',f.room,f.scope,ts,nonce,f.capability_hash,child.publicKey].join('\n')
+    : ['igguard-relay-auth-v2','child',f.room,f.scope,ts,nonce,sha(capability)].join('\n');
+  const key = createPrivateKey({ key: Buffer.from(role === 'parent' ? f.privateKey : signer.privateKey, 'base64url'), type: 'pkcs8', format: 'der' });
+  auth.signature = sign('sha256', Buffer.from(text), key).toString('base64url');
   return 'IGGuard ' + Buffer.from(JSON.stringify(auth)).toString('base64url');
 }
 
