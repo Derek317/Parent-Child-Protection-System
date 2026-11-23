@@ -1048,6 +1048,31 @@ class ScoresChildUiTest {
             assertTrue((tag(second, "scores_import_text").single() as TextView).text.contains("0.93 GB / 1.03 GB"))
         } finally { ModelImportJob.running = false; second.pause().stop().destroy() }
     }
+    @Test fun copyProgressRedrawsAtMostTwiceASecondAndAlwaysShowsTheLatest() {
+        var queued: Runnable? = null
+        ModelImportJob.runner = { queued = it }
+        val c = launch()
+        try {
+            permissions(c)
+            val uri = Uri.parse("content://test.picker/model")
+            shadowOf(ctx.contentResolver).registerInputStream(uri, ByteArrayInputStream(tiny))
+            MainActivity::class.java.getDeclaredField("modelPickAuthorized").apply { isAccessible = true }.setBoolean(c.get(), true)
+            MainActivity::class.java.getDeclaredMethod("onActivityResult", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Intent::class.java).apply { isAccessible = true }
+                .invoke(c.get(), 9032, android.app.Activity.RESULT_OK, Intent().setData(uri))
+            assertTrue(ModelImportJob.running)
+            ModelImportJob.copied = 100_000_000L; ModelImportJob.notifyChange(); shadowOf(Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+            val before = tag(c, "scores_import_text").single()
+            // A burst of progress reports (one per 8 MB) inside half a second: no redraw yet, the copy figures keep moving.
+            for (i in 1..20) { ModelImportJob.copied = 100_000_000L + i * 8_388_608L; ModelImportJob.notifyChange() }
+            shadowOf(Looper.getMainLooper()).idleFor(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+            assertSame("redraw is throttled", before, tag(c, "scores_import_text").single())
+            assertEquals(100_000_000L + 20 * 8_388_608L, ModelImportJob.copied)
+            // Within the throttle window one trailing redraw shows the latest figure.
+            shadowOf(Looper.getMainLooper()).idleFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            val after = tag(c, "scores_import_text").single() as TextView
+            assertNotSame(before, after); assertTrue(after.text.toString(), after.text.contains("0.25 GB / 1.03 GB"))
+        } finally { ModelImportJob.running = false; c.pause().stop().destroy() }
+    }
     @Test fun wrongFileWordingIsHonestAboutWhatIsChecked() {
         val text = ScoresChildCopy.result(RiskImportResult.WRONG_FILE, false)!!.let { it.first + "\n" + it.second }
         assertTrue(text.contains("只接受完全相同的檔案") && text.contains("SHA-256") && text.contains("Only the exact file is accepted"))

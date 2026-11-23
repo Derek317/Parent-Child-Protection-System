@@ -3249,6 +3249,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause(); themeReveal?.end(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
         refreshPending = false   // the runnable that clears it was just removed; left set, every later refresh broadcast is dropped
+        importRedrawQueued = false   // same for the throttled model-copy redraw
         if (ModelImportJob.listener === importListener) ModelImportJob.listener = null
         if (InstagramImport.listener === exportListener) InstagramImport.listener = null
         parentAccess.lock()
@@ -3449,7 +3450,15 @@ class MainActivity : Activity() {
             tab.addOnLayoutChangeListener { v, l, _, _, _, _, _, _, _ ->
                 pill.tab = v
                 val place = { x: Float -> pill.x = x; navPillX = x; pill.invalidateSelf() }
-                if (glide) navMotion = motion(ValueAnimator.ofFloat(navPillX, l.toFloat()).apply { addUpdateListener { place(it.animatedValue as Float) } }, 280, moveEasing)
+                if (glide) navMotion = motion(ValueAnimator.ofFloat(navPillX, l.toFloat()).apply {
+                    addUpdateListener { place(it.animatedValue as Float) }
+                    // The target was read before the slide; a rotation mid-slide moves the tab, so land on where it is now.
+                    addListener(object : AnimatorListenerAdapter() {
+                        var cancelled = false
+                        override fun onAnimationCancel(animation: Animator) { cancelled = true }
+                        override fun onAnimationEnd(animation: Animator) { if (!cancelled && pill.tab === v) place(v.left.toFloat()) }
+                    })
+                }, 280, moveEasing)
                 glide = false
                 if (navMotion?.isRunning != true) place(l.toFloat())
             }
@@ -4195,7 +4204,18 @@ class MainActivity : Activity() {
     private var modelPickAuthorized = false
     private var scoresReadOnly = false
     /** Registered while this activity is on screen; the import itself lives in the process, so a recreated activity re-attaches here. */
-    private val importListener: () -> Unit = { uiHandler.post { if (!isDestroyed && activityVisible && section == "permissions") renderUi() } }
+    // The copy reports every 8 MB (several times a second); a full rebuild that often drops taps (bug-review B-7). Redraws are
+    // throttled to one per IMPORT_REDRAW_MS, with a trailing one so the final state always shows. The copy and its check are untouched.
+    private val IMPORT_REDRAW_MS = 500L
+    private var importRedrawAt = 0L
+    private var importRedrawQueued = false
+    private val importRedraw = Runnable {
+        importRedrawQueued = false; importRedrawAt = SystemClock.uptimeMillis()
+        if (!isDestroyed && activityVisible && section == "permissions") renderUi()
+    }
+    private val importListener: () -> Unit = { uiHandler.post {
+        if (!importRedrawQueued) { importRedrawQueued = true; uiHandler.postAtTime(importRedraw, maxOf(SystemClock.uptimeMillis(), importRedrawAt + IMPORT_REDRAW_MS)) }
+    } }
     private val exportListener: () -> Unit = { uiHandler.post { if (!isDestroyed && activityVisible && section == "overview") renderUi() } }
 
     private fun renderScoresChildBlocks(t: ThemeColors) {

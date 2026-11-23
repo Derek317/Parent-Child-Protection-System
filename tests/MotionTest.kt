@@ -60,6 +60,20 @@ class MotionTest {
             settle(); assertSettledOn(a, "permissions")
         } finally { c.pause().stop().destroy(); durationScale.invoke(null, 0f) }
     }
+    @Test fun aTabThatMovesDuringTheSlideStillGetsTheHighlight() {
+        durationScale.invoke(null, 1f)
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            UiSupport.nav(a, "overview"); settle(); assertSettledOn(a, "overview")
+            UiSupport.nav(a, "permissions"); shadowOf(Looper.getMainLooper()).idle()
+            // Robolectric finishes the slide inside idle(), so the mid-slide moment is replayed: the tab moves (as a rotation
+            // re-lays the bar out while the slide runs, whose layout pass does not re-place a running slide), then the slide ends.
+            val slide = field(a, "navMotion") as ValueAnimator
+            val target = tab(a, "permissions"); target.offsetLeftAndRight(120)
+            slide.end()
+            assertEquals("highlight lands where the tab is now", target.left.toFloat(), field(a, "navPillX") as Float, .5f)
+        } finally { c.pause().stop().destroy(); durationScale.invoke(null, 0f) }
+    }
     @Test fun withAnimatorsOffEverythingIsFinalAtOnce() {
         durationScale.invoke(null, 0f)
         val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
