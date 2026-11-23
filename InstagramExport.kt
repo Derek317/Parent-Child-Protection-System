@@ -200,7 +200,7 @@ internal object InstagramExport {
     private const val BODY = "<div class=\"_3-95 _a6-p\">"
     private const val TIME = "<div class=\"_3-94 _a6-o\">"
     private val TIMES = listOf("MMM dd, yyyy, h:mm a", "MMM d, yyyy, h:mm a", "MMM dd, yyyy h:mm a", "MMM d, yyyy h:mm a", "MMM d, yyyy 'at' h:mm a", "MMM dd, yyyy 'at' h:mm a", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm")
-    private val TAG = Regex("<[^>]*>")
+    private val TAG = Regex("<[^<>]*>")   // stops at the next "<": a run of unclosed "<" is linear, not quadratic (security-audit L6)
     private val BR = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
 
     /** Index just past the element that opens at [from] (an opening tag of [tag]), counting nested ones; -1 when it never closes. */

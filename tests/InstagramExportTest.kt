@@ -62,6 +62,17 @@ class InstagramExportTest {
         assertTrue(fromHtml.conversations.single().messages.zipWithNext().all { (a, b) -> a.ts!! < b.ts!! })
     }
 
+    @Test fun aFloodOfUnclosedTagsAfterATimeDoesNotHangTheImport() {
+        // Security-audit L6: about 200 KB of "<" with no ">" and no "</div>" after the time element took quadratic time.
+        val flood = "<html><body>" + block(teen, "hi Bea", time(2)) +
+            "<div class=\"pam\"><h2 class=\"_3-95 _2pim _a6-h _a6-i\">$friend</h2><div class=\"_3-95 _a6-p\"><div>hello</div></div><div class=\"_3-94 _a6-o\">" + "<".repeat(200_000)
+        val started = System.nanoTime()
+        val p = parse(flood, "message_1.html", child = teen)
+        val ms = (System.nanoTime() - started) / 1_000_000
+        assertTrue("parse took $ms ms", ms < 3_000)
+        assertEquals(ImportResult.OK, p.result)
+        assertEquals(listOf(false to "hello", true to "hi Bea"), pairs(p.conversations.single()))
+    }
     @Test fun htmlReactionsAreIgnoredAndMediaAndLinksBecomePlaceholders() {
         val secretCaption = "SOMEONE-ELSES-CAPTION"
         val blocks = listOf(
