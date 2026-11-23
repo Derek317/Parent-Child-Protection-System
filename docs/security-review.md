@@ -24,17 +24,36 @@ Existing child monitoring remains active before re-pairing. Legacy invitations c
 
 The invitation still contains the shared encryption token, so it must be sent privately. Anyone holding it can decrypt family traffic. A child device is a participant in this shared channel; it is not a tamper-proof hardware boundary. Real-device testing is still needed for Instagram metadata/geometry, Samsung permission behavior, background scheduling and banking/Play Protect decisions. No permission or monitoring scope is expanded by these fixes.
 
-## Open risk: anyone holding the invitation can impersonate the child phone
+## Child-phone impersonation: what is now done, and what remains
 
-Child-to-parent messages are encrypted with the family token but not signed. Whoever holds the invitation text (the child, who sees it in the chat it was sent through, or anyone who finds it in a chat backup or screenshot) can derive the relay room and the child credential and send messages that the parent phone accepts as coming from the child phone:
+**History.** The risk was open through 5.2 (see the [5.2 release notes](releases/5.2.md)). Child-to-parent messages were encrypted with the family token but not signed. Whoever held the invitation text (the child, who sees it in the chat it was sent through, or anyone who finds it in a chat backup or screenshot) could derive the relay room and the child credential and send messages that the parent phone accepted as coming from the child phone: fake "running, notification access on" heartbeats, so the missing-heartbeat alert never fired after IG Guard was uninstalled or its access revoked; fake scores reports and capture acknowledgements; and a new child login on the relay, which disconnected the real child phone. A routine key rotation did not end this, because the new token was sent encrypted under the old one.
 
-- fake "running, notification access on" heartbeats, so the missing-heartbeat alert never fires after IG Guard is uninstalled or its access is revoked;
-- fake scores reports and capture acknowledgements;
-- a new child login on the relay, which disconnects the real child phone.
+**Status of the change below.** It is in the source on a development branch and is not part of any released version at the time of writing. It has not been tested on real phones yet; the device round comes later. Nothing here says the app is free of vulnerabilities.
 
-A routine key rotation does not end this, because the new token is sent encrypted under the old one. Until this is fixed, treat a "running" heartbeat as a sign that something holding the invitation is online, not as proof that the child phone is protected, and send the invitation only through a private channel that is deleted afterwards.
+### What is now done
 
-The planned fix (a non-exportable Android Keystore key on the child phone, its public key pinned by the parent and covered by a compared code, and signed child heartbeats, reports and acknowledgements) was not included in this build. The public key would reach the parent only after pairing, so the code compared at invitation time cannot cover it; the fix needs a second comparison after pairing, a change to when the child sends its pairing confirmation, and a parent-side step to accept a reset child phone. Those pairing-flow changes are left for a later release.
+- **Pairing is by a one-time QR code, in person.** The parent phone shows it and the child phone scans it. It is new each time, valid for 3 minutes and single use. It holds a one-time secret and the parent phone's public key, and no long-term secret. The two phones then agree a new family secret between themselves; it is never shown, typed or sent through a chat app. So the invitation text that used to hold the family token no longer exists for new pairings.
+- **A typed check.** The child phone shows 6 digits; the parent types them on the parent phone (3 tries), accepts with the parent password, and the child confirms on its own phone. Four pictures are shown on both phones as a visual aid. If two phones answer the same QR code, pairing stops.
+- **Chat invitations are no longer offered** for new pairings, and a child phone refuses them.
+- **The child phone has its own signing key** in the Android Keystore; it cannot be exported. Every record the child phone sends to the parent (heartbeats, alerts, captured messages, scores reports, acknowledgements) is signed with it.
+- **The parent refuses unsigned or wrongly signed records** once it has verified a child phone this way. Nothing from such a record is stored, and the parent gets a notice without content (at most one per hour). A correctly signed record that is too old, dated too far ahead, or of an unexpected kind is dropped quietly. A forged heartbeat no longer counts as "running" for a verified child.
+- **The relay locks the room to the child key.** For a family paired this way the relay stores the child phone's public key (no content, no private key) and admits a child connection only with proof of that key. An attempt without it cannot disconnect the real child phone. Families that were not paired this way are handled exactly as before.
+- **Camera.** The child phone asks for camera permission only on the scan screen, only to read the QR code. Frames are processed in memory; no image is stored or sent.
+- **One third-party library is added:** ZXing core 3.5.3 (Apache-2.0), stored in the repository with a pinned SHA-256 checksum (see `third_party/README.md`).
+
+### What is not done or not protected
+
+- **Pairings made before this version** keep working and show a permanent "not verified" notice on the parent phone until the two phones are paired again with the QR code. Until then everything above about forged records applies to them as it did in 5.2: treat a "running" heartbeat from such a pairing as a sign that something holding the invitation is online, not as proof that the child phone is protected.
+- **A rooted or compromised child phone** can still use its key and sign whatever it likes.
+- **A parent who pairs a device that is not really the child's phone.** The parent must read the 6 digits from the child's own phone; the app cannot tell which phone is in front of the parent.
+- **A child who scans a stranger's QR code** pairs the child phone with that stranger.
+- **A child who uninstalls the app.** The parent sees missing heartbeats, as before.
+- **Relay metadata** (room ids, sizes, timing, and now one child public key per paired room) is still visible to the relay operator.
+- **A future-dated heartbeat held back by a hostile relay.** A signed record may be dated up to 24 hours ahead of the parent's clock, so a child phone with a fast clock is not refused. If the child's clock is set ahead and a hostile relay holds a signed heartbeat back, that heartbeat can count as fresh later by at most 24 hours.
+- **No key attestation.** The app cannot prove that the signing key sits in tamper-resistant hardware.
+- **The relay has no per-address rate limit** for requests to unknown rooms. This can cost the operator money; it exposes no data.
+- **The release build runs tests and signing in one job**, without full dependency verification (only the ZXing jar is checked against a pinned checksum).
+- **Not tested on real phones yet** at the time of writing.
 
 ## Verification
 

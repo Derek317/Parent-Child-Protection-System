@@ -38,6 +38,10 @@ Complete Cloudflare's browser login in your own account. The reviewed `wrangler.
 
 Both phones must use the updated signed build. For an existing secure V43 pairing, open the updated parent app once to register its relay room, then reconnect the updated child app. The migration preserves the existing connection token, consent, archive and pending encrypted records. Pairings without a pinned parent key need the normal adult-authorized invitation upgrade.
 
+## Relay version needed for QR pairing
+
+The relay must be deployed with the version that adds QR pairing before phones can pair by QR code: the new parent phone refuses to show a QR code on a relay that does not report the `child_proof` feature. Existing rooms are unaffected: families that were not paired by QR code keep working as before. The relay changes are deployed only from `main`, exactly as described above; other branches never deploy.
+
 ## Abuse limits
 
 The relay creates a family's storage only after a valid parent signature, so unauthenticated requests to made-up room addresses write nothing. Each room may buffer at most 2,000 ordinary-data frames per UTC day; beyond that the relay answers `queue_full` with a 30-second retry time for that data frame, which the app already treats as "keep this record on the phone and carry on". The budget applies only to ordinary data: urgent alerts, controls and receipts are never refused by it, and they are not affected by the data budget in either direction. (The data budget itself is one counter per room shared by both directions; a refused data frame is benign because the app keeps the record and retries.) They remain limited only by the existing 512-row mailbox per direction (answered with the existing 30-second `queue_full`). There is no per-IP rate limit in front of the Worker. Because every request counts against the shared Cloudflare Free quotas, a third party who knows the public address can still exhaust them and interrupt every family until the 00:00 UTC reset. See [ci-secrets-hardening.md](ci-secrets-hardening.md) for the owner-side mitigation.

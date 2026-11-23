@@ -1,5 +1,18 @@
 # Changelog
 
+## Next — QR pairing and child device key (not released)
+
+Not part of any released version; no version number is assigned yet. Not yet tested on real phones (the device round comes later). Terms revision `2026-11-24-v8`: new section 2D (both languages), and the Terms, privacy policy, deletion guide and data-flow note describe the changes below. The Terms have not been reviewed by a lawyer and are not legal advice. Nothing here is approved by Meta, and this change does not make the app free of vulnerabilities.
+
+- Pairing is by a one-time QR code shown on the parent phone and scanned in person by the child phone: new each time, valid 3 minutes, single use. It holds a one-time secret and the parent phone's public key and no long-term secret. The two phones then agree a new family secret between themselves; it is never shown, typed or sent through a chat app. The child phone shows 6 digits, the parent types them (3 tries) and accepts with the parent password, and the child confirms on its own phone. Four pictures are shown on both phones as a visual aid. If two phones answer the same QR code, pairing stops.
+- Chat invitations (the pairing text or link) are no longer offered for new pairings, and a child phone refuses them.
+- The child phone creates its own non-exportable signing key in the Android Keystore and signs every record it sends to the parent. Once the parent has verified a child phone this way, a record without a valid signature from that key is refused, nothing from it is stored, and the parent gets a content-free notice (at most one per hour). A correctly signed record that is too old, dated too far ahead or of an unexpected kind is dropped quietly.
+- The relay stores, for a family paired this way, the child phone's public key (no content, no private key) and admits a child connection only with proof of that key; an attempt without it cannot disconnect the real child phone. Families not paired this way are handled exactly as before. The relay must be deployed (from `main`) before phones can pair by QR code.
+- The child phone asks for camera permission only on the scan screen, only to read the QR code. Frames are processed in memory; no image is stored or sent.
+- Pairings made before this change keep working and show a permanent "not verified" notice on the parent phone until the two phones are paired again with the QR code.
+- One third-party library is added: ZXing core 3.5.3 (Apache-2.0), stored in the repository with a pinned SHA-256 checksum.
+- Still not protected: a rooted or compromised child phone (it can still use its key); a parent who pairs a device that is not really the child's phone; a child who scans a stranger's QR code; a child uninstalling the app (the parent sees missing heartbeats, as before); relay metadata; with a child clock set ahead and a hostile relay holding a signed heartbeat back, that heartbeat can count as fresh later by at most 24 hours; the app cannot prove the key sits in tamper-resistant hardware (no attestation); the relay has no per-address rate limit for unknown rooms; the release build runs tests and signing in one job. See [security-review.md](docs/security-review.md).
+
 ## 5.2 — 23 November 2026 (Hong Kong)
 
 Version 5.2 is the final review build. The main changes are listed below; the [5.2 release notes](docs/releases/5.2.md) also list its security and bug fixes, what was tested and what was not. Bundled Terms revision `2026-11-23-v7`. The Terms have not been reviewed by a lawyer and are not legal advice. Nothing here is approved by Meta, and the scores still do not reliably detect grooming.
