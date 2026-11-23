@@ -1,6 +1,6 @@
 # Third-party notices
 
-This file covers the third-party code and model weights that ship with IG Guard's optional AI risk analysis. Icons used by the interface are listed in [UI_ASSET_LICENSES.md](UI_ASSET_LICENSES.md).
+This file covers the third-party code and model weights that ship with IG Guard (the optional AI risk analysis and the pairing QR code). Icons used by the interface are listed in [UI_ASSET_LICENSES.md](UI_ASSET_LICENSES.md).
 
 These notices were written by the developer from the licence files named below. They have not been reviewed by a lawyer.
 
@@ -256,6 +256,12 @@ Full text of the Apache License, Version 2.0 (from https://www.apache.org/licens
    See the License for the specific language governing permissions and
    limitations under the License.
 ```
+
+## ZXing core 3.5.3 (QR code encoding and decoding)
+
+- Source: https://github.com/zxing/zxing, Maven artifact `com.google.zxing:core:3.5.3` (`core-3.5.3.jar`, SHA-256 `8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82`, pinned in `third_party/zxing-core.sha256`).
+- Use: the unmodified jar from Maven Central is stored in this repository as `third_party/zxing-core-3.5.3.jar`, checked against that SHA-256 at every build and compiled into the app (`app/libs/`, not resolved from a repository). See `third_party/README.md`. It is pure Java and used only to draw and read the one-time pairing QR code.
+- Licence: Apache License, Version 2.0, copyright ZXing authors. The full licence text is the Apache text given for Qwen3 above. The jar's `META-INF` holds only `MANIFEST.MF`, so it carries no NOTICE file; the upstream repository's NOTICE file has not been checked.
 
 ## Where these notices are carried
 

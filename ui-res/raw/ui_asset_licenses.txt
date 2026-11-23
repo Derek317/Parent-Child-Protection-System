@@ -261,3 +261,8 @@ Apache License, Version 2.0, full text (applies to Qwen3 1.7B):
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+
+# QR code library
+
+ZXing core 3.5.3, used to draw and read the pairing QR code (Apache License, Version 2.0, copyright ZXing authors). Source: https://github.com/zxing/zxing. The licence text is the Apache License, Version 2.0 given above for Qwen3 and in full at https://www.apache.org/licenses/LICENSE-2.0.
