@@ -153,7 +153,7 @@ internal object ScoresUi {
     const val NO_SCORE_SINCE_REQUEST = "提出請求後還沒有新的分數，這可能只是沒有新訊息。可以考慮和孩子談一談。\nNo new score since your request. This may simply mean there are no new messages; consider talking with your child."
     /** The policy is on with manual upload and the child's report about it says agreed and not paused. A pause or withdrawal hides it. */
     fun importRequestOffered(m: ScoresPageModel): Boolean =
-        m.method == ScoresMethod.UPLOAD && m.page != ScoresPage.OFF && m.page != ScoresPage.WAITING && m.state?.consent == "accepted" && m.state?.paused == false
+        m.method == ScoresMethod.UPLOAD && m.page != ScoresPage.OFF && m.page != ScoresPage.WAITING && m.state?.consent == "accepted" && !m.state.paused
     /** At most one request per 24 hours. A time ahead of the clock also counts as inside the window. */
     fun importRequestLocked(at: Long, now: Long = System.currentTimeMillis()): Boolean = at > 0 && now - at < RiskLocal.REQUEST_PARENT_GAP_MS
     fun noScoreSinceRequest(m: ScoresPageModel, at: Long, now: Long = System.currentTimeMillis()): Boolean =

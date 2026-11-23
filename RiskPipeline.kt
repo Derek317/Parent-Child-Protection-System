@@ -615,7 +615,7 @@ internal object RiskLocal {
         return true
     }
     /** The child's "OK" on the card. Nothing is sent to the parent. */
-    fun dismissImportRequest(ctx: Context) { prefs(ctx).edit().remove(IMPORT_REQUEST).commit() }
+    fun dismissImportRequest(ctx: Context): Boolean = prefs(ctx).edit().remove(IMPORT_REQUEST).commit()
 
     private fun carriesText(token: String, wire: String): Boolean {
         val json = GuardEngine.decryptPayload(token, wire) ?: return true   // unreadable: do not risk forwarding it
