@@ -191,6 +191,31 @@ class QrPairingUiTest {
         }
     }
 
+    /** The first "Allow" on the camera prompt must start the scanner without reopening the sheet; "Deny" shows the denied state. */
+    @Test fun theScannerStartsAsSoonAsTheCameraIsAllowed() {
+        for (allow in listOf(true, false)) {
+            prefs.edit().clear().commit(); shadowOf(ctx).denyPermissions(android.Manifest.permission.CAMERA)
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+            try {
+                call(a, "navigateTo", "child_setup"); call(a, "showChildPairingSheet")
+                val views = { all(sheet(a).window!!.decorView) }
+                assertTrue(views().none { it.tag == "qr_scanner" })
+                if (allow) shadowOf(ctx).grantPermissions(android.Manifest.permission.CAMERA)
+                call(a, "onRequestPermissionsResult", 102, arrayOf(android.Manifest.permission.CAMERA),
+                    intArrayOf(if (allow) PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED))
+                if (!allow) { assertNotNull(views().firstOrNull { it.tag == "camera_denied" }); assertTrue(views().none { it.tag == "qr_scanner" }); continue }
+                val scanner = views().firstOrNull { it.tag == "qr_scanner" } as? QrScannerView
+                assertNotNull("the scanner view is built at once", scanner)
+                var started = false
+                val error = scanner!!.onError; scanner.onError = { started = true; error(it) }
+                idle()
+                // start() ran: this Robolectric phone has no camera, so it reports that (a real phone opens the preview).
+                assertTrue("start() was requested", started)
+                assertTrue(views().any { it is TextView && it.text.contains("此手機沒有可用的相機") })
+            } finally { c.pause().stop().destroy() }
+        }
+    }
+
     @Test fun chatInvitationsAreRefusedOnANewChildPhone() {
         val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
         try {

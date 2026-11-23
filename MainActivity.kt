@@ -4064,7 +4064,9 @@ class MainActivity : Activity() {
         if (isDestroyed) return
         val t = currentTheme()
         val link = childPairing
-        val phase = listOf(link?.machine?.state, link?.refused, scannedQr != null, scanProblem, cameraDenied, cameraBroken, childPairingStored)
+        // The camera grant is part of the state: a first "Allow" changes nothing else, and the scanner must appear at once.
+        val phase = listOf(link?.machine?.state, link?.refused, scannedQr != null, scanProblem, cameraDenied, cameraBroken, childPairingStored,
+            checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
         if (body.tag == phase) return
         body.tag = phase
         pairingScanner?.stop(); pairingScanner = null
