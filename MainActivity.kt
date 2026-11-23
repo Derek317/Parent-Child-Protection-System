@@ -3955,6 +3955,8 @@ class MainActivity : Activity() {
             link.begin()
         }
     }
+    /** True after Accept: completeParentPairing changes the relay session, and parentUnlocked() then fails until a new unlock. */
+    private val PAIRING_LOCK_NOTE = "關閉此畫面後，此手機會顯示「家長資料已鎖定」，須再次解鎖才可查看家庭。這是接受配對後的正常保護。\nAfter you close this screen, this phone shows “Parent data is locked” and asks you to unlock again to view the family. This is the normal protection after accepting a pairing."
     private fun parentCancelText(reason: Pairing.CancelReason): String = when (reason) {
         Pairing.CancelReason.EXPIRED -> "QR 碼已過期，或未在 10 分鐘內接受。\nThe QR code expired, or it was not accepted within 10 minutes."
         Pairing.CancelReason.SECOND_PHONE -> "此 QR 碼被多於一部手機使用，已停止。請再試一次。\nMore than one phone used this QR code; pairing stopped. Please try again."
@@ -3979,16 +3981,20 @@ class MainActivity : Activity() {
             closeButton("關閉 · Close")
         }
         when {
+            // Accepting changed the relay session, so the parent UI behind this sheet is locked (renderUi -> renderParentLock): say so.
             link.outcome == ParentPairingLink.Outcome.ACCEPTED -> {
                 body.addView(stateNote(Note.LOADING, "正在完成… 子女手機收到確認後，會傳送第一個已核實回報。\nFinishing… once the child phone has the confirmation, it sends its first verified report.", t, cardTag = "pairing_finishing"))
+                body.addView(label(PAIRING_LOCK_NOTE, 13f, t.textSecondary, topPad = 8, bottomPad = 12).apply { tag = "pairing_lock_note" })
                 closeButton("關閉 · Close")
             }
             link.outcome == ParentPairingLink.Outcome.FINISHED -> {
                 body.addView(stateNote(Note.EMPTY, "配對完成：已收到子女手機的第一個已核實回報。\nPairing complete: the child phone's first verified report has arrived.", t, cardTag = "pairing_finished"))
+                body.addView(label(PAIRING_LOCK_NOTE, 13f, t.textSecondary, topPad = 8, bottomPad = 12).apply { tag = "pairing_lock_note" })
                 closeButton("關閉 · Close")
             }
             link.outcome == ParentPairingLink.Outcome.ROLLED_BACK -> {
                 body.addView(stateNote(Note.ERROR, "配對未完成，已取消。此手機現時沒有與任何子女手機配對；請用 QR 碼重新配對。\nThe pairing did not complete and was cancelled. This phone is now not paired with any child phone. Pair again with the QR code.", t, cardTag = "pairing_rolled_back"))
+                body.addView(label(PAIRING_LOCK_NOTE, 13f, t.textSecondary, topPad = 8, bottomPad = 12).apply { tag = "pairing_lock_note" })
                 closeButton("關閉 · Close")
             }
             link.outcome == ParentPairingLink.Outcome.NOT_STORED -> stopped("中繼或本機未能完成，原有配對沒有改變。請再試一次。\nThe pairing could not be stored; nothing changed. Please try again.")

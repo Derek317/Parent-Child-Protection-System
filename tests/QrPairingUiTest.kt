@@ -112,6 +112,7 @@ class QrPairingUiTest {
                 assertTrue(acceptTexts.none { it.contains("密碼") || it.contains("password", ignoreCase = true) })
                 assertTrue(link.accept())
                 fun texts() = all(dialog.window!!.decorView).filterIsInstance<TextView>().map { it.text.toString() }
+                assertTrue(texts().any { it.contains("須再次解鎖才可查看家庭") && it.contains("asks you to unlock again to view the family") })
                 save(dialog, "qr-parent-finishing-${suffix(bright)}")
                 // The state that ends the pending pairing ends the sheet: the first verified record (light run) or a rollback (dark run).
                 if (bright) prefs.edit().remove("child_pairing_pending_ms").commit()
@@ -120,6 +121,7 @@ class QrPairingUiTest {
                 val endTag = if (bright) "pairing_finished" else "pairing_rolled_back"
                 assertNotNull(all(dialog.window!!.decorView).firstOrNull { it.tag == endTag })
                 assertTrue(texts().any { it.contains(if (bright) "配對完成" else "配對未完成，已取消") })
+                assertTrue(texts().any { it.contains("須再次解鎖才可查看家庭") })
                 assertTrue(all(dialog.window!!.decorView).filterIsInstance<Button>().any { it.text == "關閉 · Close" })
                 save(dialog, "qr-parent-$endTag-${suffix(bright)}")
                 // Cancelled states on fresh links.
