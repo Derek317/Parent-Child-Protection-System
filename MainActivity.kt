@@ -2902,8 +2902,8 @@ class MainActivity : Activity() {
     private fun themeColors(bright: Boolean): ThemeColors {
         return if (bright) {
             ThemeColors(
-                bgCanvas = "#E2EAF3", bgCard = "#FFFFFF", bgHero = "#D5E3F3", bgInput = "#FFFFFF",
-                bgChip = "#D5E3F3", borderSubtle = "#C3D1E1", textPrimary = "#0B1B2E",
+                bgCanvas = "#E2EAF3", bgCard = "#FFFFFF", bgHero = "#D8E6F6", bgInput = "#FFFFFF",
+                bgChip = "#D8E6F6", borderSubtle = "#C3D1E1", textPrimary = "#0B1B2E",
                 textSecondary = "#3D4F66", textMuted = "#3D4F66", accentSeafoam = "#1565C0",
                 accentPowderSky = "#1565C0", btnPrimaryBg = "#1565C0", btnPrimaryText = "#FFFFFF",
                 btnSecondaryBg = "#FFFFFF", btnSecondaryText = "#1565C0", warmHoney = "#8F5300",
