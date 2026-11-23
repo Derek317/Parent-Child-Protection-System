@@ -3157,7 +3157,7 @@ class MainActivity : Activity() {
             // The text above asks to compare the pictures: show them, from the token as it will be stored (setFamilyToken trims and lower-cases).
             addView(label(GuardEngine.safetyEmojis(parsed.token.trim().lowercase(Locale.US)), 30f, t.textPrimary, bottomPad = 12).apply { gravity = Gravity.CENTER; tag = "pairing_safety_emojis" })
             if (parsed.parentPublicKey.isNotEmpty()) {
-                addView(label(FamilySecurity.safetyCode(parsed.token, parsed.passwordVerifier, parsed.parentPublicKey), 19f, t.textPrimary, true, bottomPad = 12))
+                addView(label(FamilySecurity.safetyCode(parsed.token, parsed.passwordVerifier, parsed.parentPublicKey), 18f, t.textPrimary, true, bottomPad = 12))
                 addView(label("請由家長在家長手機查看並核對相同安全代碼，再確認配對。", 14f, t.textSecondary, bottomPad = 18))
             }
             var password: EditText? = null
@@ -3389,14 +3389,14 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(60) }
         if (section.endsWith("_setup")) row.addView(iconButton("arrow-left", "返回身份選擇") { navigateTo("role") })
         else row.addView(icon("shield-check", t.accentSeafoam, 28))
-        row.addView(label("IG Guard", 18f, t.textPrimary, true).apply { setPadding(dp(9), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(label("IG Guard", 18f, t.textPrimary, true).apply { setPadding(dp(8), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         lateinit var themeToggle: View
         themeToggle = iconButton(if (GuardEngine.isBrightTheme(this)) "moon" else "sun", "切換淺色或深色模式") {
             switchTheme(!GuardEngine.isBrightTheme(this), themeToggle)
         }
         row.addView(themeToggle)
         fixedHeader.addView(row)
-        statusText = label("", 12f, t.textSecondary).apply { setPadding(0, dp(5), 0, dp(12)) }
+        statusText = label("", 12f, t.textSecondary).apply { setPadding(0, dp(4), 0, dp(12)) }
         if (section != "role" && !section.endsWith("_setup") && role != "unconfigured") {
             fixedHeader.addView(statusText); divider(fixedHeader, t)
         }
@@ -3431,8 +3431,8 @@ class MainActivity : Activity() {
                 tag = "nav_$destination"
                 describeAsControl()
             }
-            tab.addView(icon(glyph, if (selected) t.accentSeafoam else t.textMuted, 23))
-            tab.addView(label(title, 11f, if (selected) t.accentSeafoam else t.textMuted, selected, topPad = 4).apply { gravity = Gravity.CENTER })
+            tab.addView(icon(glyph, if (selected) t.accentSeafoam else t.textMuted, 24))
+            tab.addView(label(title, 12f, if (selected) t.accentSeafoam else t.textMuted, selected, topPad = 4).apply { gravity = Gravity.CENTER })
             bottomNav.addView(tab, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
             if (!selected) continue
             val slide = navShown.substringBefore('/') == role && navShown != "$role/$destination" // a tab change; not first draw, role or theme change
@@ -3495,7 +3495,7 @@ class MainActivity : Activity() {
             }
             card.addView(icon(if (role == "parent") "users-three" else "plant", t.accentSeafoam, 28))
             val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(8), 0) }
-            words.addView(label(title, 17f, t.textPrimary, true, bottomPad = 6))
+            words.addView(label(title, 16f, t.textPrimary, true, bottomPad = 6))
             words.addView(label(description, 12f, t.textSecondary))
             card.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
             card.addView(icon(if (selected) "check-circle" else "caret-right", t.accentSeafoam, 20))
@@ -3629,8 +3629,8 @@ class MainActivity : Activity() {
                 }
                 return
             }
-            val left = maxOf(dp(25).toFloat(), paint.measureText(maximum.toString()) + dp(8)); val right = width - dp(10).toFloat()
-            val top = paint.textSize + dp(15); val bottom = height - paint.textSize - dp(15)
+            val left = maxOf(dp(24).toFloat(), paint.measureText(maximum.toString()) + dp(8)); val right = width - dp(10).toFloat()
+            val top = paint.textSize + dp(16); val bottom = height - paint.textSize - dp(16)
             if (right <= left || bottom <= top) return
             val ticks = if (maximum <= 4) (0L..maximum).toList() else listOf(0L, maximum/2, maximum)
             for (tick in ticks) {
@@ -3878,7 +3878,7 @@ class MainActivity : Activity() {
     }
     private fun conversationBubble(message:JSONObject,t:ThemeColors):View {
         val outgoing=message.optString("direction")=="outgoing"
-        val holder=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;setPadding(0,dp(5),0,dp(5))}
+        val holder=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;setPadding(0,dp(4),0,dp(4))}
         val bubble=LinearLayout(this).apply {
             orientation=LinearLayout.VERTICAL;minimumHeight=dp(64);setPadding(dp(14),dp(12),dp(14),dp(12))
             background=ripple(if(outgoing)t.bgHero else t.bgCard,14,t.borderSubtle)
@@ -3890,7 +3890,7 @@ class MainActivity : Activity() {
         if(ConversationCapture.actionable(message))bubble.addView(label(alertTitle(message.optString("reason"))+" · "+when(message.optString("_review_state")){"reviewed"->"已查看";"follow_up"->"待跟進";else->"新記錄"},12f,t.warmCoral,bottomPad=6))
         if(signalLabels(message).isNotEmpty())bubble.addView(label(signalLabels(message),12f,t.warmHoney,bottomPad=6))
         bubble.addView(label(shortEvidence(evidenceBody(message)),15f,t.textPrimary,bottomPad=8).apply{maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END})
-        bubble.addView(label("${evidenceClock(message)}\n${evidenceSource(message)}"+(if(message.optBoolean("possible_duplicate"))" · 可能重複" else ""),10.5f,t.textMuted))
+        bubble.addView(label("${evidenceClock(message)}\n${evidenceSource(message)}"+(if(message.optBoolean("possible_duplicate"))" · 可能重複" else ""),12f,t.textMuted))
         val details=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(10),0,0)}
         details.addView(label("查看完整記錄",12f,t.accentSeafoam,true),LinearLayout.LayoutParams(0,-2,1f))
         details.addView(icon("caret-right",t.accentSeafoam,16));bubble.addView(details)
@@ -3917,7 +3917,7 @@ class MainActivity : Activity() {
             fun actions(vararg buttons:Button) {
                 val vertical=resources.configuration.fontScale>1.3f
                 val row=LinearLayout(this@MainActivity).apply{orientation=if(vertical)LinearLayout.VERTICAL else LinearLayout.HORIZONTAL}
-                buttons.forEach{button->row.addView(button,LinearLayout.LayoutParams(if(vertical)-1 else 0,-2,if(vertical)0f else 1f).apply{setMargins(0,dp(5),dp(4),dp(8))})}
+                buttons.forEach{button->row.addView(button,LinearLayout.LayoutParams(if(vertical)-1 else 0,-2,if(vertical)0f else 1f).apply{setMargins(0,dp(4),dp(4),dp(8))})}
                 addView(row)
             }
             actions(actionButton(if(stored.optBoolean("_saved"))"取消儲存" else "儲存此訊息",t.btnSecondaryBg,t.btnSecondaryText) {
@@ -4061,7 +4061,7 @@ class MainActivity : Activity() {
         val screen = GuardEngine.isAccessibilityEnabledStatic(this) && GuardEngine.cpAccConnected
         val card = makeCard(t)
         val noRead = RiskLocal.uploadOnly(this)
-        card.addView(label(if (noRead) (if (RiskLocal.captureHeld(this)) "擷取已停止，等你決定" else "手動上載 · 不讀取 Instagram") else if (notification && screen) "你的保護已準備好" else "完成設定，讓保護正常運作。", 17f, t.textPrimary, true, bottomPad = 8))
+        card.addView(label(if (noRead) (if (RiskLocal.captureHeld(this)) "擷取已停止，等你決定" else "手動上載 · 不讀取 Instagram") else if (notification && screen) "你的保護已準備好" else "完成設定，讓保護正常運作。", 16f, t.textPrimary, true, bottomPad = 8))
         card.addView(label(if (noRead) "本 App 不讀取 Instagram 的通知或畫面，所以不需要通知或畫面權限。" else if (notification && screen) "通知及畫面保護已連接。" else "通知讀取保護背景訊息；畫面保護處理對話、留言回覆及防靜音。", 14f, t.textSecondary))
         rootContainer.addView(card)
         renderScoresChildBlocks(t)
@@ -4209,7 +4209,7 @@ class MainActivity : Activity() {
             val card = noticeCard(t, true, "scores_consent_card")
             val again = s.consent == "reconsent"
             val changed = s.consent == "accepted"   // agreed before; the parent now asks for another method
-            card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_TITLE else if (again) ScoresChildCopy.RECONSENT_CARD_TITLE else ScoresChildCopy.CARD_TITLE, 17f, t.textPrimary, true, bottomPad = 8))
+            card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_TITLE else if (again) ScoresChildCopy.RECONSENT_CARD_TITLE else ScoresChildCopy.CARD_TITLE, 16f, t.textPrimary, true, bottomPad = 8))
             card.addView(label(if (changed) ScoresChildCopy.METHOD_CARD_BODY else if (again) ScoresChildCopy.RECONSENT_CARD_BODY else ScoresChildCopy.CARD_BODY, 14f, t.textSecondary, bottomPad = 8))
             card.addView(actionButton(ScoresChildCopy.CARD_ACTION, t.btnPrimaryBg, t.btnPrimaryText) { scoresReadOnly = false; navigateTo("scores_consent") }.apply { tag = "scores_consent_open" })
             rootContainer.addView(card)
@@ -4511,7 +4511,7 @@ class MainActivity : Activity() {
             }
         }
         val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, dp(10), 0) }
-        words.addView(label("僅分數模式 / Scores-only mode", 15f, t.textPrimary, true, bottomPad = 5).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true })
+        words.addView(label("僅分數模式 / Scores-only mode", 15f, t.textPrimary, true, bottomPad = 4).apply { if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true })
         words.addView(label(status, 13f, t.textSecondary, bottomPad = if (why.isEmpty()) 0 else 5).apply { tag = "scores_mode_status" })
         if (why.isNotEmpty()) words.addView(label(why, 13f, t.textPrimary).apply { tag = "scores_mode_why" })
         line.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
@@ -4849,7 +4849,7 @@ class MainActivity : Activity() {
         activityVisible = false
         uiHandler.removeCallbacksAndMessages(null)
         dismissUiDialogs()
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 32) }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(32), dp(48), dp(32), dp(32)) }
         content.addView(TextView(this).apply {
             text = "無法開啟加密儲存空間\n\n現有資料已保留。請先解鎖手機再重試。如持續失敗，請保留 App 資料並聯絡支援；請勿清除資料或重新配對。"
             textSize = 18f
@@ -4957,7 +4957,7 @@ class MainActivity : Activity() {
         }
         line.addView(icon(glyph, t.accentSeafoam, 24))
         val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(10), 0) }
-        words.addView(label(title, 15f, tint, true, bottomPad = 5)); words.addView(label(description, 13f, t.textSecondary))
+        words.addView(label(title, 15f, tint, true, bottomPad = 4)); words.addView(label(description, 13f, t.textSecondary))
         line.addView(words, LinearLayout.LayoutParams(0, -2, 1f)); line.addView(icon("caret-right", t.textMuted, 18))
         outer.addView(line); divider(outer, t); return outer
     }
@@ -4985,8 +4985,8 @@ class MainActivity : Activity() {
         (if (critical) ObscuredAwareButton(this, { pageMotion?.isRunning == true || themeReveal?.isRunning == true }) { warnObscured() } else Button(this)).apply {
         text = title; textSize = 14f; typeface = font(true); isAllCaps = false
         setTextColor(color(hexText)); background = ripple(hexBg, 10, if (hexBg != currentTheme().btnPrimaryBg) currentTheme().accentPowderSky else null)
-        minimumHeight = dp(52); setPadding(dp(14), dp(13), dp(14), dp(13)); setOnClickListener(sessionClick(onClick))
-        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(5), 0, dp(8)) }
+        minimumHeight = dp(52); setPadding(dp(14), dp(12), dp(14), dp(12)); setOnClickListener(sessionClick(onClick))
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(4), 0, dp(8)) }
     }
     private fun textAction(title: String, onClick: () -> Unit): Button = Button(this).apply {
         val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
