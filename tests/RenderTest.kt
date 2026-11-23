@@ -302,6 +302,28 @@ class ScoresScreenshotTest {
             RiskModelStore.abiProbe = { android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a") }
         }
     }
+    /** Tier 1 collection: the child's upload card (guide, picker row, optional cloud export, a good import) and the parent's freshness line. */
+    @Test fun collectionUploadCardAndParentFreshnessInBothThemes() {
+        try {
+            for (bright in listOf(true, false)) {
+                val s = if (bright) "light" else "dark"
+                childReset(); install(); GuardEngine.setBrightTheme(ctx, bright)
+                RiskLocal.receivePolicy(ctx, java.util.UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD); RiskLocal.accept(ctx); RiskLocal.acknowledgeChangeNotice(ctx)
+                InstagramImport.last = ImportSummary(ImportResult.OK, 3, 1, 42)
+                val c = ShotSupport.open("overview")
+                try { ShotSupport.shoot(c.get(), "tier1-collection-child-upload-$s", 360, 3400) } finally { c.pause().stop().destroy() }
+                InstagramImport.dismiss()
+                val old = System.currentTimeMillis() - 10 * 86_400_000L
+                parentShot("tier1-collection-parent-scores-$s", height = 1900, bright = bright) {
+                    ShotSupport.report(); check(GuardEngine.sendScoresModePolicy(ctx, true, ScoresMethod.UPLOAD)); ShotSupport.report(rows = ShotSupport.rows(old))
+                }
+            }
+        } finally {
+            InstagramImport.dismiss(); GuardEngine.setBrightTheme(ctx, true)
+            RiskModelStore.expectation = RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256)
+            RiskModelStore.abiProbe = { android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a") }
+        }
+    }
 }
 
 @RunWith(RobolectricTestRunner::class)
