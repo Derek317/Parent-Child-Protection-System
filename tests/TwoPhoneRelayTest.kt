@@ -30,6 +30,7 @@ import app.family.igguard.ParentPairingState as PS
  * A fake relay with the observable behaviour of relay/src/worker.js for pairing (line numbers cite that file): per room a parent
  * registration, an optional child-key lock, one socket per role, one mailbox per role held until consumed, retirement.
  * Proofs are parsed, not verified (signatures are the real relay's and its own tests' concern).
+ * It does NOT verify signatures: it is a liveness test double for the pairing flow, not a security test of the relay.
  */
 internal class FakeRelay : Dispatcher() {
     inner class Room {
