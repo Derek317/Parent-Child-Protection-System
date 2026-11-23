@@ -253,4 +253,9 @@ class QrPairingUiTest {
     @Test fun parentOverviewSaysPlainlyThatTheChildWasRemotelyReset() =
         unpairedOverview("child_remote_reset", "child_remote_reset", "已遠端重設 · Remotely reset",
             listOf("子女手機已遠端重設", "沒有與任何子女手機配對", "請用 QR 碼重新配對", "The child phone was remotely reset", "not paired with any child phone", "Pair again with the QR code"))
+
+    @Test fun parentOverviewSaysPlainlyThatARolledBackPhoneIsNotPaired() =
+        unpairedOverview("child_pairing_failed", "child_pairing_failed", "未與任何子女手機配對 · Not paired with any child phone",
+            listOf("上次配對未完成", "此手機現時沒有與任何子女手機配對", "之前的配對亦已結束", "請用 QR 碼重新配對",
+                "This phone is now not paired with any child phone", "any earlier pairing has ended", "Pair again with the QR code"))
 }

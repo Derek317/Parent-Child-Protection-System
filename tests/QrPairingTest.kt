@@ -135,6 +135,36 @@ class QrPairingTest {
         assertEquals(1, JSONObject(String(java.util.Base64.getUrlDecoder().decode(GuardEngine.relayAuthorization(ctx, family.token).removePrefix("IGGuard ")))).getInt("v"))
     }
 
+    /** After a rollback this parent is paired with no child: the 5.2 pairing ended at accept and the QR one never completed. */
+    @Test fun aRolledBackPairingLeavesThisPhoneUnpairedAndTakesNoRecords() {
+        parentPhone(); val oldToken = GuardEngine.getOrCreateFamilyToken(ctx)
+        GuardEngine.recordChildHeartbeatOnParent(ctx, "裝置 Pixel 運作中", now - 60_000)
+        assertEquals(GuardEngine.ChildTrust.NOT_VERIFIED, GuardEngine.childTrust(ctx))
+        val run = parentUpToDigits()
+        assertTrue(run.link.enterDigits((run.child.state as CS.ShowingDigits).digits))
+        val family = run.child.confirm(now + 3_000)!!
+        assertTrue(run.link.accept())
+        assertTrue(GuardEngine.expireUnconfirmedChildPairing(ctx, now + Pairing.CONFIRM_WINDOW_MS))
+        // What remains: the new token T1 (the 5.2 token is gone, nothing routes to it), no pin, no last report, the failed mark.
+        assertEquals(family.token, GuardEngine.getOrCreateFamilyToken(ctx)); assertNotEquals(oldToken, family.token)
+        assertNull(GuardEngine.pinnedChildKey(ctx)); assertFalse(GuardEngine.hasChildHeartbeat(ctx))
+        assertEquals(GuardEngine.ChildTrust.PAIRING_FAILED, GuardEngine.childTrust(ctx))
+        val alerts = GuardEngine.getParentAlerts(ctx).size
+        fun heartbeat() = JSONObject().put("type", "alert").put("event_id", java.util.UUID.randomUUID().toString()).put("capture_source", "app_or_visible_screen")
+            .put("reason", "heartbeat_ok").put("sender", "子女手機定時回報").put("text", "裝置 運作中").put("ts_ms", System.currentTimeMillis()).put("time", "x")
+            .put("trusted_csv", "").put("child_self_handle", "")
+        fun deliver(token: String, frame: JSONObject) = GuardEngine.processIncomingRelayLine(ctx, JSONObject().put("event", "message")
+            .put("id", java.util.UUID.randomUUID().toString()).put("message", GuardEngine.encryptPayload(token, frame.toString())).toString(), "parent", null)
+        assertEquals("an old-pairing (5.2) report", RelayConsumption.REJECTED, deliver(oldToken, heartbeat()))
+        assertEquals("an unsigned report under T1 is not taken as Legacy", RelayConsumption.REJECTED, deliver(family.token, heartbeat()))
+        val alias = TestKeyStore.privateKeys.keys.single { it.startsWith("ig_guard.child_signing") }
+        val record = heartbeat()
+        assertEquals("a late report signed by the unpinned K", RelayConsumption.REJECTED, deliver(family.token, ChildRecords.wrapForParent(record.toString(),
+            record.getString("event_id"), GuardEngine.relayPublicKey(ctx), FamilySecurity.loadChildSigningKey(ctx, alias).publicKey, { FamilySecurity.signChildBytes(it, alias) }, true)))
+        assertEquals(alerts, GuardEngine.getParentAlerts(ctx).size); assertFalse(GuardEngine.hasChildHeartbeat(ctx))
+        assertEquals(GuardEngine.ChildTrust.PAIRING_FAILED, GuardEngine.childTrust(ctx))
+    }
+
     @Test fun childEngineStoresAliasParentKeyTokenAndVerifier() {
         val identity = FamilySecurity.newSigningIdentity()
         val r = QrPairing.pairChild(ctx, identity)

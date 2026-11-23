@@ -1893,8 +1893,9 @@ object GuardEngine {
         val innerStr = outer.optString("message")
         val token = getOrCreateFamilyToken(ctx)
         val decoded = decryptPayload(token, innerStr) ?: return RelayConsumption.REJECTED
-        // Remotely reset (markChildRemotelyReset): paired with no child phone, so no record is taken, signed or not, until a new QR pairing.
-        if (role == "parent" && pinnedChildKey(ctx) == null && childRemotelyReset(ctx)) return RelayConsumption.REJECTED
+        // Remotely reset (markChildRemotelyReset) or rolled back (expireUnconfirmedChildPairing): paired with no child phone, so no record
+        // is taken, signed or not, until a new QR pairing. Without this an unsigned record under T1 would pass the gate as Legacy.
+        if (role == "parent" && pinnedChildKey(ctx) == null && (childRemotelyReset(ctx) || childPairingFailed(ctx))) return RelayConsumption.REJECTED
         val decrypted = if (decoded.optString("type") == "alert_fragment") {
             if (role != "parent" && !(role=="child" && decoded.optString("event_id").startsWith("control:"))) return RelayConsumption.REJECTED
             // A late part of a record already taken: reassembly would return the stored (unwrapped) record, which the gate must not see.
@@ -3657,6 +3658,7 @@ class MainActivity : Activity() {
         statusText.text = when (GuardEngine.getRole(this)) {
             "parent" -> when {
                 GuardEngine.childRemotelyReset(this) -> "子女手機已遠端重設 · 須用 QR 碼重新配對"
+                GuardEngine.childPairingFailed(this) && GuardEngine.pinnedChildKey(this) == null -> "未與任何子女手機配對 · 須用 QR 碼重新配對"
                 GuardEngine.isChildHeartbeatOverdue(this) -> "子女回報逾時 · 請查看連接狀態"
                 GuardEngine.hasChildHeartbeat(this) -> "已收到子女回報 · 加密守護通道"
                 else -> childReportWaiting()
@@ -3755,7 +3757,8 @@ class MainActivity : Activity() {
         card.addView(label(if (handle.isEmpty()) "子女手機" else "@$handle", 16f, t.textPrimary, true, bottomPad = 8))
         GuardEngine.expireUnconfirmedChildPairing(this)
         val trust = GuardEngine.childTrust(this)
-        val waiting = if (connected) "" else if (trust == GuardEngine.ChildTrust.REMOTE_RESET) "已遠端重設 · Remotely reset" else childReportWaiting()
+        val waiting = if (connected) "" else if (trust == GuardEngine.ChildTrust.REMOTE_RESET) "已遠端重設 · Remotely reset"
+            else if (trust == GuardEngine.ChildTrust.PAIRING_FAILED) "未與任何子女手機配對 · Not paired with any child phone" else childReportWaiting()
         card.addView(label(if (connected) (if (trust == GuardEngine.ChildTrust.NOT_VERIFIED) "未核實 · " else "") + GuardEngine.getLastChildHeartbeatInfo(this) else waiting, 13f, t.textSecondary))
         if (connected && GuardEngine.isChildCaptureHeld(this)) card.addView(label(ScoresUi.PARENT_CAPTURE_HELD, 13f, t.textPrimary, true, topPad = 6))
         if (!connected && trust == GuardEngine.ChildTrust.NO_CHILD) card.addView(textAction("加入子女 · Add a child") { startParentPairing() })
@@ -3889,7 +3892,7 @@ class MainActivity : Activity() {
                 rootContainer.addView(textAction("立即重試傳送 · Retry now") { CloudRelay.retryNow(this); GuardEngine.retryPendingAlerts(this, force = true) })
             }
             GuardEngine.ChildTrust.PAIRING_FAILED -> {
-                rootContainer.addView(stateNote(Note.ERROR, "上次配對未完成：子女手機未在 10 分鐘內確認。\nThe last pairing did not complete: the child phone did not confirm within 10 minutes.", t, cardTag = "child_pairing_failed"))
+                rootContainer.addView(stateNote(Note.ERROR, "上次配對未完成：子女手機未在 10 分鐘內確認。此手機現時沒有與任何子女手機配對，之前的配對亦已結束；請用 QR 碼重新配對。\nThe last pairing did not complete: the child phone did not confirm within 10 minutes. This phone is now not paired with any child phone, and any earlier pairing has ended. Pair again with the QR code.", t, cardTag = "child_pairing_failed"))
                 rootContainer.addView(textAction("重新配對 · Pair again") { startParentPairing() })
             }
             GuardEngine.ChildTrust.REMOTE_RESET -> {

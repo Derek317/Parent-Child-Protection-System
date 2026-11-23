@@ -25,6 +25,7 @@ class ChildRecordGateTest {
 
     @Before fun reset() {
         prefs.edit().clear().commit(); ctx.deleteDatabase("family_evidence.db")
+        TestKeyStore.privateKeys.keys.removeAll { it.startsWith("ig_guard.child_signing") } // tests that pair again leave a K behind
         GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
         GuardEngine.getOrCreateFamilyToken(ctx)
         pin()
