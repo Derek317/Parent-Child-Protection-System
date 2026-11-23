@@ -3784,7 +3784,7 @@ class MainActivity : Activity() {
         if(inConversation)rootContainer.addView(textAction("排序與擷取說明") {
             showSheet("排序與擷取說明") { dialog ->
                 addView(label("按訊息時間或重疊畫面的先後排列；無法對齊的片段保留擷取順序。通知時間與畫面順序可能無法互相對齊。\n\n只包含實際擷取內容。未顯示或未擷取的訊息無法復原，這不是完整 Instagram 對話備份。",14f,t.textSecondary,bottomPad=18))
-                addView(actionButton("關閉",t.btnPrimaryBg,t.btnPrimaryText){dialog.dismiss()})
+                addView(actionButton("關閉",t.btnSecondaryBg,t.btnSecondaryText){dialog.dismiss()})
             }
         })
         val search=inputBox(t,"搜尋帳號或訊息",evidenceSearch,remember=false).apply{tag="evidence_search";maxLines=1}
@@ -3962,7 +3962,7 @@ class MainActivity : Activity() {
                         FamilyEvidence(this@MainActivity).use{it.deleteMessage(scope,id)};dialog.dismiss();renderUi()
                     }.show()
             })
-            addView(actionButton("關閉",t.btnPrimaryBg,t.btnPrimaryText){dialog.dismiss()})
+            addView(actionButton("關閉",t.btnSecondaryBg,t.btnSecondaryText){dialog.dismiss()})
         }
     }
     private fun maybeShowSafetyAdvice() {
@@ -4075,7 +4075,7 @@ class MainActivity : Activity() {
                 val handle = GuardEngine.getChildSelfHandle(this@MainActivity)
                 val offenders = GuardEngine.getFlaggedOffenders(this@MainActivity)
                 addView(label("家庭核對圖案：${GuardEngine.getSafetyEmojis(this@MainActivity)}\n安全代碼：${GuardEngine.getSafetyCode(this@MainActivity).ifEmpty { "需要更新家庭配對" }}\n\nInstagram 帳號：${if (handle.isEmpty()) "等待自動識別" else "@$handle"}\n\n高危帳號：${if (offenders.isEmpty()) "暫無記錄" else offenders.joinToString(", ") { "@$it" }}", 14f, t.textPrimary, bottomPad = 20))
-                addView(actionButton("關閉", t.btnPrimaryBg, t.btnPrimaryText) { dialog.dismiss() })
+                addView(actionButton("關閉", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() })
             }
         })
     }
