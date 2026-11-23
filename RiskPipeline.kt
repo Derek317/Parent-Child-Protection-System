@@ -464,7 +464,7 @@ internal object RiskLocal {
     /** Store and results only: queued reports (such as the "model is valid" state) are left alone. */
     private fun wipeStore(ctx: Context) = retrying("store") {
         FamilyEvidence(ctx).use { it.wipeRisk() }
-        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(LAST_IMPORT).remove(WIPE_PENDING).remove(RiskBatch.IN_FLIGHT).commit()
+        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(LAST_IMPORT).remove(WIPE_PENDING).remove(RiskBatch.IN_FLIGHT).remove(RiskBatch.IN_FLIGHT_SUSPECT).commit()
     }
 
     /** Leaving the child role, a new family, or a remote reset: data plus all mode state and the consent receipt. */
@@ -898,8 +898,14 @@ internal object RiskBatch {
     @Volatile internal var instructionLoader: (Context) -> String? = { ctx -> checkedInstruction(ctx.resources.openRawResource(R.raw.risk_instruction_v1).use { it.readBytes() }) }
 
     private fun failed(app: Context, outcome: Outcome): Result { RiskLocal.recordFailure(app); return Result(outcome) }
-    /** Content-free marker (scope, blind thread index, sequence) of the scorer call in progress. */
+    /** Content-free marker (scope, blind thread index, sequence, earlier deaths) of the scorer call in progress. */
     internal const val IN_FLIGHT = "risk_scoring_in_flight"
+    /** The last call left in flight once (same fields, deaths = 1): scored again; a second death on the same thread and sequence marks it. */
+    internal const val IN_FLIGHT_SUSPECT = "risk_scoring_in_flight_suspect"
+    /** Deaths in a row on the same scope, thread and sequence before the thread is stored as "needs review" and skipped. */
+    internal const val DEATHS_TO_MARK = 2
+    private fun sameCall(a: JSONObject, scope: String, thread: String, seq: Long) =
+        a.optString("scope") == scope && a.optString("thread") == thread && a.optLong("seq", -1L) == seq
 
     /**
      * A thread whose scorer call throws anything but [RiskContextTooLong] is stored as "insufficient_context" at its
@@ -919,19 +925,25 @@ internal object RiskBatch {
         val instruction = instructionLoader(app) ?: return failed(app, Outcome.INSTRUCTION_MISMATCH)
         val scope = GuardEngine.getChannelTopicForToken(session.second)
         val prefs = LocalVault.preferences(app)
-        // Still set from the last run: that scorer call took the process down (native abort, out of memory). The thread is not
-        // retried on every charging window: it is stored as "needs review" at the sequence it had, which the parent sees,
-        // and it is scored again as soon as it has new messages.
+        // Still set from the last run: the process died during that scorer call. One death proves nothing (reboot, flat battery,
+        // force-stop, low-memory kill, the job killed after the charger was unplugged), so the thread is scored again and the
+        // death is remembered. Only when the same thread at the same sequence dies in flight DEATHS_TO_MARK times in a row is it
+        // stored as "needs review" (the parent sees that) and skipped; it is scored again as soon as it has new messages.
         prefs.getString(IN_FLIGHT, null)?.let { raw ->
-            prefs.edit().remove(IN_FLIGHT).commit()
+            val edit = prefs.edit().remove(IN_FLIGHT).remove(IN_FLIGHT_SUSPECT)
             try {
                 val marker = JSONObject(raw)
                 if (marker.getString("scope") == scope) {
-                    Log.w("IGGuard", "A thread stopped the last scoring run; marked for review until new messages arrive")
-                    FamilyEvidence(app).use { it.saveRiskResult(scope, marker.getString("thread"), marker.getLong("seq"), null, "insufficient_context", System.currentTimeMillis()) }
+                    val deaths = marker.optInt("deaths", 0) + 1
+                    if (deaths >= DEATHS_TO_MARK) {
+                        Log.w("IGGuard", "A thread stopped scoring runs twice in a row; marked for review until new messages arrive")
+                        FamilyEvidence(app).use { it.saveRiskResult(scope, marker.getString("thread"), marker.getLong("seq"), null, "insufficient_context", System.currentTimeMillis()) }
+                    } else edit.putString(IN_FLIGHT_SUSPECT, marker.put("deaths", deaths).toString())
                 }
             } catch (_: Exception) { }
+            edit.commit()
         }
+        val suspect = prefs.getString(IN_FLIGHT_SUSPECT, null)?.let { try { JSONObject(it) } catch (_: Exception) { null } }
         val due = FamilyEvidence(app).use { it.riskDueThreads(scope) }
         var scored = 0
         var review = 0
@@ -953,8 +965,10 @@ internal object RiskBatch {
                     if (messages.isEmpty()) continue
                     var score: Double? = null
                     var reason: String? = null
-                    // Written to disk before the call; only a process death leaves it behind.
-                    prefs.edit().putString(IN_FLIGHT, JSONObject().put("scope", scope).put("thread", thread).put("seq", seq).toString()).commit()
+                    // Written to disk before the call; only a process death leaves it behind. It carries the earlier death count only
+                    // for the same thread and sequence, so deaths of different threads never add up.
+                    val deaths = if (suspect != null && sameCall(suspect, scope, thread, seq)) suspect.optInt("deaths", 0) else 0
+                    prefs.edit().putString(IN_FLIGHT, JSONObject().put("scope", scope).put("thread", thread).put("seq", seq).put("deaths", deaths).toString()).commit()
                     try {
                         val result = RiskScoring.fromLogits(RiskFit.score(scorer, instruction, messages))
                         score = result.reportScore
@@ -963,7 +977,12 @@ internal object RiskBatch {
                     } catch (e: Exception) {
                         Log.w("IGGuard", "One thread could not be scored: ${e.javaClass.simpleName}")
                         reason = "insufficient_context"; failures++
-                    } finally { prefs.edit().remove(IN_FLIGHT).commit() }
+                    } finally {
+                        // The call returned (scored, failed, or a cooperative stop): no death, so marker and count are cleared.
+                        val e = prefs.edit().remove(IN_FLIGHT)
+                        if (deaths > 0) e.remove(IN_FLIGHT_SUSPECT)
+                        e.commit()
+                    }
                     // A pause, withdrawal or session change during the (uninterruptible) scorer call discards the result.
                     val after = halt()
                     if (after != null) { outcome = after; break }

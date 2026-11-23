@@ -420,32 +420,62 @@ class ScoresModeChildTest {
         FamilyEvidence(ctx).use { assertEquals("context_too_long", it.riskReportRows(scope, System.currentTimeMillis()).single().reason) }
         assertEquals("context_too_long", reports().last().getJSONArray("conversations").getJSONObject(0).getString("review_reason"))
     }
-    @Test fun aThreadThatKilledTheProcessIsMarkedForReviewAndRetriedOnlyWithNewMessages() {
-        activate(); capture(obs(text(1)), obs(text(2)))
-        // While the scorer runs, the in-flight marker is on disk; an ordinary failure clears it.
-        var seenDuring: String? = null
-        runBatch(FakeScorer(onScore = { seenDuring = prefs.getString(RiskBatch.IN_FLIGHT, null); throw IllegalStateException("native failure") }))
-        assertNull(prefs.getString(RiskBatch.IN_FLIGHT, null))
-        val (thread, _) = JSONObject(seenDuring!!).let { it.getString("thread") to it.getLong("seq") }
-        assertEquals(scope, JSONObject(seenDuring!!).getString("scope"))
-        // New messages, then a scorer call that kills the process: no finally runs, so the marker stays as written.
+    private class SimulatedDeath : Error("simulated process death")
+    /**
+     * A run whose scorer call on the prompt containing [text] never returns, as when the process dies. A killed process runs
+     * no finally, so the in-flight marker the run wrote is put back exactly as it was on disk. Returns that marker.
+     */
+    private fun dieOn(text: String): JSONObject {
+        var left: String? = null
+        runBatch(FakeScorer(onScore = { if (it.contains(text)) { left = prefs.getString(RiskBatch.IN_FLIGHT, null); throw SimulatedDeath() } }))
+        prefs.edit().putString(RiskBatch.IN_FLIGHT, left!!).commit()
+        return JSONObject(left!!)
+    }
+    private fun latestReason(): String? = FamilyEvidence(ctx).use { db ->
+        db.readableDatabase.rawQuery("SELECT reason FROM risk_results WHERE scope=? ORDER BY seq DESC LIMIT 1", arrayOf(scope)).use { it.moveToFirst(); it.getString(0) }
+    }
+    private fun dueCount() = FamilyEvidence(ctx).use { it.riskDueThreads(scope).size }
+    @Test fun aThreadIsMarkedForReviewOnlyAfterDyingTwiceInARowOnTheSameMessages() {
+        activate()
+        // An ordinary failure or a cooperative stop returns from the scorer: no marker is left.
+        capture(obs(text(1)))
+        runBatch(FakeScorer(onScore = { throw IllegalStateException("native failure") }))
+        assertNull(prefs.getString(RiskBatch.IN_FLIGHT, null)); assertNull(prefs.getString(RiskBatch.IN_FLIGHT_SUSPECT, null))
+        capture(obs(text(2))); var stop = false
+        runBatch(FakeScorer(onScore = { stop = true }), stop = { stop })
+        assertNull("a stop that lets the call return leaves no marker", prefs.getString(RiskBatch.IN_FLIGHT, null))
+        // One death (reboot, flat battery, low-memory kill...): the thread is scored again normally.
         capture(obs(text(3)))
-        val seq = FamilyEvidence(ctx).use { db -> db.riskDueThreads(scope).single() }.also { assertEquals(thread, it.first) }.second
-        prefs.edit().putString(RiskBatch.IN_FLIGHT, JSONObject().put("scope", scope).put("thread", thread).put("seq", seq).toString()).commit()
-        // Next charging window: the marked thread is not given to the scorer again, it is stored as "needs review".
-        val next = FakeScorer()
-        runBatch(next)
-        assertTrue("the crashing thread is not retried", next.prompts.isEmpty())
-        assertNull(prefs.getString(RiskBatch.IN_FLIGHT, null))
-        FamilyEvidence(ctx).use { db ->
-            assertTrue(db.riskDueThreads(scope).isEmpty())
-            val row = db.riskReportRows(scope, System.currentTimeMillis()).single(); assertNull(row.score); assertEquals("insufficient_context", row.reason)
-        }
-        // New messages make it due again and it is scored.
+        assertEquals(0, dieOn(text(3)).getInt("deaths"))
+        val retried = FakeScorer(); runBatch(retried)
+        assertEquals(1, retried.prompts.size); assertNull(latestReason()); assertEquals(0, dueCount())
+        assertNull(prefs.getString(RiskBatch.IN_FLIGHT, null)); assertNull("a returned call clears the count", prefs.getString(RiskBatch.IN_FLIGHT_SUSPECT, null))
+        // Two deaths in a row on the same thread and sequence: stored as "needs review" and not given to the scorer again.
         capture(obs(text(4)))
-        val retry = FakeScorer(); runBatch(retry)
-        assertEquals(1, retry.prompts.size)
-        FamilyEvidence(ctx).use { db -> assertNotNull(db.riskReportRows(scope, System.currentTimeMillis()).single().score) }
+        assertEquals(0, dieOn(text(4)).getInt("deaths"))
+        assertEquals("the retry carries the earlier death", 1, dieOn(text(4)).getInt("deaths"))
+        val skipped = FakeScorer(); runBatch(skipped)
+        assertTrue("not retried after the second death", skipped.prompts.isEmpty())
+        assertEquals("insufficient_context", latestReason()); assertEquals(0, dueCount())
+        assertNull(prefs.getString(RiskBatch.IN_FLIGHT, null)); assertNull(prefs.getString(RiskBatch.IN_FLIGHT_SUSPECT, null))
+        // A new message makes it due again, and it is scored.
+        capture(obs(text(5)))
+        val again = FakeScorer(); runBatch(again)
+        assertEquals(1, again.prompts.size); assertNull(latestReason())
+        // A different thread dying in between: counts never add up across threads.
+        capture(obs(text(6))); capture(obs(text(7), conversation = "other"))   // due in this order: friend, other
+        val friend = dieOn(text(6)); assertEquals(0, friend.getInt("deaths"))
+        val (otherThread, otherSeq) = FamilyEvidence(ctx).use { it.riskDueThreads(scope) }.single { it.first != friend.getString("thread") }
+        // The next run takes in friend's death (count 1), then dies on "other" before reaching friend; its marker counts only its own deaths.
+        var calls = 0; runBatch(FakeScorer(), stop = { calls++ > 0 })
+        assertEquals(1, JSONObject(prefs.getString(RiskBatch.IN_FLIGHT_SUSPECT, null)!!).getInt("deaths"))
+        prefs.edit().putString(RiskBatch.IN_FLIGHT, JSONObject().put("scope", scope).put("thread", otherThread).put("seq", otherSeq).put("deaths", 0).toString()).commit()
+        val markers = mutableMapOf<String, Int>()
+        val both = FakeScorer(onScore = { JSONObject(prefs.getString(RiskBatch.IN_FLIGHT, null)!!).let { m -> markers[m.getString("thread")] = m.getInt("deaths") } })
+        runBatch(both)
+        assertEquals("neither thread is marked: both are scored", 2, both.prompts.size); assertEquals(0, dueCount())
+        assertEquals("friend's earlier death was dropped when another thread died", 0, markers[friend.getString("thread")])
+        assertEquals(1, markers[otherThread])
     }
     @Test fun aPaddedThreadIsScoredOnTheNewestMessagesThatFit() {
         activate()
