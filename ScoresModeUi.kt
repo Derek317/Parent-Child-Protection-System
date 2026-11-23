@@ -301,7 +301,7 @@ internal object ScoresUi {
     const val METHOD_UPLOAD = "手動上載 / Manual upload"
     const val METHOD_CAPTURE = "自動擷取 / Automatic capture"
     fun methodName(method: String) = if (method == ScoresMethod.UPLOAD) METHOD_UPLOAD else METHOD_CAPTURE
-    const val METHOD_UPLOAD_BODY = "子女自己從 Instagram 下載資料（「匯出你的資訊」），再在自己的手機匯入。本 App 不讀取 Instagram 的通知或畫面，所以沒有即時的關鍵字提醒，也沒有陌生人提醒。你仍然只會收到分數。\nYour child downloads their own data from Instagram (\"Download your information\") and imports it on their own phone. This app reads nothing from Instagram notifications or screens, so there are no real-time keyword alerts and no unapproved-contact alerts. You still receive scores only."
+    const val METHOD_UPLOAD_BODY = "子女自己從 Instagram 下載資料（「匯出你的資訊」），再在自己的手機匯入。本 App 不讀取 Instagram 的通知或畫面，所以沒有即時的關鍵字提醒，也沒有陌生人提醒。你仍然只會收到分數。\nYour child downloads their own data from Instagram (\"Export your information\") and imports it on their own phone. This app reads nothing from Instagram notifications or screens, so there are no real-time keyword alerts and no unapproved-contact alerts. You still receive scores only."
     const val METHOD_CAPTURE_BODY = "本 App 讀取子女手機上的 Instagram 通知及對話畫面（現有方式）。你仍然只會收到分數。\nThis app reads Instagram notifications and conversation screens on your child's phone (the current way). You still receive scores only."
     /** The warning, word for word as Derek read it (docs/superpowers/specs/2026-11-20-collection-method-design.md). */
     const val WARNING_ZH_TITLE = "自動擷取可能違反 Instagram 使用條款"
@@ -346,7 +346,7 @@ internal object ScoresChildCopy {
     const val UPLOAD_ON_TITLE = "手動上載已開啟 / Manual upload is on"
     const val UPLOAD_ON_NOTE = "本 App 不讀取 Instagram 的通知或畫面。你現在可以到 Android 設定關閉「通知存取」和「無障礙」；本 App 不能代你關閉。\nThis app reads nothing from Instagram notifications or screens. You may now switch off Notification access and Accessibility in Android settings; the app cannot do it for you."
     const val IMPORT_EXPORT_ROW = "匯入 Instagram 資料 / Import Instagram export"
-    const val IMPORT_EXPORT_DESC = "選取 Instagram「匯出你的資訊」得到的 .zip，或其中一個 message_N.html / message_N.json。檔案只會被讀取，不會被複製。\nPick the .zip from Instagram's \"Download your information\", or one message_N.html / message_N.json from it. The file is only read, never copied."
+    const val IMPORT_EXPORT_DESC = "選取 Instagram「匯出你的資訊」得到的 .zip，或其中一個 message_N.html / message_N.json。檔案只會被讀取，不會被複製。\nPick the .zip from Instagram's \"Export your information\", or one message_N.html / message_N.json from it. The file is only read, never copied."
     /** Instagram's own export tool (Accounts Centre). A fixed https string: nothing about the child or the family goes into it. */
     const val EXPORT_TOOL_URL = "https://accountscenter.instagram.com/info_and_permissions/dyi"
     const val EXPORT_GUIDE_TITLE = "如何取得 Instagram 資料檔 / How to get your Instagram file"
