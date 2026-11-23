@@ -4272,7 +4272,7 @@ class MainActivity : Activity() {
         card.addView(row("plus", ScoresChildCopy.IMPORT_EXPORT_ROW, ScoresChildCopy.IMPORT_EXPORT_DESC, t, fill = t.bgCard) { pickExportFile() }.apply { getChildAt(0).tag = "scores_export_row" })
     }
     private fun pickExportFile() {
-        try { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), exportPickRequest) }
+        try { startActivityForResult(ScoresChildCopy.exportPicker(), exportPickRequest) }
         catch (_: Exception) { Toast.makeText(this, ScoresChildCopy.EXPORT_PICKER_MISSING, Toast.LENGTH_LONG).show() }
     }
     private fun openExportLink(url: String) {

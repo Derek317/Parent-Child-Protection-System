@@ -332,6 +332,14 @@ internal object ScoresChildCopy {
     const val EXPORT_GUIDE_NOTE = "Instagram 準備檔案可能需時數分鐘至數小時，有時更長；準備好後有四天時間下載。Instagram 的按鈕名稱可能略有不同。\nInstagram may take minutes to hours, sometimes longer, to prepare the file, and gives you four days to download it. Instagram's button names may differ slightly."
     const val EXPORT_OPEN = "開啟 Instagram 匯出頁面 / Open Instagram's export page"
     const val EXPORT_LINK_MISSING = "找不到可以開啟這個連結的 App。\nNo app on this phone can open the link."
+    /**
+     * The picker opens at Downloads and lists zip, JSON and HTML. A convenience only: the import still sniffs the content and refuses
+     * anything else. octet-stream stays in because some providers label a downloaded .zip that way.
+     */
+    val EXPORT_MIME_TYPES = arrayOf("application/zip", "application/x-zip-compressed", "application/json", "text/html", "application/octet-stream")
+    val DOWNLOADS_URI: Uri = android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
+    fun exportPicker(): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+        .putExtra(Intent.EXTRA_MIME_TYPES, EXPORT_MIME_TYPES).putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, DOWNLOADS_URI)
     const val EXPORT_RUNNING = "正在讀取檔案…\nReading the file…"
     const val EXPORT_PICKER_MISSING = "找不到檔案選擇器。\nNo file picker is available."
     /** Title and body for the outcome of an import; every failure says that nothing was stored. */

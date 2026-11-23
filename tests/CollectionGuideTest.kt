@@ -45,6 +45,22 @@ class CollectionGuideTest : UploadTestBase() {
             assertEquals(ScoresChildCopy.EXPORT_LINK_MISSING, ShadowToast.getTextOfLatestToast())
         } finally { c.pause().stop().destroy() }
     }
+    @Test fun thePickerOpensAtDownloadsOffersZipJsonAndHtmlAndAWrongFileIsStillRefused() {
+        activate(ScoresMethod.UPLOAD)
+        val c = launch()
+        try {
+            tagged(c, "scores_export_row").performClick()
+            val sent = shadowOf(c.get()).nextStartedActivityForResult.intent
+            assertEquals(Intent.ACTION_OPEN_DOCUMENT, sent.action)
+            assertTrue(sent.hasCategory(Intent.CATEGORY_OPENABLE))
+            val types = sent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)!!.toSet()
+            assertTrue(types.containsAll(setOf("application/zip", "application/json", "text/html")))
+            assertEquals(ScoresChildCopy.DOWNLOADS_URI, sent.getParcelableExtra<android.net.Uri>(android.provider.DocumentsContract.EXTRA_INITIAL_URI))
+        } finally { c.pause().stop().destroy() }
+        // The type filter is a convenience: a file that is not an Instagram export is refused by its content, whatever its name.
+        assertNotEquals(ImportResult.OK, InstagramImport.run(ctx, java.io.ByteArrayInputStream("not an export".toByteArray()), "message_1.json").result)
+        assertEquals(0, count("risk_store"))
+    }
     @Test fun onlyHttpsLinksCanBeOpened() {
         try { InstagramExportLink.intent("http://accountscenter.instagram.com/"); fail("plain http must be refused") } catch (_: IllegalArgumentException) {}
     }
