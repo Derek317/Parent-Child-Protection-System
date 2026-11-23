@@ -576,8 +576,24 @@ object GuardEngine {
     fun childPairingPending(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getLong(PAIRING_PENDING_MS,0L)>0L
     /** Parent: the last QR pairing was rolled back because the child never confirmed within 10 minutes. */
     fun childPairingFailed(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getBoolean(PAIRING_FAILED,false)
+    enum class ChildTrust { NO_CHILD, NOT_VERIFIED, PAIRING, PAIRING_FAILED, VERIFIED }
+    /** Parent overview model: NOT_VERIFIED is a child that reports without a pinned key (a 5.2 pairing): a permanent banner. */
+    fun childTrust(ctx:Context):ChildTrust = when {
+        childPairingPending(ctx) -> ChildTrust.PAIRING
+        pinnedChildKey(ctx)!=null -> ChildTrust.VERIFIED
+        childPairingFailed(ctx) -> ChildTrust.PAIRING_FAILED
+        hasChildHeartbeat(ctx) -> ChildTrust.NOT_VERIFIED
+        else -> ChildTrust.NO_CHILD
+    }
     /** Parent: signed records refused quietly (valid signature, outside the rules); a local count only. */
     fun childQuietDrops(ctx:Context):Int = prefs(ctx).getInt(QUIET_DROPS,0)
+    /** Child after a QR pairing: [recordText] (built exactly as 5.2 does, without the receipt flag) wrapped and signed with K
+     *  (design 3.2); null for a 5.2 pairing, which keeps the unsigned format. A key that cannot be used throws: never a fallback. */
+    private fun signedForParent(ctx:Context,recordText:String,id:String,receiptRequested:Boolean?):JSONObject? {
+        val alias=childKeyAlias(ctx) ?: return null
+        val key=FamilySecurity.loadChildSigningKey(ctx,alias)
+        return ChildRecords.wrapForParent(recordText,id,prefs(ctx).getString("parent_command_public_key","").orEmpty(),key.publicKey,{FamilySecurity.signChildBytes(it,key.alias)},receiptRequested)
+    }
     /** Forgets this phone's child signing key (new pairing, reset, role change, purge). A Keystore entry that cannot be deleted
      *  is left behind unreferenced: nothing signs with it again. */
     private fun forgetChildKey(ctx:Context) {
@@ -1345,8 +1361,8 @@ object GuardEngine {
                             }
                             val stamp=r.getLong("ts_ms")
                             r.put("time",SimpleDateFormat("MM-dd HH:mm:ss",Locale.US).format(Date(stamp)))
-                            r.put("receipt_requested",true)
-                            val frames=AlertFrames.split(r).mapIndexed { n,f -> "${r.getString("event_id")}:$n" to encryptPayload(token,f.toString()) }
+                            val outer=signedForParent(ctx,r.toString(),r.getString("event_id"),true) ?: r.put("receipt_requested",true)
+                            val frames=AlertFrames.split(outer).mapIndexed { n,f -> "${r.getString("event_id")}:$n" to encryptPayload(token,f.toString()) }
                             if(db.enqueueCaptured(scope,r.getString("event_id"),frames,true,ConversationCapture.priority(r)))accepted.add(r)
                         }
                         if(windowKey!=null && hashes.isNotEmpty())db.setCaptureWindow(scope,windowKey,hashes,if(orderedScreen)anchor else 0,if(orderedScreen)start else 0)
@@ -1674,16 +1690,15 @@ object GuardEngine {
         if (payload.optString("type") == "alert") {
             try {
                 val receiptRequested = hasSecureParentCommands(ctx)
-                payload.put("receipt_requested",receiptRequested)
-                val frames = AlertFrames.split(payload)
                 val queuedSession = expectedSession ?: captureRelaySession(ctx)
-                val wires = frames.mapIndexed { index,frame -> "${payload.getString("event_id")}:$index" to encryptPayload(token,frame.toString()) }
                 val queued=synchronized(pollLock) {
                     if (!isChildMode(ctx) || getOrCreateFamilyToken(ctx) != token || captureRelaySession(ctx)!=queuedSession) false
                     else {
                         // Decided under the same lock as accept(): an alert built just before the child agreed loses its text here.
-                        val outgoing=if(payload.optString("text").isNotEmpty() && RiskLocal.scrubsText(ctx,payload.optString("reason")))
-                            AlertFrames.split(payload.put("text","").put("content_free",true)).mapIndexed { index,frame -> "${payload.getString("event_id")}:$index" to encryptPayload(token,frame.toString()) } else wires
+                        if(payload.optString("text").isNotEmpty() && RiskLocal.scrubsText(ctx,payload.optString("reason")))payload.put("text","").put("content_free",true)
+                        // Signed after the scrub, so the signature covers exactly what leaves the phone; the receipt flag stays outside it.
+                        val outer=signedForParent(ctx,payload.toString(),payload.getString("event_id"),receiptRequested) ?: payload.put("receipt_requested",receiptRequested)
+                        val outgoing=AlertFrames.split(outer).mapIndexed { index,frame -> "${payload.getString("event_id")}:$index" to encryptPayload(token,frame.toString()) }
                         FamilyEvidence(ctx).use { it.enqueueBatch(topic,outgoing,waitForReceipt=receiptRequested) };true
                     }
                 }
@@ -1711,7 +1726,9 @@ object GuardEngine {
             payload.put("scope",topic).put("command_id",commandId)
             val envelope=if(parentCommand)FamilySecurity.signCommand(payload,parentIdentity(ctx).privateKey) else payload
             val eventId="control:$commandId"
-            val wrapped=JSONObject().put("type","alert").put("event_id",eventId).put("relay_control",true).put("envelope",envelope)
+            // A child's control record after a QR pairing travels as a signed record instead of the relay_control envelope.
+            val wrapped=(if(parentCommand)null else signedForParent(ctx,payload.toString(),eventId,null))
+                ?: JSONObject().put("type","alert").put("event_id",eventId).put("relay_control",true).put("envelope",envelope)
             val frames=AlertFrames.split(wrapped).mapIndexed{index,frame->"$eventId:$index" to encryptPayload(token,frame.toString())}
             synchronized(pollLock) {
                 check(captureRelaySession(ctx)==origin)
@@ -1861,7 +1878,11 @@ object GuardEngine {
         val decoded = decryptPayload(token, innerStr) ?: return RelayConsumption.REJECTED
         val decrypted = if (decoded.optString("type") == "alert_fragment") {
             if (role != "parent" && !(role=="child" && decoded.optString("event_id").startsWith("control:"))) return RelayConsumption.REJECTED
-            val completed = FamilyEvidence(ctx).use { it.fragment(getChannelTopicForToken(token), decoded) }
+            // A late part of a record already taken: reassembly would return the stored (unwrapped) record, which the gate must not see.
+            if (role == "parent" && pinnedChildKey(ctx) != null && FamilyEvidence(ctx).use { it.hasSeen(getChannelTopicForToken(token), decoded.optString("event_id")) }) {
+                sendDeliveryReceipt(ctx, decoded.optString("event_id"), decoded.optBoolean("receipt_requested")); return RelayConsumption.CONSUMED
+            }
+            val completed =FamilyEvidence(ctx).use { it.fragment(getChannelTopicForToken(token), decoded) }
             if (completed == null) {
                 if(FamilyEvidence(ctx).use { it.hasSeen(getChannelTopicForToken(token),decoded.optString("event_id")) })
                     sendDeliveryReceipt(ctx,decoded.optString("event_id"),decoded.optBoolean("receipt_requested"))
@@ -1870,9 +1891,27 @@ object GuardEngine {
             }
             if(decoded.optBoolean("receipt_requested"))completed.put("receipt_requested",true) else completed
         } else decoded
-        val controlId=if(decrypted.optBoolean("relay_control"))decrypted.optString("event_id") else ""
-        val envelope=if(controlId.isNotEmpty())decrypted.optJSONObject("envelope") ?: return RelayConsumption.REJECTED else decrypted
-        val inner = if (envelope.has("payload")) {
+        // Parent: every frame passes the child-record gate first (design 3.3). With a pinned key only a record signed by it goes on;
+        // without one (a 5.2 pairing) the unsigned format is processed as before and the child is shown as not verified.
+        val now = System.currentTimeMillis()
+        val pinned = if (role == "parent") pinnedChildKey(ctx) else null
+        val gate = if (role == "parent") ChildRecords.gate(decrypted, pinned, if (pinned == null) "" else parentIdentity(ctx).publicKey, now, prefs(ctx).getString(CHILD_RECORD_STATE, null)) else null
+        when (gate) {
+            is ChildRecords.GateResult.Tamper -> { noteChildRecordTamper(ctx, onNewAlertForParent, now); return RelayConsumption.REJECTED }
+            is ChildRecords.GateResult.QuietDrop -> { check(prefs(ctx).edit().putInt(QUIET_DROPS, childQuietDrops(ctx) + 1).commit()); return RelayConsumption.REJECTED }
+            ChildRecords.GateResult.Replay -> {
+                // The signature and the wrapper id were verified before the replay check, so this id is the record's own.
+                val id = decrypted.optString("event_id")
+                if (id.startsWith("control:")) FamilyEvidence(ctx).use { it.controlConsumed(getChannelTopicForToken(token), id) }
+                return RelayConsumption.CONSUMED
+            }
+            else -> {}
+        }
+        val verified = gate as? ChildRecords.GateResult.Verified
+        val controlId=if(verified!=null)(if(verified.type in ConversationCapture.contentTypes)"" else "control:"+verified.id)
+            else if(decrypted.optBoolean("relay_control"))decrypted.optString("event_id") else ""
+        val envelope=if(verified!=null)verified.record else if(controlId.isNotEmpty())decrypted.optJSONObject("envelope") ?: return RelayConsumption.REJECTED else decrypted
+        val inner = if (verified != null) verified.record else if (envelope.has("payload")) {
             if (role != "child") return RelayConsumption.REJECTED
             FamilySecurity.readCommand(envelope, prefs(ctx).getString("parent_command_public_key", "") ?: "", getChannelTopicForToken(token), System.currentTimeMillis()) ?: return RelayConsumption.REJECTED
         } else {
@@ -1885,7 +1924,7 @@ object GuardEngine {
         val msgTs = inner.optLong("ts_ms", 0L)
 
         var committedControlState:String?=null
-        if (msgType in FamilySecurity.controlTypes) {
+        if (verified == null && msgType in FamilySecurity.controlTypes) {
             val state = try { JSONObject(prefs(ctx).getString("control_state_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
             val ids = state.optJSONObject("ids") ?: JSONObject().also { state.put("ids", it) }
             val id = inner.getString("command_id")
@@ -1996,7 +2035,8 @@ object GuardEngine {
                     sendDeliveryReceipt(ctx,inner.optString("event_id"),inner.optBoolean("receipt_requested"))
                     if (!inserted) return RelayConsumption.CONSUMED
                     val reason = inner.optString("reason")
-                    if (reason in setOf("heartbeat_ok", "pairing_verified", "tamper_attempt", "test_alert")) {
+                    // A sign of life: a verified record, or any record of a child without a pinned key (5.2 pairing, not verified).
+                    if (reason in setOf("heartbeat_ok", "pairing_verified", "tamper_attempt", "test_alert") && (verified != null || pinned == null)) {
                         recordChildHeartbeatOnParent(ctx, inner.optString("text"), msgTs)
                     }
                     val pending = try { JSONObject(prefs(ctx).getString("pending_rotation_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
@@ -2016,6 +2056,8 @@ object GuardEngine {
         }
         val editor=prefs(ctx).edit().putStringSet("seen_msg_ids", persistedSet)
         if(committedControlState!=null)editor.putString("control_state_json",committedControlState)
+        // The child's own control-record state is committed with the seen ids; its first verified record completes the pairing.
+        if(verified!=null){verified.newControlState?.let{editor.putString(CHILD_RECORD_STATE,it)};editor.remove(PAIRING_PENDING_MS)}
         check(editor.commit())
         if(controlId.isNotEmpty())FamilyEvidence(ctx).use{db->
             db.controlConsumed(getChannelTopicForToken(token),controlId)
@@ -2027,6 +2069,16 @@ object GuardEngine {
             RelayConsumption.RETRY
         }
 
+    }
+
+    /** One content-free local evidence row for a refused frame (design 3.5), at most one per hour. Never a sign of life. */
+    private fun noteChildRecordTamper(ctx: Context, onNewAlertForParent: ((JSONObject) -> Unit)?, now: Long) {
+        if (!ChildRecords.tamperNoticeDue(prefs(ctx).getLong(TAMPER_NOTICE_MS, 0L), now)) return
+        check(prefs(ctx).edit().putLong(TAMPER_NOTICE_MS, now).commit())
+        val notice = JSONObject().put("type", "alert").put("event_id", "tamper:" + UUID.randomUUID()).put("reason", "tamper_attempt")
+            .put("sender", ChildRecords.TAMPER_SENDER).put("text", ChildRecords.TAMPER_TEXT).put("ts_ms", now).put("time", nowDateTimeStr())
+        if (recordParentAlert(ctx, notice, notice.getString("event_id"))) onNewAlertForParent?.invoke(notice)
+        ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
     }
 
     private fun sendDeliveryReceipt(ctx: Context,eventId: String,requested: Boolean) {
