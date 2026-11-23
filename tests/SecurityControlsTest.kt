@@ -23,6 +23,27 @@ class SecurityControlsTest {
         ctx.deleteDatabase("family_evidence.db")
         GuardEngine.setRole(ctx,"child")
     }
+    @Test fun aCriticalButtonIgnoresClicksUntilItHasSettledOnScreen() {
+        // Robolectric runs with animators off (scale 0); the hidden setter turns them on, as on a phone.
+        val scale=android.animation.ValueAnimator::class.java.getDeclaredMethod("setDurationScale",Float::class.java).apply{isAccessible=true}
+        scale.invoke(null,1f)
+        val c=org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup();val a=c.get()
+        try {
+            var busy=false;var clicks=0
+            val b=ObscuredAwareButton(a,{busy}){}.apply{setOnClickListener{clicks++}}
+            a.setContentView(b)
+            assertFalse("a tap while the page or sheet is still moving in is ignored",b.performClick())
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(450))
+            busy=true
+            assertFalse("a tap during a page fade or theme reveal is ignored",b.performClick())
+            busy=false
+            assertTrue(b.performClick());assertEquals(1,clicks)
+            scale.invoke(null,0f)
+            val instant=ObscuredAwareButton(a){}.apply{setOnClickListener{clicks++}}
+            a.setContentView(instant)
+            assertTrue("with animations off nothing moves, so nothing waits",instant.performClick());assertEquals(2,clicks)
+        } finally {scale.invoke(null,0f);c.pause().stop().destroy()}
+    }
     @Test fun withdrawalIsPersistentInvalidatesCallbacksAndPreventsNewCapture() {
         val old=GuardEngine.captureRelaySession(ctx)
         assertTrue(GuardEngine.collectionAllowed(ctx))

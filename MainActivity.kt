@@ -4972,7 +4972,7 @@ class MainActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(12)) }
     }
     private fun actionButton(title: String, hexBg: String, hexText: String, critical: Boolean = false, onClick: () -> Unit): Button =
-        (if (critical) ObscuredAwareButton(this) { warnObscured() } else Button(this)).apply {
+        (if (critical) ObscuredAwareButton(this, { pageMotion?.isRunning == true || themeReveal?.isRunning == true }) { warnObscured() } else Button(this)).apply {
         text = title; textSize = 14f; typeface = font(true); isAllCaps = false
         setTextColor(color(hexText)); background = ripple(hexBg, 10, if (hexBg != currentTheme().btnPrimaryBg) currentTheme().accentPowderSky else null)
         minimumHeight = dp(52); setPadding(dp(14), dp(13), dp(14), dp(13)); setOnClickListener(sessionClick(onClick))

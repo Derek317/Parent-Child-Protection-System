@@ -1,11 +1,13 @@
 package app.family.igguard
 
+import android.animation.ValueAnimator
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.MotionEvent
 import android.widget.Button
 import android.os.PersistableBundle
@@ -44,9 +46,18 @@ object SensitiveClipboard {
 
 const val OBSCURED_TOUCH_MESSAGE = "另一個 App 正在這個畫面上方顯示內容，為安全起見已忽略此次點按。請先關閉濾藍光、懸浮視窗或螢幕調色 App，再試一次。"
 
-/** A security-critical confirmation: ignores touches while another window covers it and says why. */
-class ObscuredAwareButton(ctx: Context, private val onFiltered: () -> Unit) : Button(ctx) {
+/**
+ * A security-critical confirmation: ignores touches while another window covers it and says why.
+ * It also ignores clicks until it has settled on screen: a page fade (220 ms) or sheet slide-in (320 ms) leaves it unseen,
+ * and a quick second tap meant for the previous screen must not land on it. [busy] reports a page fade or theme reveal still running.
+ */
+class ObscuredAwareButton(ctx: Context, private val busy: () -> Boolean = { false }, private val onFiltered: () -> Unit) : Button(ctx) {
+    private var attachedAt = 0L
     init { filterTouchesWhenObscured = true }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); attachedAt = SystemClock.uptimeMillis() }
+    private fun settled() = !ValueAnimator.areAnimatorsEnabled() || (SystemClock.uptimeMillis() - attachedAt >= SETTLE_MS && !busy())
+    override fun performClick(): Boolean = settled() && super.performClick()
+    private companion object { const val SETTLE_MS = 400L }
     override fun onFilterTouchEventForSecurity(event: MotionEvent): Boolean {
         val accepted = super.onFilterTouchEventForSecurity(event)
         if (!accepted && event.actionMasked == MotionEvent.ACTION_DOWN) onFiltered()
