@@ -16,8 +16,10 @@ object DeliveryHealth {
     // Parent: the notice's own once-per-hour timer, and when the current run of bad verified heartbeats began.
     const val NOTICE_MS = "child_undelivered_notice_ms"
     const val FIRST_BAD_MS = "child_undelivered_first_bad_ms"
+    /** The child's send time (signed ts_ms) of the last heartbeat whose fields were acted on: an older or equal one is ignored. */
+    const val LAST_SENT_MS = "child_undelivered_last_sent_ms"
     /** The parent's notice state: dropped with the pin (new pairing, rollback, remote reset) and with the family or the role. */
-    val PARENT_KEYS = listOf(NOTICE_MS, FIRST_BAD_MS)
+    val PARENT_KEYS = listOf(NOTICE_MS, FIRST_BAD_MS, LAST_SENT_MS)
 
     const val NOTICE_SENDER = "送達檢查"
     const val NOTICE_TEXT = "有子女手機的回報超過 1 小時仍未送達此手機。請檢查兩部手機的網絡；如持續出現，請當面查看子女手機。 / Reports from the child phone have not reached this phone for over an hour. Check both phones' network; if it continues, check the child phone in person."

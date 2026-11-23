@@ -2206,6 +2206,10 @@ object GuardEngine {
      *  an hour (or expired) without a receipt, and only after 15 minutes of continuous relay connection here (receipts could flow). */
     private fun noteDeliveryHealth(ctx: Context, record: JSONObject, onNewAlertForParent: ((JSONObject) -> Unit)?, now: Long) {
         val report = DeliveryHealth.parse(record) ?: return
+        // Only a heartbeat sent after the last one acted on counts: a delayed or replayed older one neither clears nor raises.
+        val sentAt = record.optLong("ts_ms", 0L)
+        if (sentAt <= prefs(ctx).getLong(DeliveryHealth.LAST_SENT_MS, 0L)) return
+        check(prefs(ctx).edit().putLong(DeliveryHealth.LAST_SENT_MS, sentAt).commit())
         if (report.clear) { check(prefs(ctx).edit().remove(DeliveryHealth.NOTICE_MS).remove(DeliveryHealth.FIRST_BAD_MS).commit()); return }
         if (!report.bad) return
         val firstBad = prefs(ctx).getLong(DeliveryHealth.FIRST_BAD_MS, 0L)

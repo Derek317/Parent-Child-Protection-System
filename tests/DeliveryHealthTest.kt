@@ -130,9 +130,11 @@ class DeliveryHealthTest {
         GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD); token
         prefs.edit().putString("pinned_child_key", FamilySecurity.canonicalKeyText(kid.publicKey)).putBoolean("family_qr_only", true).commit()
     }
-    private fun hb(waiting: Any, oldest: Any, expired: Any) = JSONObject().put("type", "alert").put("event_id", UUID.randomUUID().toString())
+    private var sendClock = System.currentTimeMillis() - 60_000L
+    /** Each heartbeat a little later than the last, as a child sends them (the parent acts only on newer send times). */
+    private fun hb(waiting: Any, oldest: Any, expired: Any, ts: Long = ++sendClock) = JSONObject().put("type", "alert").put("event_id", UUID.randomUUID().toString())
         .put("capture_source", "app_or_visible_screen").put("reason", "heartbeat_ok").put("sender", "子女手機定時回報").put("text", "裝置 運作中")
-        .put("ts_ms", System.currentTimeMillis()).put("time", "x").put("trusted_csv", "").put("child_self_handle", "")
+        .put("ts_ms", ts).put("time", "x").put("trusted_csv", "").put("child_self_handle", "")
         .put("waiting", waiting).put("oldest_min", oldest).put("expired", expired)
     private fun signed(r: JSONObject) = ChildRecords.wrapForParent(r.toString(), r.getString("event_id"), GuardEngine.relayPublicKey(ctx), kid.publicKey, { FamilySecurity.signBytes(it, kid.privateKey) }, true)
     private fun deliver(frame: JSONObject) = GuardEngine.processIncomingRelayLine(ctx, JSONObject().put("event", "message").put("id", UUID.randomUUID().toString())
@@ -201,6 +203,23 @@ class DeliveryHealthTest {
         assertTrue(DeliveryHealth.PARENT_KEYS.none { prefs.contains(it) })
         dirty(); assertTrue(GuardEngine.leaveParentRole(ctx))                                           // leaving the role
         assertTrue(DeliveryHealth.PARENT_KEYS.none { prefs.contains(it) })
+    }
+
+    /** An older (or equal) send time than the last one acted on neither clears nor raises. */
+    @Test fun anOlderHeartbeatNeitherClearsNorRaises() {
+        parentWithPinnedChild(); connectedFor(20)
+        val t2 = System.currentTimeMillis() - 1_000L
+        deliver(signed(hb("03", "0090", "0", ts = t2))); assertEquals(1, notices())
+        val timer = prefs.getLong(DeliveryHealth.NOTICE_MS, 0L); val first = prefs.getLong(DeliveryHealth.FIRST_BAD_MS, 0L)
+        assertTrue(timer > 0L && first > 0L)
+        deliver(signed(hb("00", "0000", "0", ts = t2 - 5_000L)))          // older clear report
+        deliver(signed(hb("00", "0000", "0", ts = t2)))                    // same send time
+        assertEquals(timer, prefs.getLong(DeliveryHealth.NOTICE_MS, 0L)); assertEquals(first, prefs.getLong(DeliveryHealth.FIRST_BAD_MS, 0L))
+        prefs.edit().putLong(DeliveryHealth.NOTICE_MS, 1L).commit()
+        deliver(signed(hb("09", "0300", "1", ts = t2 - 1L)))               // older bad report
+        assertEquals("an older bad report raises nothing", 1, notices())
+        deliver(signed(hb("00", "0000", "0", ts = t2 + 1L)))               // a newer clear report does clear
+        assertFalse(prefs.contains(DeliveryHealth.FIRST_BAD_MS))
     }
 
     @Test fun legacyHeartbeatsCarryingTheFieldsRaiseNothing() {
