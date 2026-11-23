@@ -5081,7 +5081,7 @@ class MainActivity : Activity() {
         val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
         setTextColor(color(ink ?: t.accentSeafoam)); background = ripple(TRANSPARENT_FILL, 10, t = t); minimumHeight = dp(48)
         gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(dp(12), dp(10), dp(12), dp(10)); setOnClickListener(sessionClick(onClick))
-        layoutParams = LinearLayout.LayoutParams(-1, -2).apply{setMargins(0,dp(4),0,dp(6))}
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply{setMargins(-dp(12),dp(4),0,dp(6))}   // text lines up with the content edge; the ripple uses the gutter
     }
     private fun checkInitialPairingConfirmation() {
         if (!GuardEngine.isChildMode(this)) return
