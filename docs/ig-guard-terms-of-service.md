@@ -1,7 +1,6 @@
 # IG Guard 使用條款 / Terms of Service
 
 更新 / Updated: 24 November 2026（香港 / Hong Kong）
-版本 / Release: 5.0
 條款修訂 / Terms revision: 2026-11-24-v8
 營運 / Operator: Safe Guard — ppefyp2026@gmail.com
 
