@@ -338,7 +338,7 @@ object GuardEngine {
     }
 
     // Theme Mode: true = Warm Bright Mode ("Morning Harbor"), false = Warm Dark Mode ("Cozy Lantern")
-    /** The user's own choice once made (kept for ever); before that, the phone's dark mode: Clear Sky if dark, Harbour otherwise. */
+    /** The user's own choice once made (kept for ever); before that, the phone's dark mode: Clear Sky if dark, Morning sky otherwise. */
     fun isBrightTheme(ctx: Context): Boolean = prefs(ctx).let { if (it.contains("bright_theme")) it.getBoolean("bright_theme", true) else !phoneIsDark(ctx) }
     fun phoneIsDark(ctx: Context): Boolean = ctx.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
     fun setBrightTheme(ctx: Context, bright: Boolean) = prefs(ctx).edit().putBoolean("bright_theme", bright).apply()
@@ -929,7 +929,7 @@ object GuardEngine {
 
     /** Every notification: the app's shield glyph as small icon (the stock lock only if the drawable is missing) and the brand colour. */
     fun notificationIcon(ctx: Context): Int = ctx.resources.getIdentifier("ic_guard_shield", "drawable", ctx.packageName).takeIf { it != 0 } ?: android.R.drawable.ic_lock_idle_lock
-    val NOTIFICATION_COLOR: Int = 0xFF1565C0.toInt()   // Harbour brand primary (accentSeafoam); the shade reads on light and dark shades
+    val NOTIFICATION_COLOR: Int = 0xFF1565C0.toInt()   // Morning sky brand primary (light accentSeafoam); the shade reads on light and dark shades
     fun captureScopeSummary(ctx:Context):String = "擴展擷取已啟用 · 傳入訊息" +
         (if(outgoingCaptureAllowed(ctx))"、已送出的傳出訊息" else "；不含傳出訊息") +
         (if(trustedContextAllowed(ctx))"；包含信任對象的一般脈絡" else "；不含信任對象的一般脈絡")
@@ -2894,7 +2894,7 @@ class MainActivity : Activity() {
         val warmCoral: String, val warningButtonBg: String, val warningButtonText: String,
         val riskLow: String, val navPill: String, val navPillInk: String
     )
-    // Light "Harbour" / dark "Clear Sky". accentSeafoam = brand primary, accentPowderSky = secondary (borders only), warningButtonBg = attention.
+    // Light "Morning sky" / dark "Clear Sky". accentSeafoam = brand primary, accentPowderSky = secondary (borders only), warningButtonBg = attention.
     // navPill / navPillInk = the selected bottom tab's highlight and its icon and label (bgChip carries accent text elsewhere).
     private fun currentTheme(): ThemeColors = themeColors(GuardEngine.isBrightTheme(this))
     /** The saved theme, or the phone's dark mode when none is saved or the encrypted preferences cannot be read: consent and storage-failure pages. */

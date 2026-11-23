@@ -76,7 +76,7 @@ object AppConsent {
         return "$record\n\n以下為此安裝版本附帶的條款；上方記錄保留最初同意的版本。\nCurrent bundled Terms appear below; the receipt identifies the originally accepted revision.\n\n${terms(ctx)}"
     }
 
-    /** Built from the app's theme tokens and helpers ([t] = Harbour or Clear Sky); words, boxes and the guarded Accept are unchanged. */
+    /** Built from the app's theme tokens and helpers ([t] = Morning sky or Clear Sky); words, boxes and the guarded Accept are unchanged. */
     internal fun page(activity: MainActivity, t: MainActivity.ThemeColors, onAccepted: () -> Unit): View {
         fun dp(n: Int) = (n * activity.resources.displayMetrics.density).toInt()
         val content = LinearLayout(activity).apply {
