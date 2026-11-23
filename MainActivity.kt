@@ -1511,6 +1511,21 @@ object GuardEngine {
         postScoresPolicy(ctx, getChannelTopicForToken(token), token, current.policyId, current.enabled, current.method)
     }
 
+    /**
+     * Parent: asks the child's phone for a fresh Instagram export. The record is content-free (type and time; the transport adds
+     * scope and command id) and goes through the same signed control path as the policy. Refused (false) unless the current policy
+     * is on with manual upload and no request was sent in the last 24 hours; false also if it could not be queued.
+     */
+    fun sendImportRequest(ctx: Context): Boolean = synchronized(pollLock) {
+        check(isParentMode(ctx))
+        val now = System.currentTimeMillis()
+        val policy = RiskLocal.parentPolicy(ctx)
+        if (policy?.enabled != true || policy.method != ScoresMethod.UPLOAD || ScoresUi.importRequestLocked(RiskLocal.parentImportRequestAt(ctx), now)) return@synchronized false
+        val token = getOrCreateFamilyToken(ctx)
+        if (postControlChecked(ctx, getChannelTopicForToken(token), token, JSONObject().put("type", "import_request").put("ts_ms", now)) == null) return@synchronized false
+        RiskLocal.saveParentImportRequest(ctx, now)
+    }
+
     private fun postScoresPolicy(ctx: Context, topic: String, token: String, id: String, enabled: Boolean, method: String): Boolean {
         val now = System.currentTimeMillis()
         val payload = JSONObject().put("type", "scores_mode_policy").put("policy_id", id).put("enabled", enabled).put("ts_ms", now)
@@ -4522,6 +4537,7 @@ class MainActivity : Activity() {
             }
             out.addView(card)
         }
+        if (ScoresUi.importRequestOffered(m)) showImportRequest(out, m, t)
         val notice = noticeCard(t, false, "scores_notice")
         notice.addView(label(ScoresUi.LIMITS_NOTICE, 14f, t.textPrimary, bottomPad = 8))
         notice.addView(label(ScoresUi.NEXT_STEPS, 14f, t.textSecondary, bottomPad = 8))
@@ -4533,6 +4549,16 @@ class MainActivity : Activity() {
             out.addView(label(heading, 16f, t.textPrimary, true, topPad = 16, bottomPad = 10).apply { tag = "scores_list_title" })
             for (row in m.rows) out.addView(scoreRow(row, t))
         }
+    }
+    /** Manual upload only: one request per 24 hours. Nothing here says the request was delivered or read. */
+    private fun showImportRequest(out: LinearLayout, m: ScoresPageModel, t: ThemeColors) {
+        val at = RiskLocal.parentImportRequestAt(this); val now = System.currentTimeMillis()
+        val locked = ScoresUi.importRequestLocked(at, now)
+        out.addView(actionButton(if (locked) ScoresUi.importRequestedAt(at) else ScoresUi.IMPORT_REQUEST, t.btnSecondaryBg, t.btnSecondaryText) {
+            val ok = ScoresEngineBridge.requestImport(this)
+            Toast.makeText(this, if (ok) ScoresUi.IMPORT_REQUEST_QUEUED else ScoresUi.IMPORT_REQUEST_FAILED, Toast.LENGTH_LONG).show(); renderUi()
+        }.apply { tag = "scores_import_request"; isEnabled = !locked })
+        if (ScoresUi.noScoreSinceRequest(m, at, now)) out.addView(label(ScoresUi.NO_SCORE_SINCE_REQUEST, 13f, t.textSecondary, bottomPad = 10).apply { tag = "scores_no_score_since_request" })
     }
     private fun scoreRow(row: RiskScoreRow, t: ThemeColors): View {
         val band = ScoresUi.band(row)

@@ -36,6 +36,7 @@ internal data class ScoresPageModel(
 internal object ScoresEngineBridge {
     var sendPolicy: (Context, Boolean, String) -> Boolean = { c, enabled, method -> GuardEngine.sendScoresModePolicy(c, enabled, method) }
     var resendPolicy: (Context) -> Boolean = { c -> GuardEngine.resendScoresModePolicy(c) }
+    var requestImport: (Context) -> Boolean = { c -> GuardEngine.sendImportRequest(c) }
     var accept: (Context, String, String) -> Boolean = { c, id, method -> RiskLocal.accept(c, id, method) }
     var pause: (Context) -> Boolean = { RiskLocal.pause(it) }
     var resume: (Context) -> Boolean = { RiskLocal.resume(it) }
@@ -47,6 +48,7 @@ internal object ScoresEngineBridge {
     fun reset() {
         sendPolicy = { c, enabled, method -> GuardEngine.sendScoresModePolicy(c, enabled, method) }
         resendPolicy = { c -> GuardEngine.resendScoresModePolicy(c) }
+        requestImport = { c -> GuardEngine.sendImportRequest(c) }
         accept = { c, id, method -> RiskLocal.accept(c, id, method) }; pause = { RiskLocal.pause(it) }; resume = { RiskLocal.resume(it) }; withdraw = { RiskLocal.withdraw(it) }
         pendingNotice = { RiskLocal.pendingChangeNotice(it) }; acknowledgeNotice = { c, _ -> RiskLocal.acknowledgeChangeNotice(c) }
         activeOf = { it.active }
@@ -141,6 +143,21 @@ internal object ScoresUi {
     /** Only under manual upload, where a gap most likely means no import: under capture a quiet week is normal. */
     fun oldAnalysisHint(m: ScoresPageModel, now: Long = System.currentTimeMillis()): String? =
         latestAnalysis(m)?.takeIf { m.method == ScoresMethod.UPLOAD && now - it > FRESH_DAYS * 86_400_000L }?.let { OLD_ANALYSIS_HINT }
+
+    // ---------------- asking for a fresh export (manual upload; derived only from the parent's own request time and score times) ----------------
+    const val IMPORT_REQUEST = "請子女更新 Instagram 資料 / Ask for a fresh Instagram export"
+    fun importRequestedAt(at: Long) = "已於 ${time(at)} 提出 / Requested ${time(at)}"
+    const val IMPORT_REQUEST_QUEUED = "請求已排入傳送佇列。你不會知道子女是否收到或閱讀。\nThe request is queued to send. You will not be told whether your child received or read it."
+    const val IMPORT_REQUEST_FAILED = "未能送出請求，請稍後重試。\nCould not send the request. Please try again later."
+    const val NO_SCORE_SINCE_REQUEST_DAYS = 3
+    const val NO_SCORE_SINCE_REQUEST = "提出請求後還沒有新的分數，這可能只是沒有新訊息。可以考慮和孩子談一談。\nNo new score since your request. This may simply mean there are no new messages; consider talking with your child."
+    /** The policy is on with manual upload and the child's report about it says agreed and not paused. A pause or withdrawal hides it. */
+    fun importRequestOffered(m: ScoresPageModel): Boolean =
+        m.method == ScoresMethod.UPLOAD && m.page != ScoresPage.OFF && m.page != ScoresPage.WAITING && m.state?.consent == "accepted" && m.state?.paused == false
+    /** At most one request per 24 hours. A time ahead of the clock also counts as inside the window. */
+    fun importRequestLocked(at: Long, now: Long = System.currentTimeMillis()): Boolean = at > 0 && now - at < RiskLocal.REQUEST_PARENT_GAP_MS
+    fun noScoreSinceRequest(m: ScoresPageModel, at: Long, now: Long = System.currentTimeMillis()): Boolean =
+        at > 0 && now - at > NO_SCORE_SINCE_REQUEST_DAYS * 86_400_000L && (latestAnalysis(m) ?: 0L) <= at
 
     // ---------------- dates ----------------
     fun day(ms: Long): String = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date(ms))

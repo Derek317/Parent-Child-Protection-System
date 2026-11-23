@@ -275,6 +275,9 @@ internal object RiskLocal {
     private const val LAST_IMPORT = "scores_last_import_ms"
     /** Child: when the parent's last request for a fresh export was shown, nothing else about it. Removed with the store, by a successful import and by the child's "OK". */
     private const val IMPORT_REQUEST = "scores_import_request_ms"
+    /** Parent: when this phone last sent such a request. */
+    private const val PARENT_IMPORT_REQUEST = "scores_parent_import_request_ms"
+    const val REQUEST_PARENT_GAP_MS = 24L * 3_600_000L
     /** The child's own limit, so a modified parent build cannot nag. */
     const val REQUEST_CHILD_GAP_MS = 20L * 3_600_000L
     const val REMIND_AFTER_MS = 7L * 86_400_000L
@@ -477,7 +480,7 @@ internal object RiskLocal {
         // The family ended: its queued reports could never be delivered. The chat text is already gone, so a failure here leaves nothing private behind.
         retrying("report") { RiskReporter.purgeQueued(ctx, GuardEngine.getChannelTopic(ctx)) }
         prefs(ctx).edit().remove(POLICY_ID).remove(POLICY_ENABLED).remove(POLICY_METHOD).remove(PAUSED_AT).remove(LAST_RUN).remove(BASELINE)
-            .remove(PARENT_POLICY_ID).remove(PARENT_POLICY_ENABLED).remove(PARENT_POLICY_METHOD).remove(PARENT_POLICY_AT).remove(CHANGE_NOTICE).remove(CAPTURE_HELD).remove(POLICY_REPOST).commit()
+            .remove(PARENT_POLICY_ID).remove(PARENT_POLICY_ENABLED).remove(PARENT_POLICY_METHOD).remove(PARENT_POLICY_AT).remove(CHANGE_NOTICE).remove(CAPTURE_HELD).remove(POLICY_REPOST).remove(PARENT_IMPORT_REQUEST).commit()
         receiptPrefs(ctx).edit().clear().commit()
         try { RiskScoringSchedule.sync(ctx) } catch (_: RuntimeException) {}
     }
@@ -751,6 +754,8 @@ internal object RiskLocal {
     }
     fun saveParentPolicy(ctx: Context, id: String, enabled: Boolean, at: Long, method: String = ScoresMethod.CAPTURE): Boolean =
         prefs(ctx).edit().putString(PARENT_POLICY_ID, id).putBoolean(PARENT_POLICY_ENABLED, enabled).putString(PARENT_POLICY_METHOD, method).putLong(PARENT_POLICY_AT, at).commit()
+    fun parentImportRequestAt(ctx: Context): Long = prefs(ctx).getLong(PARENT_IMPORT_REQUEST, 0L)
+    fun saveParentImportRequest(ctx: Context, at: Long): Boolean = prefs(ctx).edit().putLong(PARENT_IMPORT_REQUEST, at).commit()
 }
 
 /** Message text on its way into a prompt. */
