@@ -5060,6 +5060,7 @@ class MainActivity : Activity() {
     private fun sectionTitle(title: String, t: ThemeColors) { rootContainer.addView(label(title, 16f, t.textPrimary, true, topPad = 22, bottomPad = 14)) }
     private fun makeCard(t: ThemeColors, isHero: Boolean = false): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL; background = background(if (isHero) t.bgHero else t.bgCard, 14, t.borderSubtle)
+        if (t == themeColors(true)) elevation = dp(1).toFloat()   // light only: a faint lift off the canvas; its outline follows the 14 dp corners
         setPadding(dp(18), dp(18), dp(18), dp(18))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(12), 0, dp(12)) }
     }
