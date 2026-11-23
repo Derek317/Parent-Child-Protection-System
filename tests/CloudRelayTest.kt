@@ -173,6 +173,28 @@ class CloudRelayTest {
         return false
     }
     private fun cooldown():Long = LocalVault.preferences(ctx).getLong("relay_cooldown_child_${FamilyRelay.room(authority.publicKey,GuardEngine.getChannelTopic(ctx))}",0)
+    @Test fun retryNowDropsTheClientBackoffButNotARelayRequestedDelay() {
+        val server=MockWebServer()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object:WebSocketListener(){
+            override fun onOpen(webSocket:WebSocket,response:Response){webSocket.send("{\"type\":\"ready\",\"protocol\":1}")}
+            override fun onClosing(webSocket:WebSocket,code:Int,reason:String){webSocket.close(code,reason)}
+        }));server.start()
+        val token=GuardEngine.getOrCreateFamilyToken(ctx)
+        val key="relay_cooldown_child_${FamilyRelay.room(authority.publicKey,GuardEngine.getChannelTopic(ctx))}"
+        val connection=CloudRelay.Connection(ctx,GuardEngine.captureRelaySession(ctx),token,server.url("/").toString())
+        try {
+            // A retired room or a long Retry-After came from the relay: a tap does not override it.
+            LocalVault.preferences(ctx).edit().putLong(key,System.currentTimeMillis()+DAY).commit()
+            connection.start();connection.retryNow()
+            assertNull(server.takeRequest(700,TimeUnit.MILLISECONDS));assertTrue(cooldown()>System.currentTimeMillis())
+            // The client's own back-off (at most 5 minutes) is dropped and the relay is tried at once.
+            LocalVault.preferences(ctx).edit().putLong(key,System.currentTimeMillis()+200_000L).commit()
+            connection.retryNow()
+            assertNotNull("retry now must reconnect without waiting",server.takeRequest(5,TimeUnit.SECONDS))
+            assertEquals(0L,cooldown())
+        }finally{connection.close();server.shutdown()}
+    }
+    private val DAY=24*60*60_000L
     @Test fun aRetiredRoomIsNamedPlainlyAndAskedAgainNoMoreThanDaily() {
         val server=MockWebServer()
         server.enqueue(MockResponse().setResponseCode(410).setHeader("Retry-After","60").setBody("{\"error\":{\"code\":\"room_retired\"}}"));server.start()

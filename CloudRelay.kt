@@ -81,6 +81,13 @@ object CloudRelay {
             }
         }
     }
+    /** The "立即重試傳送" button: reconnect the active family now instead of after the client back-off (bug-review B-8). */
+    fun retryNow(ctx:Context) {
+        executor.execute {
+            if(!GuardEngine.transferAllowed(ctx) || GuardEngine.getRole(ctx)=="unconfigured")return@execute
+            try{connection(ctx,GuardEngine.getOrCreateFamilyToken(ctx)).retryNow()}catch(_:Exception){}
+        }
+    }
     fun disconnect() {executor.execute{
         active?.close();oldRoute?.close();active=null;oldRoute=null;parentAlert=null
     }
@@ -132,6 +139,12 @@ object CloudRelay {
             ctx.sendBroadcast(android.content.Intent(GuardEngine.ACTION_UI_REFRESH).setPackage(ctx.packageName))
         }
         fun start(){executor.execute{open()}}
+        /** "Retry now": a person asked, so the client's own back-off (at most about 5 minutes) is dropped once.
+         *  A longer delay came from the relay (Retry-After, retired room) and stays. */
+        fun retryNow(){executor.execute{
+            if(socket!=null || prefs.getLong(cooldownKey,0)-System.currentTimeMillis()>301_000L)return@execute
+            prefs.edit().remove(cooldownKey).apply();reconnect?.cancel(false);reconnect=null;open()
+        }}
         fun close(){executor.execute{stop()}}
         private fun stop() {
             closed=true;ready=false;reconnect?.cancel(false);flush?.cancel(false)

@@ -4673,7 +4673,7 @@ class MainActivity : Activity() {
                 if (GuardEngine.isChildMode(this@MainActivity)) {
                     addView(label("畫面擷取：${GuardEngine.cpLastCaptureStatus}",13f,t.textSecondary,bottomPad=16))
                     addView(label("待確認片段：${GuardEngine.pendingDeliveryCount(this@MainActivity)}\n啟用安全配對後，新待傳片段最多保留 72 小時，或提前於家長手機確認接收後移除；確認接收不代表已閱讀。到期內容不再重試。", 13f, t.textSecondary, bottomPad = 16))
-                    addView(actionButton("立即重試傳送", t.btnSecondaryBg, t.btnSecondaryText) { GuardEngine.retryPendingAlerts(this@MainActivity, force = true); dialog.dismiss() })
+                    addView(actionButton("立即重試傳送", t.btnSecondaryBg, t.btnSecondaryText) { CloudRelay.retryNow(this@MainActivity); GuardEngine.retryPendingAlerts(this@MainActivity, force = true); dialog.dismiss() })
                     addView(actionButton("檢查系統背景電池限制", t.btnSecondaryBg, t.btnSecondaryText) {
                         launchSettings(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     })
