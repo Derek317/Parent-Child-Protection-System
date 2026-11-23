@@ -3783,7 +3783,7 @@ class MainActivity : Activity() {
         val inConversation=evidenceSender!=null
         heading(evidenceSender ?: when(evidenceSection){"review"->"需要跟進";"device"->"裝置與傳送";else->"對話記錄"},
             if(inConversation)"只顯示實際擷取內容，按可確認的先後順序整理。" else "按對話對象整理。一般訊息與需要跟進的內容分開。",t)
-        if(inConversation)rootContainer.addView(textAction("返回對話列表") { evidenceSender=null;evidenceConversationKey=null;evidenceDirection="all";evidencePage=0;renderUi(animate=true) })
+        if(inConversation)backLink("返回對話列表") { evidenceSender=null;evidenceConversationKey=null;evidenceDirection="all";evidencePage=0;renderUi(animate=true) }
         else {
             val tabs=LinearLayout(this)
             for((key,title) in listOf("conversations" to "對話記錄","review" to "需要跟進","device" to "裝置與傳送")) {
@@ -4159,6 +4159,7 @@ class MainActivity : Activity() {
         }
     }
     private fun renderChildPermissions(t: ThemeColors) {
+        backLink()
         heading("每個設定，都說清楚。", "了解每項權限的用途，再前往 Android 設定確認。", t)
         rootContainer.addView(label(childDisclaimerText(),13f,t.textSecondary,bottomPad=14))
         rootContainer.addView(row("chat-circle","雙向對話記錄",childCaptureStatus(),t){showFullCaptureNotice(t)}.apply{getChildAt(0).tag="full_capture_setup"})
@@ -4319,7 +4320,7 @@ class MainActivity : Activity() {
     }
     private fun renderScoresConsent(t: ThemeColors) {
         val decide = !scoresReadOnly && RiskLocal.pendingPolicy(this)
-        rootContainer.addView(textAction("返回 / Back") { navigateTo("overview") })
+        backLink("返回 / Back")
         heading(ScoresChildCopy.CONSENT_TITLE, "", t)
         // To decide: the method the parent asks for. To read again: the one the child agreed to.
         val method = if (decide) RiskLocal.policyMethod(this) else RiskLocal.agreedMethod(this) ?: RiskLocal.policyMethod(this)
@@ -4340,6 +4341,7 @@ class MainActivity : Activity() {
     }
     private fun renderScoresChange(t: ThemeColors) {
         val kind = ScoresEngineBridge.pendingNotice(this)
+        backLink("返回 / Back")   // like system Back: leaves without acknowledging, so the notice stays on the overview
         heading(if (kind == "off") ScoresChildCopy.CHANGE_OFF_TITLE else ScoresChildCopy.CHANGE_ON_TITLE, "", t)
         rootContainer.addView(label(if (kind == "off") (if (RiskLocal.captureHeld(this)) ScoresChildCopy.CHANGE_OFF_HELD_BODY else ScoresChildCopy.CHANGE_OFF_BODY) else if (kind == "on") ScoresChildCopy.CHANGE_ON_BODY else "目前沒有新的改變。\nNothing has changed.", 15f, t.textSecondary, bottomPad = 18))
         // Only this button acknowledges the notice; leaving with Back keeps it on the overview.
@@ -4451,7 +4453,7 @@ class MainActivity : Activity() {
     }
     private fun renderParentScores(t: ThemeColors) {
         heading("對話風險分數", "分數只是一個參考訊號，不是結論。", t)
-        rootContainer.addView(textAction("返回總覽") { navigateTo("overview") })
+        backLink()
         val session = GuardEngine.captureRelaySession(this); val container = rootContainer
         val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }; container.addView(results)
         results.addView(label("正在讀取分數…", 13f, t.textMuted).apply { tag = "scores_loading" })
@@ -4648,6 +4650,7 @@ class MainActivity : Activity() {
     }
 
     private fun renderChildUnlock(t: ThemeColors) {
+        backLink()
         heading("需要一點，自己的時間。", "輸入家長提供的 6 位臨時碼，可解鎖 15 分鐘。家長主密碼可解鎖 3 分鐘。", t)
         val input = inputBox(t, "臨時解鎖碼 或 家長主密碼", "", true); rootContainer.addView(input)
         val error = label("", 13f, t.warmCoral); rootContainer.addView(error)
@@ -4675,6 +4678,7 @@ class MainActivity : Activity() {
         if (GuardEngine.isTemporarilyUnlocked(this)) rootContainer.addView(textAction("立即重新上鎖") { GuardEngine.grantTemporaryUnlock(this, 0); renderUi() })
     }
     private fun renderSettings(t: ThemeColors) {
+        if (GuardEngine.isParentMode(this) || GuardEngine.isChildMode(this)) backLink()   // no overview to go back to before a role is set
         heading("保護，照你的步調。", "把常用設定留在容易找到的地方。", t)
         sectionTitle("顯示方式", t)
         val modes = LinearLayout(this)
@@ -5052,6 +5056,9 @@ class MainActivity : Activity() {
         minimumHeight = dp(52); setPadding(dp(14), dp(12), dp(14), dp(12))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(4), 0, dp(8)) }
     }
+    /** The one back affordance at the top of a sub-page; it does exactly what system Back does there. */
+    private fun backLink(title: String = "返回總覽", onClick: () -> Unit = { navigateTo("overview") }) =
+        rootContainer.addView(textAction(title, onClick).apply { tag = "back_link" })
     private fun textAction(title: String, onClick: () -> Unit): Button = Button(this).apply {
         val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
         setTextColor(color(t.accentSeafoam)); background = ripple(t.bgCard, 10, t.accentPowderSky); minimumHeight = dp(48)

@@ -53,4 +53,65 @@ class Tier2UiTest {
         }
         GuardEngine.setBrightTheme(ctx, true)
     }
+
+    private fun backLinks(a: MainActivity) = UiSupport.all(UiSupport.current(a)).filter { it.tag == "back_link" }
+    private fun settle() = shadowOf(android.os.Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+    private fun section(a: MainActivity) = MainActivity::class.java.getDeclaredField("section").apply { isAccessible = true }.get(a) as String
+
+    @Test fun subPagesHaveOneBackLinkThatActsLikeSystemBack() {
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            UiSupport.nav(a, "settings"); settle()
+            assertEquals(1, backLinks(a).size); backLinks(a).single().performClick(); settle()
+            assertEquals("overview", section(a))
+        } finally { c.pause().stop().destroy() }
+        GuardEngine.setRole(ctx, "child")
+        val d = Robolectric.buildActivity(MainActivity::class.java).setup(); val b = d.get()
+        try {
+            for (page in listOf("permissions", "unlock", "settings")) {
+                UiSupport.nav(b, page); settle()
+                assertEquals(page, 1, backLinks(b).size); backLinks(b).single().performClick(); settle()
+                assertEquals(page, "overview", section(b))
+            }
+        } finally { d.pause().stop().destroy() }
+    }
+
+    @Test fun theChangeNoticeBackLinkLeavesTheNoticePendingLikeSystemBack() {
+        val tiny = "tiny model file for tests".toByteArray()
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(tiny).joinToString("") { "%02x".format(it) }
+        ctx.getSharedPreferences("ig_guard_scores_consent", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        RiskModelStore.directory(ctx).deleteRecursively(); RiskModelStore.memoryProbe = { 8L shl 30 }; RiskModelStore.abiProbe = { true }
+        GuardEngine.setFamilyToken(ctx, java.util.UUID.randomUUID().toString()); GuardEngine.setRole(ctx, "child")
+        val id = java.util.UUID.randomUUID().toString()
+        LocalVault.preferences(ctx).edit().putString("parent_command_public_key", FamilySecurity.newSigningIdentity().publicKey).putString("capture_policy_id", id).putString("capture_local_ack_id", id).commit()
+        RiskModelStore.expectation = RiskModelStore.Expectation(tiny.size.toLong(), sha)
+        try {
+            RiskModelStore.importModel(ctx, java.io.ByteArrayInputStream(tiny), {}, tiny.size.toLong(), sha); RiskLocal.changed(ctx)
+            RiskLocal.receivePolicy(ctx, java.util.UUID.randomUUID().toString(), true); assertTrue(RiskLocal.accept(ctx))
+            assertEquals("on", RiskLocal.pendingChangeNotice(ctx))
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+            try {
+                UiSupport.nav(a, "scores_change"); settle()
+                backLinks(a).single().performClick(); settle()
+                assertEquals("overview", section(a)); assertEquals("on", RiskLocal.pendingChangeNotice(ctx))
+            } finally { c.pause().stop().destroy() }
+        } finally {
+            RiskModelStore.abiProbe = { android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a") }
+            RiskModelStore.expectation = RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256)
+            RiskModelStore.memoryProbe = { c -> val i = android.app.ActivityManager.MemoryInfo(); c.getSystemService(android.app.ActivityManager::class.java)?.getMemoryInfo(i); i.totalMem }
+            RiskModelStore.directory(ctx).deleteRecursively()
+        }
+    }
+
+    @Test fun aLockedParentGetsNoBackLinkPastTheLock() {
+        ParentUiAuthFixture.autoApprove = false
+        try {
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+            try {
+                UiSupport.nav(a, "settings"); settle()
+                assertTrue(UiSupport.all(a.window.decorView).none { it.tag == "back_link" })
+                assertTrue(UiSupport.all(a.window.decorView).any { it.tag == "parent_privacy_lock" })
+            } finally { c.pause().stop().destroy() }
+        } finally { ParentUiAuthFixture.autoApprove = true }
+    }
 }
