@@ -2631,7 +2631,7 @@ class ParentAlertService : Service() {
                 put("reason", "tamper_attempt")
                 put("ts_ms", System.currentTimeMillis())
                 put("sender", "🚨 子女手機離線/解除安裝警告")
-                put("text", "已超過 100 分鐘未收到子女手機嘅定時心跳回報！子女可能已熄機、斷網或解除安裝 IG Guard。")
+                put("text", "已超過 100 分鐘未收到子女手機的定時心跳回報！子女可能已熄機、斷網或解除安裝 IG Guard。")
                 put("time", GuardEngine.nowDateTimeStr())
             }
             if (GuardEngine.recordParentAlert(applicationContext, missingAlert, "offline:${missingAlert.optLong("ts_ms")}")) {
