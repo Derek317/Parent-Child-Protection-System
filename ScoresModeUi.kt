@@ -335,7 +335,7 @@ internal object ScoresChildCopy {
     const val EXPORT_GUIDE_TITLE = "如何取得 Instagram 資料檔 / How to get your Instagram file"
     val EXPORT_GUIDE_STEPS = listOf(
         "在上載卡按「開啟 Instagram 匯出頁面」，選擇你的 Instagram 個人檔案。\nOn the upload card, tap \"Open Instagram's export page\", then choose your Instagram profile.",
-        "選「匯出至裝置」。\nChoose \"Export to device\".",
+        "選「匯出到裝置」。\nChoose \"Export to device\".",
         "資料：只選「訊息」。\nInformation: Messages only.",
         "日期範圍：最近一星期（第一次可選最近一個月）。\nDate range: last week (last month the first time).",
         "格式：JSON；媒體品質：低。然後開始匯出。\nFormat: JSON; media quality: Low. Then start the export.",
