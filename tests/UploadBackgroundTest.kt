@@ -32,13 +32,31 @@ class UploadBackgroundTest : UploadTestBase() {
     }
     @Test fun theLongestHeartbeatGapPlusTheJobDelayStaysInsideTheParentsLimit() {
         // Bug-review B-5: the 15-minute job may run up to about 30 minutes apart, so a 95-minute interval could reach the parent's 100 minutes.
+        // Only the job sends: Notification access is off here and no listener is connected.
         val jobSpread = 30 * 60_000L
-        var longest = 0L
-        repeat(500) { val before = System.currentTimeMillis(); longest = maxOf(longest, GuardEngine.scheduleNextRandomHeartbeat(ctx) - before) }
+        GuardEngine.cpNotifConnected = false; assertFalse(GuardEngine.isNotificationListenerEnabledStatic(ctx))
+        val longest = longestInterval()
         assertTrue("longest interval ${longest / 60_000} min", longest <= 65 * 60_000L)
         GuardEngine.setRole(ctx, "parent")
         prefs.edit().putLong("parent_last_child_hb_ms", System.currentTimeMillis() - 65 * 60_000L - jobSpread).commit()
         assertFalse("a healthy phone must not look offline", GuardEngine.isChildHeartbeatOverdue(ctx))
+    }
+    @Test fun withAConnectedNotificationListenerTheIntervalKeepsThePublished30To95Minutes() {
+        val name = android.content.ComponentName(ctx, IgNotificationListener::class.java)
+        org.robolectric.Shadows.shadowOf(ctx.getSystemService(android.app.NotificationManager::class.java)).setNotificationListenerAccessGranted(name, true)
+        GuardEngine.cpNotifConnected = true
+        try {
+            val longest = longestInterval()
+            assertTrue("longest interval ${longest / 60_000} min", longest in (65 * 60_000L + 1)..(95 * 60_000L))
+        } finally {
+            GuardEngine.cpNotifConnected = false
+            org.robolectric.Shadows.shadowOf(ctx.getSystemService(android.app.NotificationManager::class.java)).setNotificationListenerAccessGranted(name, false)
+        }
+    }
+    private fun longestInterval(): Long {
+        var longest = 0L
+        repeat(500) { val before = System.currentTimeMillis(); longest = maxOf(longest, GuardEngine.scheduleNextRandomHeartbeat(ctx) - before) }
+        return longest
     }
     @Test fun aPeriodicJobIsScheduledForAChildPhoneAndNotForOtherRoles() {
         ArchiveMaintenance.schedule(ctx)
