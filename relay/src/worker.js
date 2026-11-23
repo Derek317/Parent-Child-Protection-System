@@ -121,7 +121,7 @@ export class FamilyRoom extends DurableObject {
     let auth;
     try {
       auth = parseAuthorization(request.headers.get('Authorization'));
-      if (auth.room !== room) return json(401, 'unauthorized');
+      if (auth.room !== room || auth.v !== 1) return json(401, 'unauthorized'); // v2 rooms are not served yet
       if (request.method === 'DELETE' && auth.role !== 'parent') return json(401, 'unauthorized');
       if(auth.role === 'parent')await verifyParentAuthorization(auth, room);
     } catch { return json(401, 'unauthorized'); }
