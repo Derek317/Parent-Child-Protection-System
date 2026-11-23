@@ -929,7 +929,7 @@ object GuardEngine {
 
     /** Every notification: the app's shield glyph as small icon (the stock lock only if the drawable is missing) and the brand colour. */
     fun notificationIcon(ctx: Context): Int = ctx.resources.getIdentifier("ic_guard_shield", "drawable", ctx.packageName).takeIf { it != 0 } ?: android.R.drawable.ic_lock_idle_lock
-    val NOTIFICATION_COLOR: Int = 0xFF1F4E79.toInt()   // Harbour brand primary (accentSeafoam); the shade reads on light and dark shades
+    val NOTIFICATION_COLOR: Int = 0xFF1565C0.toInt()   // Harbour brand primary (accentSeafoam); the shade reads on light and dark shades
     fun captureScopeSummary(ctx:Context):String = "擴展擷取已啟用 · 傳入訊息" +
         (if(outgoingCaptureAllowed(ctx))"、已送出的傳出訊息" else "；不含傳出訊息") +
         (if(trustedContextAllowed(ctx))"；包含信任對象的一般脈絡" else "；不含信任對象的一般脈絡")
@@ -2901,11 +2901,11 @@ class MainActivity : Activity() {
     private fun themeColors(bright: Boolean): ThemeColors {
         return if (bright) {
             ThemeColors(
-                bgCanvas = "#F6F8FB", bgCard = "#FFFFFF", bgHero = "#EDF1F4", bgInput = "#FFFFFF",
-                bgChip = "#EDF1F4", borderSubtle = "#DDE0E3", textPrimary = "#0F2238",
-                textSecondary = "#576474", textMuted = "#576474", accentSeafoam = "#1F4E79",
-                accentPowderSky = "#1E8A8A", btnPrimaryBg = "#1F4E79", btnPrimaryText = "#FFFFFF",
-                btnSecondaryBg = "#FFFFFF", btnSecondaryText = "#1F4E79", warmHoney = "#8F5300",
+                bgCanvas = "#E2EAF3", bgCard = "#FFFFFF", bgHero = "#D5E3F3", bgInput = "#FFFFFF",
+                bgChip = "#D5E3F3", borderSubtle = "#C3D1E1", textPrimary = "#0B1B2E",
+                textSecondary = "#3D4F66", textMuted = "#3D4F66", accentSeafoam = "#1565C0",
+                accentPowderSky = "#1565C0", btnPrimaryBg = "#1565C0", btnPrimaryText = "#FFFFFF",
+                btnSecondaryBg = "#FFFFFF", btnSecondaryText = "#1565C0", warmHoney = "#8F5300",
                 warmCoral = "#B3261E", warningButtonBg = "#D9822B", warningButtonText = "#0F2238",
                 riskLow = "#17703A"
             )

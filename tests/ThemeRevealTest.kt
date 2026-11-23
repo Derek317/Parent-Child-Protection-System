@@ -70,7 +70,7 @@ class ThemeRevealTest {
         try {
             val toggle = UiSupport.all(a.window.decorView).first { it.contentDescription == "切換淺色或深色模式" }
             switch.invoke(a, true, toggle)
-            assertTrue(GuardEngine.isBrightTheme(ctx)); assertEquals("#F6F8FB", UiSupport.token(UiSupport.theme(a), "bgCanvas"))
+            assertTrue(GuardEngine.isBrightTheme(ctx)); assertEquals("#E2EAF3", UiSupport.token(UiSupport.theme(a), "bgCanvas"))
             assertNull(reveal.get(a))
             assertTrue(ViewOverlay::class.java.getDeclaredMethod("isEmpty").apply { isAccessible = true }.invoke(a.window.decorView.overlay) as Boolean)
         } finally { c.pause().stop().destroy() }

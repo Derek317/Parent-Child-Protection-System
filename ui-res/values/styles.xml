@@ -1,10 +1,10 @@
 <resources>
     <style name="GuardThemeLight" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#1F4E79</item>
+        <item name="android:colorAccent">#1565C0</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#F6F8FB</item>
+        <item name="android:windowBackground">#E2EAF3</item>
     </style>
     <style name="GuardThemeDark" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:colorAccent">#6FB6FF</item>
