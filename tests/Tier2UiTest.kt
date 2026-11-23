@@ -213,3 +213,41 @@ class Tier2UiTest {
         } finally { ParentUiAuthFixture.autoApprove = true }
     }
 }
+
+/** Tier 2 renders: every tab for both roles in both themes, a dialog, the method-choice sheet; written to build/test-screenshots/tier2-*. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], qualifiers = "w360dp-h800dp-mdpi")
+@org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+class Tier2RenderTest {
+    private val ctx get() = RuntimeEnvironment.getApplication()
+    private fun s(bright: Boolean) = if (bright) "light" else "dark"
+    @Test fun everyTabBothRolesBothThemesPlusDialogAndChoiceSheet() {
+        for (bright in listOf(true, false)) {
+            ShotSupport.parentReset(); GuardEngine.setBrightTheme(ctx, bright); ShotSupport.report()
+            for (tab in listOf("overview", "alerts", "family", "settings", "scores")) {
+                val c = ShotSupport.open(tab)
+                try { ShotSupport.shoot(c.get(), "tier2-parent-$tab-${s(bright)}", 360, 1500) } finally { c.pause().stop().destroy() }
+            }
+            var c = ShotSupport.open("family")
+            try {
+                UiSupport.all(c.get().window.decorView).first { it.tag == "scores_mode_switch" }.performClick(); shadowOf(android.os.Looper.getMainLooper()).idle()
+                UiSupport.all(ShadowDialog.getLatestDialog().window!!.decorView).single { it.tag == "scores_method_capture" }.performClick(); shadowOf(android.os.Looper.getMainLooper()).idle()
+                ShotSupport.shootDialog("tier2-sheet-method-choice-${s(bright)}", 360, 2600)
+            } finally { c.pause().stop().destroy() }
+            c = ShotSupport.open("alerts")
+            try {
+                val alert = MainActivity::class.java.getDeclaredMethod("alert", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(c.get(), true) as AlertDialog.Builder
+                alert.setTitle("永久刪除證據？").setMessage("將刪除此家庭本機記錄及收藏。圖表統計保留；操作無法復原。").setNegativeButton("取消", null).setPositiveButton("永久刪除", null).show()
+                shadowOf(android.os.Looper.getMainLooper()).idle()
+                ShotSupport.shootDialog("tier2-dialog-${s(bright)}", 360, 800)
+            } finally { c.pause().stop().destroy() }
+            ctx.deleteDatabase("family_evidence.db"); LocalVault.preferences(ctx).edit().clear().commit()
+            GuardEngine.setFamilyToken(ctx, java.util.UUID.randomUUID().toString()); GuardEngine.setRole(ctx, "child"); GuardEngine.setBrightTheme(ctx, bright)
+            for (tab in listOf("overview", "permissions", "unlock", "settings")) {
+                val d = ShotSupport.open(tab)
+                try { ShotSupport.shoot(d.get(), "tier2-child-$tab-${s(bright)}", 360, 1700) } finally { d.pause().stop().destroy() }
+            }
+        }
+        GuardEngine.setBrightTheme(ctx, true)
+    }
+}

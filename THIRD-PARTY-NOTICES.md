@@ -1,6 +1,6 @@
 # Third-party notices
 
-This file covers the third-party code and model weights that ship with IG Guard's optional AI risk analysis. Icons and fonts used by the interface are listed in [UI_ASSET_LICENSES.md](UI_ASSET_LICENSES.md).
+This file covers the third-party code and model weights that ship with IG Guard's optional AI risk analysis. Icons used by the interface are listed in [UI_ASSET_LICENSES.md](UI_ASSET_LICENSES.md).
 
 These notices were written by the developer from the licence files named below. They have not been reviewed by a lawyer.
 

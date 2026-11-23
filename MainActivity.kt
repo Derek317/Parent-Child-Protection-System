@@ -2901,10 +2901,8 @@ class MainActivity : Activity() {
             )
         }
     }
-    internal fun font(bold: Boolean = false): Typeface = fonts.getOrPut(bold) {
-        val id = resources.getIdentifier(if (bold) "manrope_semibold" else "manrope_regular", "font", packageName)
-        if (id != 0) resources.getFont(id) else Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
-    }
+    /** The system font, so Chinese and Latin text in one line come from one family (no bundled font). */
+    internal fun font(bold: Boolean = false): Typeface = fonts.getOrPut(bold) { Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL) }
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
     private fun color(s: String) = Color.parseColor(s)
     private fun background(fill: String, radius: Int = 10, border: String? = null) = GradientDrawable().apply {
@@ -4700,7 +4698,7 @@ class MainActivity : Activity() {
                 addView(actionButton("受限設定協助", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss(); openAppDetailsSettings() })
             }
         })
-        rootContainer.addView(row("info", "開放原始碼及模型授權", "字型、圖示、分析引擎及模型的來源及授權", t) {
+        rootContainer.addView(row("info", "開放原始碼及模型授權", "圖示、分析引擎及模型的來源及授權", t) {
             showSheet("開放原始碼及模型授權") { _ ->
                 val id = resources.getIdentifier("ui_asset_licenses", "raw", packageName)
                 if (id != 0) addView(label(resources.openRawResource(id).bufferedReader().use { it.readText() }, 12f, t.textSecondary))
