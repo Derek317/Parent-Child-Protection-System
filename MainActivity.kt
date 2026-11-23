@@ -1209,6 +1209,8 @@ object GuardEngine {
     /** The pairing machines of this process, held weakly: a machine nobody holds any more stops counting. */
     private val livePairings = java.util.Collections.newSetFromMap(java.util.WeakHashMap<Any, Boolean>())
     private fun live(machine: Any) = synchronized(livePairings) { livePairings.add(machine) }
+    /** Test hook: unit tests share one GuardEngine, so machines another test left mid-pairing would count here. */
+    internal fun forgetLivePairingsForTest() = synchronized(livePairings) { livePairings.clear() }
     private fun pairingInProgress(storedAlias: String?): Boolean = synchronized(livePairings) {
         livePairings.any { when (it) {
             is ParentPairing -> it.state !is ParentPairingState.Cancelled && it.state != ParentPairingState.Accepted

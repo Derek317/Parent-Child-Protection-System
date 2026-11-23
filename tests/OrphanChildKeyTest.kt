@@ -29,6 +29,7 @@ class OrphanChildKeyTest {
         prefs.edit().clear().commit(); ctx.deleteDatabase("family_evidence.db")
         TestKeyStore.privateKeys.clear(); TestKeyStore.certificates.clear()
         TestKeyStore.failEcGeneration = false; TestKeyStore.failEcSigning = false
+        GuardEngine.forgetLivePairingsForTest() // machines other tests left mid-pairing in this JVM are not this test's
         ctx.noBackupFilesDir.listFiles()?.filter { it.name.startsWith("ig_guard.") }?.forEach { it.delete() }
     }
 
