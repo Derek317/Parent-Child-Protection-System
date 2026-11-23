@@ -103,6 +103,23 @@ class Tier2UiTest {
         }
     }
 
+    private fun fill(v: View): Int = (((v.background as android.graphics.drawable.RippleDrawable).getDrawable(0) as android.graphics.drawable.StateListDrawable).current as android.graphics.drawable.GradientDrawable).color!!.defaultColor
+
+    @Test fun textActionsAreTrueTextLinksAndDeletesKeepTheDangerColour() {
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            val t = UiSupport.theme(a); val min = (48 * a.resources.displayMetrics.density).toInt()
+            UiSupport.nav(a, "alerts"); settle()
+            val links = UiSupport.all(UiSupport.current(a)).filterIsInstance<android.widget.Button>().filter { it.text.toString() in setOf("重新同步可用記錄", "刪除此家庭的全部證據") }
+            assertEquals(2, links.size)
+            for (link in links) { assertEquals(link.text.toString(), 0, android.graphics.Color.alpha(fill(link))); assertTrue(link.minimumHeight >= min) }
+            assertEquals(android.graphics.Color.parseColor(UiSupport.token(t, "warmCoral")), links.single { it.text.startsWith("刪除") }.currentTextColor)
+            assertEquals(android.graphics.Color.parseColor(UiSupport.token(t, "accentSeafoam")), links.single { it.text.startsWith("重新") }.currentTextColor)
+            links.single { it.text.startsWith("刪除") }.performClick(); idle()
+            assertTrue("the delete still asks first, with the obscured-touch guard", (ShadowDialog.getLatestDialog() as AlertDialog).getButton(AlertDialog.BUTTON_POSITIVE).filterTouchesWhenObscured)
+        } finally { c.pause().stop().destroy() }
+    }
+
     @Test fun aLockedParentGetsNoBackLinkPastTheLock() {
         ParentUiAuthFixture.autoApprove = false
         try {

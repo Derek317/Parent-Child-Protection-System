@@ -3888,7 +3888,7 @@ class MainActivity : Activity() {
             }
         }
         rootContainer.addView(textAction("重新同步可用記錄"){thread{GuardEngine.pollChannelOnce(applicationContext,since="all")};Toast.makeText(this,"正在同步；未擷取或中繼站已過期的內容無法復原。",Toast.LENGTH_LONG).show()})
-        if(!inConversation)rootContainer.addView(textAction("刪除此家庭的全部證據"){
+        if(!inConversation)rootContainer.addView(textAction("刪除此家庭的全部證據", t.warmCoral){
             alert(critical = true).setTitle("永久刪除證據？").setMessage("將刪除此家庭本機記錄及收藏。圖表統計保留；操作無法復原。")
                 .setNegativeButton("取消",null).setPositiveButton("永久刪除"){_,_->requireFreshParentAuth{GuardEngine.clearParentAlerts(this);evidencePage=0;renderUi()}}.show()
         })
@@ -3973,7 +3973,7 @@ class MainActivity : Activity() {
                 handle !in GuardEngine.getTrustedHandles(this@MainActivity) && !GuardEngine.isChildSelfHandle(this@MainActivity,handle) && !handle.contains("instagram")) {
                 addView(actionButton("加入信任好友並解除封鎖",t.btnSecondaryBg,t.btnSecondaryText) { addTrustedSender(handle);GuardEngine.syncTrustedFromParent(this@MainActivity);dialog.dismiss() })
             }
-            addView(textAction("刪除此記錄") {
+            addView(textAction("刪除此記錄", t.warmCoral) {
                 alert(critical = true).setTitle("永久刪除此記錄？").setMessage("此操作會移除本機文字及收藏，無法復原。")
                     .setNegativeButton("取消",null).setPositiveButton("刪除") { _,_ ->
                         FamilyEvidence(this@MainActivity).use{it.deleteMessage(scope,id)};dialog.dismiss();renderUi()
@@ -5058,10 +5058,11 @@ class MainActivity : Activity() {
     }
     /** The one back affordance at the top of a sub-page; it does exactly what system Back does there. */
     private fun backLink(title: String = "返回總覽", onClick: () -> Unit = { navigateTo("overview") }) =
-        rootContainer.addView(textAction(title, onClick).apply { tag = "back_link" })
-    private fun textAction(title: String, onClick: () -> Unit): Button = Button(this).apply {
+        rootContainer.addView(textAction(title, onClick = onClick).apply { tag = "back_link" })
+    /** The third button level: a text link (no fill, no border, 48 dp target). [ink] is the text colour; deletes pass the danger token so they stay as visible as before. */
+    private fun textAction(title: String, ink: String? = null, onClick: () -> Unit): Button = Button(this).apply {
         val t = currentTheme(); text = title; textSize = 13f; typeface = font(true); isAllCaps = false
-        setTextColor(color(t.accentSeafoam)); background = ripple(t.bgCard, 10, t.accentPowderSky); minimumHeight = dp(48)
+        setTextColor(color(ink ?: t.accentSeafoam)); background = ripple(TRANSPARENT_FILL, 10, t = t); minimumHeight = dp(48)
         gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(dp(12), dp(10), dp(12), dp(10)); setOnClickListener(sessionClick(onClick))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply{setMargins(0,dp(4),0,dp(6))}
     }
