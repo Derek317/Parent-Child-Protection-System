@@ -158,11 +158,11 @@ class CollectionGuideTest : UploadTestBase() {
         RiskScoringSchedule.afterImport(ctx); assertNull("not scheduled while paused", afterImportJob())
         assertEquals(RiskBatch.Outcome.INACTIVE, RiskBatch.run(ctx, { error("must not open the scorer") }, { false }).outcome)
     }
-    @Test fun theCardTellsTheChildAnalysisStartsWhenCharging() {
+    @Test fun theCardTellsTheChildAnalysisRunsWhenChargingExactlyOnceAfterAGoodImport() {
         activate(ScoresMethod.UPLOAD)
         InstagramImport.last = import(export())
         val c = launch()
-        try { assertTrue(UiSupport.texts(c.get().window.decorView).contains(ScoresChildCopy.EXPORT_CHARGING)) } finally { c.pause().stop().destroy() }
+        try { assertEquals(1, UiSupport.texts(c.get().window.decorView).count { it.contains("Analysis runs while the phone is charging.") && it.contains("分析會在手機充電時進行。") }) } finally { c.pause().stop().destroy() }
     }
     // ---------- C4: weekly reminder ----------
     private val day = 86_400_000L
