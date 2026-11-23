@@ -176,6 +176,10 @@ class QrPairingUiTest {
                 assertTrue(bare.digitsEntered((link.machine.state as CS.ShowingDigits).digits))
                 assertTrue(link.confirm()); idle()
                 save(dialog, "qr-child-waiting-parent-${suffix(bright)}")
+                val waiting = all(dialog.window!!.decorView)
+                assertTrue((waiting.single { it.tag == "child_wait_time" } as TextView).text.toString().let { it.startsWith("已等候 0:0") && (it.contains("尚餘 10:00") || it.contains("尚餘 9:5")) })
+                assertTrue((waiting.single { it.tag == "child_wait_hint" } as TextView).text.contains("家長手機可能已停止這次配對"))
+                assertTrue(waiting.filterIsInstance<Button>().any { it.text == "取消 · Cancel" && it.isShown })
                 rooms.rooms[1].deliver(bare.accept(FamilySecurity.passwordVerifier(QrPairing.PASSWORD), System.currentTimeMillis())!!.complete)
                 assertNotNull(done)
                 field(a, "childPairingStored").set(a, true); call(a, "fillChildPairing")
@@ -186,6 +190,15 @@ class QrPairingUiTest {
                 l2.join(bare.let { QrPairing.bareParent(parent).start(parent.publicKey, System.currentTimeMillis()).qrText }); l2.cancel(); idle()
                 assertNotNull(all(dialog.window!!.decorView).firstOrNull { it.tag == "child_pairing_stopped" })
                 save(dialog, "qr-child-cancelled-${suffix(bright)}")
+                // The rendezvous room retired before M2: the parent stopped (cancel or QR expiry).
+                val r3 = FakeRooms(); var l3: ChildPairingLink? = null
+                l3 = ChildPairingLink(a, { call(a, "fillChildPairing") }, {}, r3.opener)
+                field(a, "childPairing").set(a, l3)
+                l3.join(QrPairing.bareParent(parent).start(parent.publicKey, System.currentTimeMillis()).qrText); r3.rooms[0].ready()
+                r3.rooms[0].route.onRefused(410); idle()
+                assertTrue(l3.parentStopped)
+                assertTrue(all(dialog.window!!.decorView).filterIsInstance<TextView>().any { it.text.contains("家長手機已停止這次配對") })
+                save(dialog, "qr-child-parent-stopped-${suffix(bright)}")
                 assertNotNull(body)
             } finally { c.pause().stop().destroy() }
         }

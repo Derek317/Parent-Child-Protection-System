@@ -287,6 +287,36 @@ class TwoPhoneRelayTest {
         }
     }
 
+    @Test fun anExpiredQrStopsAChildThatStillWaitsForM2() {
+        var t = System.currentTimeMillis()
+        val p = Phones { t }; p.showQr()
+        t += PairingCrypto.QR_LIFETIME_MS; p.parent.tick()
+        assertEquals(PS.Cancelled(Pairing.CancelReason.EXPIRED), p.parent.machine.state)
+        // A child that scanned just before (its own clock still inside the QR's 3 minutes) finds the retired room.
+        assertTrue(p.child.join(p.qr))
+        waitUntil("the child stops") { p.child.machine.state is CS.Cancelled }
+        assertTrue("told that the parent stopped", p.child.parentStopped)
+        assertTrue(TestKeyStore.privateKeys.keys.none { it.startsWith("ig_guard.child_signing") })
+    }
+
+    @Test fun aParentCancelBeforeM2StopsTheChildAndAfterM2LeavesItWaitingVisibly() {
+        // Before M2: the child is still in the rendezvous room when the parent retires it.
+        val first = Phones(); first.showQr()
+        val before = ChildPairingLink(ctx, {}, {}, clock = { System.currentTimeMillis() }).also { c -> links += { c.cancel() } }
+        first.parent.cancel() // retires the rendezvous room
+        waitUntil("rendezvous retired") { relay.rooms.values.any { it.retired } }
+        assertTrue(before.join(first.qr))
+        waitUntil("the child stops") { before.machine.state is CS.Cancelled }
+        assertTrue(before.parentStopped)
+        // After M2: the child has left the rendezvous room; the parent's cancel cannot reach it (no unsigned cancel exists).
+        val p = Phones(); p.upToDigits()
+        assertTrue(p.child.confirm())
+        p.parent.cancel()
+        settle(3_000)
+        assertEquals(CS.AwaitingComplete, p.child.machine.state); assertFalse(p.child.parentStopped)
+        assertTrue(p.child.confirmedAt > 0L); assertNull(GuardEngine.pinnedChildKey(ctx)); assertNull(p.result)
+    }
+
     @Test fun threeWrongDigitsCancelAndPinNothing() {
         val p = Phones(); p.upToDigits()
         val token = GuardEngine.getOrCreateFamilyToken(ctx)

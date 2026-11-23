@@ -141,6 +141,10 @@ internal class ChildPairingLink(
     val machine = GuardEngine.newChildPairing(ctx) { key = it }
     /** The relay refused a pairing room (401/410): the pairing was stopped. */
     var refused = false; private set
+    /** The rendezvous room was retired while this phone still waited for M2 there: the parent phone stopped this pairing. */
+    var parentStopped = false; private set
+    /** When the child confirmed (its own clock); 0 before. The wait for M3 lasts Pairing.CONFIRM_WINDOW_MS from here. */
+    var confirmedAt = 0L; private set
     private val main = Handler(Looper.getMainLooper())
     private var socket: PairingSocket? = null
     private var hello: Outgoing? = null
@@ -168,7 +172,12 @@ internal class ChildPairingLink(
             open(ctx, CloudRelay.PairingRoute(parentKey, room.token, authorization,
                 onReady = { main.post { if (current() && !ended) hello?.let { o -> socket?.publish(o.id, o.wire) {} } } },
                 onRecord = { record -> main.post { if (current()) received(record) } },
-                onRefused = { main.post { if (current() && !ended) { refused = true; machine.cancel(); stop() } } }))
+                onRefused = { code -> main.post { if (current() && !ended) {
+                    // Retired before M2 arrived (the child is still in it): the parent cancelled or its QR expired. No signal is
+                    // needed: only the parent can retire its rendezvous room.
+                    parentStopped = code == 410 && machine.state == ChildPairingState.AwaitingReply
+                    refused = true; machine.cancel(); stop()
+                } } }))
         } catch (_: Exception) { refused = true; machine.cancel(); stop(); null }
         socket = mine
     }
@@ -193,7 +202,7 @@ internal class ChildPairingLink(
     fun confirm(): Boolean {
         val family = machine.confirm(clock()) ?: run { if (ended) stop() else onChange(); return false }
         val k = key ?: run { machine.cancel(); stop(); return false }
-        hello = null
+        hello = null; confirmedAt = clock()
         // 409 until the parent has registered the room with K: the relay client retries every 15 s.
         connect(family) { FamilyRelay.childAuthorizationV2(parentKey, family.scope, family.token, k) }
         onChange()

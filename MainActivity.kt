@@ -4071,7 +4071,9 @@ class MainActivity : Activity() {
         scannedQr = if (scanProblem == null) text else null
         fillChildPairing()
     }
-    private fun childCancelText(link: ChildPairingLink, reason: Pairing.CancelReason): String = if (link.refused) "中繼站未能完成配對，請重新配對。\nThe relay could not complete the pairing. Please pair again." else when (reason) {
+    private fun childCancelText(link: ChildPairingLink, reason: Pairing.CancelReason): String = if (link.parentStopped)
+        "家長手機已停止這次配對（已取消或 QR 碼已過期）。請在家長手機重新顯示 QR 碼，再掃描一次。\nThe parent phone stopped this pairing (cancelled, or its QR code expired). Show a new QR code on the parent phone and scan it again."
+        else if (link.refused) "中繼站未能完成配對，請重新配對。\nThe relay could not complete the pairing. Please pair again." else when (reason) {
         Pairing.CancelReason.EXPIRED -> "配對已逾時：QR 碼已過期，或家長未確認。請重新配對。\nPairing timed out: the QR code expired or the parent did not confirm. Please pair again."
         Pairing.CancelReason.BAD_MESSAGE -> "這不是有效的 IG Guard 配對碼，或配對訊息未能核實。請重新掃描家長手機上的新 QR 碼。\nNot a valid IG Guard pairing code, or a pairing message could not be verified. Scan a new QR code."
         Pairing.CancelReason.KEY_UNAVAILABLE -> "此手機未能建立配對金鑰，請稍後再試。\nThis phone could not create its pairing key. Please try later."
@@ -4084,8 +4086,14 @@ class MainActivity : Activity() {
         val link = childPairing
         // The camera grant is part of the state: a first "Allow" changes nothing else, and the scanner must appear at once.
         val phase = listOf(link?.machine?.state, link?.refused, scannedQr != null, scanProblem, cameraDenied, cameraBroken, childPairingStored,
-            checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
-        if (body.tag == phase) return
+            checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED, link?.parentStopped)
+        fun waited(): String {
+            val gone = ((System.currentTimeMillis() - (link?.confirmedAt ?: 0L)).coerceAtLeast(0L)) / 1000L
+            val left = (Pairing.CONFIRM_WINDOW_MS / 1000L - gone).coerceAtLeast(0L)
+            return "已等候 %d:%02d · 尚餘 %d:%02d\nWaited %d:%02d · %d:%02d left".format(gone / 60, gone % 60, left / 60, left % 60, gone / 60, gone % 60, left / 60, left % 60)
+        }
+        // The ticker reports every second: only the waiting time changes then.
+        if (body.tag == phase) { body.findViewWithTag<TextView>("child_wait_time")?.text = waited(); return }
         body.tag = phase
         pairingScanner?.stop(); pairingScanner = null
         body.removeAllViews()
@@ -4169,7 +4177,12 @@ class MainActivity : Activity() {
                 body.addView(actionButton("確認加入 · Confirm", t.btnPrimaryBg, t.btnPrimaryText, critical = true) { link.confirm() }.apply { tag = "child_confirm" })
                 closeButton()
             }
-            state == ChildPairingState.AwaitingComplete -> { body.addView(stateNote(Note.LOADING, "等待家長確認\nWaiting for the parent to confirm", t, cardTag = "child_waiting_parent")); closeButton() }
+            state == ChildPairingState.AwaitingComplete -> {
+                body.addView(stateNote(Note.LOADING, "等待家長確認\nWaiting for the parent to confirm", t, cardTag = "child_waiting_parent"))
+                body.addView(label(waited(), 14f, t.textPrimary, true, topPad = 8, bottomPad = 8).apply { tag = "child_wait_time" })
+                body.addView(label("家長手機可能已停止這次配對。如等候太久，可按「取消」，再掃描家長手機上的新 QR 碼。\nThe parent phone may have stopped this pairing. If this takes too long, tap Cancel and scan a new QR code on the parent phone.", 13f, t.textSecondary, bottomPad = 12).apply { tag = "child_wait_hint" })
+                closeButton()
+            }
             state == ChildPairingState.Paired -> when (childPairingStored) {
                 null -> body.addView(stateNote(Note.LOADING, "正在完成配對…\nFinishing the pairing…", t))
                 true -> {
