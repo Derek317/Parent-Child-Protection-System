@@ -362,6 +362,38 @@ class QrPairingUiTest {
         } finally { c.pause().stop().destroy() }
     }
 
+    /** Only the session the Accept itself created is granted: a session change landing before the grant still locks. */
+    @Test fun aSessionChangeBetweenAcceptAndTheGrantStillLocks() {
+        GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        fun unlocked() = MainActivity::class.java.getDeclaredMethod("parentUnlocked").apply { isAccessible = true }.invoke(a) as Boolean
+        try {
+            shadowOf(ctx.getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager).setIsDeviceSecure(true)
+            call(a, "showParentPairingSheet")
+            val dialog = sheet(a)
+            val body = all(dialog.window!!.decorView).first { it.tag == "pairing_stopped" }.parent as LinearLayout
+            val rooms = FakeRooms(); var link: ParentPairingLink? = null; var rotated = false
+            link = ParentPairingLink(a, {
+                link?.let { l ->
+                    // accept() reports ACCEPTED before returning to the Accept action: a rotation lands here, before the grant line.
+                    if (l.outcome == ParentPairingLink.Outcome.ACCEPTED && !rotated) { rotated = true; GuardEngine.setFamilyToken(ctx, java.util.UUID.randomUUID().toString(), preserveFamilyHistory = true) }
+                    call(a, "fillParentPairing", body, dialog, l, theme(a))
+                }
+            }, rooms.opener)
+            field(a, "parentPairing").set(a, link); link.begin(); rooms.rooms[0].ready()
+            val child = ChildPairing({ FamilySecurity.createChildSigningKey(ctx) }, { FamilySecurity.deleteChildSigningKey(ctx, it) }, QrPairing.palette)
+            rooms.rooms[0].deliver(child.start(link.qrText!!, "Pixel 7", System.currentTimeMillis())!!.hello)
+            assertTrue(child.onReply(rooms.rooms[0].records().single(), System.currentTimeMillis()))
+            assertTrue(link.enterDigits((child.state as CS.ShowingDigits).digits))
+            all(dialog.window!!.decorView).filterIsInstance<Button>().single { it.tag == "pairing_accept" }.performClick(); idle()
+            MainActivity::class.java.getDeclaredMethod("completeParentAuthentication", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(a, true); idle()
+            assertTrue(rotated); assertNotNull(GuardEngine.pinnedChildKey(ctx))
+            assertNotEquals("the rotation changed the session after the pairing", link.acceptedSession, GuardEngine.captureRelaySession(ctx))
+            assertFalse("the later change locks the parent", unlocked())
+            assertTrue(all(a.window.decorView).any { it.tag == "parent_privacy_lock" })
+        } finally { c.pause().stop().destroy() }
+    }
+
     @Test fun aPendingPairingCanBeCancelledAndPairedAgain() {
         GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
         prefs.edit().putString("pinned_child_key", FamilySecurity.canonicalKeyText(FamilySecurity.newSigningIdentity().publicKey))

@@ -1242,10 +1242,12 @@ object GuardEngine {
      * `ready`, so the room is registered and locked to K before (c) M3 can go out. A failed registration is retried by the outbox
      * like any record; the overview says the pairing is not complete until the child's first verified record, and after
      * [Pairing.CONFIRM_WINDOW_MS] without one [expireUnconfirmedChildPairing] unpins K. [onSent] reports M3's relay acceptance, after
-     * which the caller retires the rendezvous room (d). Null: nothing changed.
+     * which the caller retires the rendezvous room (d). Null: nothing changed. [StoredPairing.session] is the relay session this
+     * pairing created, captured under the same lock: the only session the Accept may grant (a later change still locks).
      */
-    fun completeParentPairing(ctx: Context, result: ParentPairing.Result, now: Long = System.currentTimeMillis(), onSent: ((Boolean) -> Unit)? = null): String? {
-        val eventId = synchronized(pollLock) {
+    data class StoredPairing(val eventId: String, val session: Triple<String, String, Int>)
+    fun completeParentPairing(ctx: Context, result: ParentPairing.Result, now: Long = System.currentTimeMillis(), onSent: ((Boolean) -> Unit)? = null): StoredPairing? {
+        val stored = synchronized(pollLock) {
             if (!isParentMode(ctx) || !FamilySecurity.validToken(result.token) || result.family.token != result.token) return null
             val key = FamilySecurity.canonicalKeyText(result.childKey) ?: return null
             val parentKey = parentIdentity(ctx).publicKey
@@ -1257,15 +1259,16 @@ object GuardEngine {
             for (stale in listOf(PAIRING_FAILED, PAIRING_CANCELLED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted")) editor.remove(stale)
             check(editor.commit())
             relayGeneration++; CloudRelay.disconnect()
+            val session = captureRelaySession(ctx)
             val scope = getChannelTopicForToken(result.token)
             val frames = AlertFrames.split(result.complete).mapIndexed { index, frame -> "$eventId:$index" to encryptPayload(result.token, frame.toString()) }
             FamilyEvidence(ctx).use { it.enqueueBatch(scope, frames, role = "parent", kind = "control") }
-            if (onSent != null) deliveryCallbacks[scope to eventId] = DeliveryCallback(captureRelaySession(ctx)) { ok, _ -> onSent(ok) }
+            if (onSent != null) deliveryCallbacks[scope to eventId] = DeliveryCallback(session) { ok, _ -> onSent(ok) }
             addCheckpointLog(ctx, "CP3-PAIR", "已固定子女手機金鑰，等待子女手機確認")
-            eventId
+            StoredPairing(eventId, session)
         }
         CloudRelay.connect(ctx); retryPendingAlerts(ctx)
-        return eventId
+        return stored
     }
 
     /** Parent: an accepted pairing whose child sent no verified record within 10 minutes is undone (nothing stays pinned, the queued
@@ -4037,8 +4040,9 @@ class MainActivity : Activity() {
                     requireFreshParentAuth {
                         val ok = link.accept()
                         // Owner's decision: the relay session change caused by this Accept, which the fresh authentication just
-                        // approved, does not lock the parent UI (the pattern of showCompromiseRecovery). Every other change still locks.
-                        if (ok) parentAccess.authenticated(GuardEngine.captureRelaySession(this))
+                        // approved, does not lock the parent UI (the pattern of showCompromiseRecovery). Exactly the session that
+                        // completeParentPairing created is granted, never a fresh one: any later change still locks.
+                        if (ok) link.acceptedSession?.let { parentAccess.authenticated(it) }
                         Toast.makeText(this, if (ok) "已接受，等待子女手機確認。" else "未能完成配對，原有配對沒有改變。", Toast.LENGTH_LONG).show()
                         renderUi()
                     }

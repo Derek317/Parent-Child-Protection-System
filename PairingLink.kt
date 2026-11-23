@@ -42,6 +42,8 @@ internal class ParentPairingLink(
     val machine = GuardEngine.newParentPairing(ctx)
     var relay = Relay.CONNECTING; private set
     var outcome = Outcome.NONE; private set
+    /** The relay session the stored pairing created (GuardEngine.StoredPairing.session); null unless ACCEPTED. */
+    var acceptedSession: Triple<String, String, Int>? = null; private set
     private val main = Handler(Looper.getMainLooper())
     private var socket: PairingSocket? = null
     private var start: ParentPairing.Start? = null
@@ -98,6 +100,7 @@ internal class ParentPairingLink(
         if (result == null) { if (ended) finish() else onChange(); return false }
         val token = start!!.rendezvous.token
         val stored = try { GuardEngine.completeParentPairing(ctx, result, clock()) { delivered -> if (delivered) main.post { retire(token) } } } catch (_: Exception) { null }
+        acceptedSession = stored?.session
         outcome = if (stored != null) Outcome.ACCEPTED else Outcome.NOT_STORED
         socket?.close(); socket = null
         // Nothing was stored: the rendezvous room has no further use.
