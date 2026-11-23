@@ -947,11 +947,14 @@ internal object RiskRunGuard {
 /**
  * Two persisted jobs: a periodic one that needs idle + charging, and a one-shot fallback that needs charging only and
  * becomes eligible 48 hours after the last completed run (or after the child agreed, if none has run). After a failed
- * run the fallback waits at least six hours.
+ * run the fallback waits at least six hours. A third, one-shot job ([AFTER_IMPORT_ID], charging only) follows a successful
+ * import; [sync] cancels it with the other two.
  */
 internal object RiskScoringSchedule {
     const val PRIMARY_ID = 0x49475253
     const val FALLBACK_ID = PRIMARY_ID + 1
+    /** One-shot after a successful import: charging only, no idle, so the new chats are scored at the next charge. */
+    const val AFTER_IMPORT_ID = PRIMARY_ID + 2
     const val PERIOD_MS = 6L * 3_600_000L
 
     private fun scheduler(ctx: Context) = ctx.applicationContext.getSystemService(JobScheduler::class.java)
@@ -968,7 +971,7 @@ internal object RiskScoringSchedule {
         RiskLocal.enforceWording(app)
         RiskLocal.sendIfDue(app)
         val scheduler = scheduler(app) ?: return
-        if (!RiskLocal.active(app)) { scheduler.cancel(PRIMARY_ID); scheduler.cancel(FALLBACK_ID); return }
+        if (!RiskLocal.active(app)) { scheduler.cancel(PRIMARY_ID); scheduler.cancel(FALLBACK_ID); scheduler.cancel(AFTER_IMPORT_ID); return }
         val component = ComponentName(app, RiskScoringJob::class.java)
         if (scheduler.getPendingJob(PRIMARY_ID) == null) scheduler.schedule(JobInfo.Builder(PRIMARY_ID, component)
             .setRequiresCharging(true).setRequiresDeviceIdle(true).setPeriodic(PERIOD_MS).setPersisted(true).build())
@@ -981,6 +984,14 @@ internal object RiskScoringSchedule {
         val scheduler = scheduler(app) ?: return
         scheduler.cancel(FALLBACK_ID)
         if (RiskLocal.active(app)) scheduleFallback(app, scheduler, ComponentName(app, RiskScoringJob::class.java))
+    }
+
+    /** After a successful import, while [RiskLocal.active]: replaces any pending one-shot. The run itself checks the same gates again. */
+    fun afterImport(ctx: Context) {
+        val app = ctx.applicationContext
+        val scheduler = scheduler(app) ?: return
+        if (!RiskLocal.active(app)) { scheduler.cancel(AFTER_IMPORT_ID); return }
+        scheduler.schedule(JobInfo.Builder(AFTER_IMPORT_ID, ComponentName(app, RiskScoringJob::class.java)).setRequiresCharging(true).setPersisted(true).build())
     }
 
     private fun scheduleFallback(app: Context, scheduler: JobScheduler, component: ComponentName) {
@@ -1017,7 +1028,7 @@ class RiskScoringJob : JobService() {
 
     override fun onStopJob(params: JobParameters): Boolean {
         if (params.jobId == ownedJob) { stoppedBySystem = true; RiskRunGuard.requestStop(params.jobId) }
-        return params.jobId == RiskScoringSchedule.FALLBACK_ID
+        return params.jobId == RiskScoringSchedule.FALLBACK_ID || params.jobId == RiskScoringSchedule.AFTER_IMPORT_ID
     }
 
     override fun onDestroy() {

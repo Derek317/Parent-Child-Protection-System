@@ -405,6 +405,7 @@ internal object InstagramImport {
             try { RiskScoringSchedule.sync(app) } catch (_: RuntimeException) {}
             // One-to-one chats with readable times, none recent: the file is too old, not empty (bug-review B-2).
             if (conversations == 0 && parsed.conversations.any { c -> c.messages.any { it.ts != null } }) return ImportSummary(ImportResult.TOO_OLD, 0, parsed.groups, stored)
+            if (conversations > 0) try { RiskScoringSchedule.afterImport(app) } catch (_: RuntimeException) {}
             ImportSummary(ImportResult.OK, conversations, parsed.groups, stored)
         } catch (_: Exception) {
             ImportSummary(ImportResult.IO_ERROR)

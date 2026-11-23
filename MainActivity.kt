@@ -4263,6 +4263,7 @@ class MainActivity : Activity() {
             val good = r.result == ImportResult.OK && r.conversations > 0
             card.addView(iconLine(if (good) "check-circle" else "shield-warning", if (good) t.accentSeafoam else t.warmCoral, title, t, 15f, "scores_export_result"))
             card.addView(label(body, 13f, t.textSecondary, bottomPad = 6))
+            if (good) card.addView(label(ScoresChildCopy.EXPORT_CHARGING, 13f, t.textPrimary, true, bottomPad = 6).apply { tag = "scores_export_charging" })
             card.addView(actionButton(ScoresChildCopy.OK_DISMISS, t.btnSecondaryBg, t.btnSecondaryText) { InstagramImport.dismiss(); renderUi() }.apply { tag = "scores_export_dismiss" })
         }
         card.addView(label(ScoresChildCopy.EXPORT_GUIDE_TITLE, 14f, t.textPrimary, true, topPad = 8, bottomPad = 6).apply { tag = "scores_export_guide" })

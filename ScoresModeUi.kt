@@ -350,6 +350,7 @@ internal object ScoresChildCopy {
     val DOWNLOADS_URI: Uri = android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
     fun exportPicker(): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
         .putExtra(Intent.EXTRA_MIME_TYPES, EXPORT_MIME_TYPES).putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, DOWNLOADS_URI)
+    const val EXPORT_CHARGING = "分析會在這部手機充電時開始。\nAnalysis starts when this phone is charging."
     const val EXPORT_RUNNING = "正在讀取檔案…\nReading the file…"
     const val EXPORT_PICKER_MISSING = "找不到檔案選擇器。\nNo file picker is available."
     /** Title and body for the outcome of an import; every failure says that nothing was stored. */

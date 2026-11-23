@@ -83,6 +83,53 @@ class CollectionGuideTest : UploadTestBase() {
             }
         } finally { c.pause().stop().destroy() }
     }
+    // ---------- C3: prompt analysis after an import ----------
+    private val scheduler get() = ctx.getSystemService(android.app.job.JobScheduler::class.java)
+    private fun afterImportJob() = scheduler.allPendingJobs.singleOrNull { it.id == RiskScoringSchedule.AFTER_IMPORT_ID }
+    /** One invented one-to-one chat, [hoursAgo] old, as Instagram's JSON. */
+    private fun export(hoursAgo: Long = 2): ByteArray {
+        val at = System.currentTimeMillis() - hoursAgo * 3_600_000L
+        return org.json.JSONObject().put("participants", org.json.JSONArray().put(org.json.JSONObject().put("name", "Bea Friend")).put(org.json.JSONObject().put("name", "alex_teen")))
+            .put("messages", org.json.JSONArray().put(org.json.JSONObject().put("sender_name", "Bea Friend").put("timestamp_ms", at).put("content", "invented test words")))
+            .toString().toByteArray()
+    }
+    private fun import(bytes: ByteArray) = InstagramImport.run(ctx, java.io.ByteArrayInputStream(bytes), "message_1.json")
+
+    @Test fun aSuccessfulImportSchedulesAOneShotRunThatNeedsChargingButNotIdle() {
+        activate(ScoresMethod.UPLOAD)
+        assertNull(afterImportJob())
+        assertEquals(ImportResult.OK, import(export()).result)
+        val job = afterImportJob()!!
+        assertTrue(job.isRequireCharging); assertFalse(job.isRequireDeviceIdle); assertFalse(job.isPeriodic); assertTrue(job.isPersisted)
+        assertEquals("app.family.igguard.RiskScoringJob", job.service.className)
+        // The periodic idle job stays as it was: the Terms promise "only while charging" holds for all three.
+        assertTrue(scheduler.allPendingJobs.filter { it.service.className.endsWith("RiskScoringJob") }.all { it.isRequireCharging })
+    }
+    @Test fun aFailedOrTooOldImportSchedulesNothing() {
+        activate(ScoresMethod.UPLOAD)
+        assertNotEquals(ImportResult.OK, import("not an export".toByteArray()).result)
+        assertEquals(ImportResult.TOO_OLD, import(export(hoursAgo = 20 * 24)).result)
+        assertNull(afterImportJob())
+    }
+    @Test fun pauseWithdrawalAndSwitchOffCancelItWhereTheOtherJobsAreCancelled() {
+        activate(ScoresMethod.UPLOAD); import(export()); assertNotNull(afterImportJob())
+        assertTrue(RiskLocal.pause(ctx)); assertNull("paused", afterImportJob())
+        assertTrue(RiskLocal.resume(ctx)); import(export(hoursAgo = 3)); assertNotNull(afterImportJob())
+        assertTrue(RiskLocal.withdraw(ctx)); assertNull("withdrawn", afterImportJob())
+        assertTrue(scheduler.allPendingJobs.none { it.service.className.endsWith("RiskScoringJob") })
+    }
+    @Test fun aRunOfThatJobRespectsTheSamePauseCheck() {
+        activate(ScoresMethod.UPLOAD); import(export())
+        assertTrue(RiskLocal.pause(ctx))
+        RiskScoringSchedule.afterImport(ctx); assertNull("not scheduled while paused", afterImportJob())
+        assertEquals(RiskBatch.Outcome.INACTIVE, RiskBatch.run(ctx, { error("must not open the scorer") }, { false }).outcome)
+    }
+    @Test fun theCardTellsTheChildAnalysisStartsWhenCharging() {
+        activate(ScoresMethod.UPLOAD)
+        InstagramImport.last = import(export())
+        val c = launch()
+        try { assertTrue(UiSupport.texts(c.get().window.decorView).contains(ScoresChildCopy.EXPORT_CHARGING)) } finally { c.pause().stop().destroy() }
+    }
     @Test fun onlyHttpsLinksCanBeOpened() {
         try { InstagramExportLink.intent("http://accountscenter.instagram.com/"); fail("plain http must be refused") } catch (_: IllegalArgumentException) {}
     }
