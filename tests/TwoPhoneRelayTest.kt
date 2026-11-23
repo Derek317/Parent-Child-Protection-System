@@ -49,6 +49,8 @@ internal class FakeRelay : Dispatcher() {
     val rooms = HashMap<String, Room>()
     /** "role:status" of every refused connection, in order. */
     val refusals = mutableListOf<String>()
+    /** Test switch: publishes are recorded but never answered or stored (a relay that does not take M3). */
+    @Volatile var holdPublishes = false
     val url: String get() = server.url("/").toString()
     @Synchronized fun room(name: String) = rooms.getOrPut(name) { Room() }
 
@@ -123,6 +125,7 @@ internal class FakeRelay : Dispatcher() {
             val p = JSONObject(text)
             when (p.optString("type")) {
                 "publish" -> {
+                    if (holdPublishes) { room.published += role to p.getString("id"); return }
                     // worker.js:257-304: key = target prefix + rank + sha256(id); control is always buffered, other kinds go
                     // straight to an online peer.
                     val target = peer(role)
@@ -317,6 +320,31 @@ class TwoPhoneRelayTest {
         assertEquals(CS.AwaitingComplete, p.child.machine.state); assertFalse(p.child.parentStopped)
         assertTrue(p.child.confirmedAt > 0L); assertNull(GuardEngine.pinnedChildKey(ctx)); assertNull(p.result)
     }
+
+    /** The rendezvous room is retired at Accept itself, not only after M3 reached the relay. */
+    @Test fun acceptRetiresTheRendezvousRoomEvenIfM3NeverReachesTheRelay() {
+        val p = Phones(); p.upToDigits()
+        val rendezvous = p.rendezvousRoom()
+        relay.holdPublishes = true
+        assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
+        waitUntil("rendezvous retired at Accept") { rendezvous.retired }
+        waitUntil("its token is forgotten once retired") { rendezvousTokens().isEmpty() }
+    }
+
+    /** A process death mid-pairing: the remembered rendezvous token lets the next app start retire the room. */
+    @Test fun aRendezvousRoomLeftByAProcessDeathIsRetiredAtTheNextStart() {
+        val p = Phones(); p.showQr()
+        val secret = PairingCrypto.parsePairingQr(p.qr, System.currentTimeMillis())!!.secret
+        val room = roomOf(secret)
+        assertEquals(setOf(secret), rendezvousTokens())
+        // The process "dies": its pairing machine is gone, nothing was retired.
+        GuardEngine.forgetLivePairingsForTest()
+        assertFalse(room.retired)
+        GuardEngine.retireLeftoverRendezvous(ctx)
+        waitUntil("retired at the next start") { room.retired }
+        waitUntil("token forgotten") { rendezvousTokens().isEmpty() }
+    }
+    private fun rendezvousTokens() = prefs.getStringSet("pairing_rendezvous_tokens", emptySet()).orEmpty()
 
     @Test fun threeWrongDigitsCancelAndPinNothing() {
         val p = Phones(); p.upToDigits()

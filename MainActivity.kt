@@ -1224,6 +1224,28 @@ object GuardEngine {
      * died mid-pairing). Never the stored alias; the parent identity has another alias pattern. Skipped while a pairing machine of
      * this process is running (both are main-thread only, so none can start meanwhile). Never throws.
      */
+    /** Parent: the token S of each QR shown here whose rendezvous room the relay has not yet confirmed retired. It is that room's
+     *  credential, so it is kept only until then, in the same encrypted preferences as the other pairing state. */
+    private const val RENDEZVOUS_TOKENS = "pairing_rendezvous_tokens"
+    fun rememberRendezvous(ctx: Context, token: String) = synchronized(pollLock) {
+        check(prefs(ctx).edit().putStringSet(RENDEZVOUS_TOKENS, prefs(ctx).getStringSet(RENDEZVOUS_TOKENS, emptySet()).orEmpty() + token).commit())
+    }
+    fun forgetRendezvous(ctx: Context, token: String) = synchronized(pollLock) {
+        check(prefs(ctx).edit().putStringSet(RENDEZVOUS_TOKENS, prefs(ctx).getStringSet(RENDEZVOUS_TOKENS, emptySet()).orEmpty() - token).commit())
+    }
+    /** App start: retire rendezvous rooms a process death left alive (best effort, never throws; skipped while a pairing runs).
+     *  A phone that is no longer a parent cannot prove it owns them: their tokens are dropped and the rooms expire at the relay. */
+    fun retireLeftoverRendezvous(ctx: Context) {
+        try {
+            val tokens = synchronized(pollLock) {
+                if (pairingInProgress(prefs(ctx).getString(CHILD_KEY_ALIAS, null))) return
+                val stored = prefs(ctx).getStringSet(RENDEZVOUS_TOKENS, emptySet()).orEmpty().toList()
+                if (!isParentMode(ctx)) { if (stored.isNotEmpty()) check(prefs(ctx).edit().remove(RENDEZVOUS_TOKENS).commit()); return }
+                stored
+            }
+            for (token in tokens) CloudRelay.retirePairingRoom(ctx, token) { ok, _ -> if (ok) forgetRendezvous(ctx, token) }
+        } catch (_: Exception) {}
+    }
     fun removeOrphanedChildKeys(ctx: Context) {
         try {
             synchronized(pollLock) {
@@ -3275,7 +3297,7 @@ class MainActivity : Activity() {
         // App start on a child phone: install the model included in the app, if there is one and it is missing. Not on a recreation.
         if (savedInstanceState == null) try { BundledModel.maybeAutoInstall(this) } catch (_: RuntimeException) {}
         // App start in every role: child keys left by a pairing that never finished (best effort, never throws).
-        if (savedInstanceState == null) GuardEngine.removeOrphanedChildKeys(this)
+        if (savedInstanceState == null) { GuardEngine.removeOrphanedChildKeys(this); GuardEngine.retireLeftoverRendezvous(this) }
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         try {
             LocalVault.preferences(this).all

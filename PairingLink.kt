@@ -58,6 +58,7 @@ internal class ParentPairingLink(
     fun begin() {
         val s = machine.start(GuardEngine.relayPublicKey(ctx), clock())
         start = s
+        GuardEngine.rememberRendezvous(ctx, s.rendezvous.token)
         val token = s.rendezvous.token
         // As on the child: callbacks of a connection that is no longer this link's socket are ignored.
         var mine: PairingSocket? = null
@@ -99,12 +100,13 @@ internal class ParentPairingLink(
         val result = machine.accept(GuardEngine.parentPasswordVerifier(ctx), clock())
         if (result == null) { if (ended) finish() else onChange(); return false }
         val token = start!!.rendezvous.token
-        val stored = try { GuardEngine.completeParentPairing(ctx, result, clock()) { delivered -> if (delivered) main.post { retire(token) } } } catch (_: Exception) { null }
+        val stored = try { GuardEngine.completeParentPairing(ctx, result, clock()) } catch (_: Exception) { null }
         acceptedSession = stored?.session
         outcome = if (stored != null) Outcome.ACCEPTED else Outcome.NOT_STORED
         socket?.close(); socket = null
-        // Nothing was stored: the rendezvous room has no further use.
-        if (stored == null) retire(token)
+        // Stored or not, the rendezvous room has no further use: the child left it when it accepted M2, which it did before it could
+        // show the digits the parent just typed, and M3 travels in the new family room.
+        retire(token)
         main.removeCallbacks(ticker)
         onChange()
         return stored != null
@@ -123,11 +125,12 @@ internal class ParentPairingLink(
         start?.let { retire(it.rendezvous.token) }
         onChange()
     }
-    /** Retires the rendezvous room once (cancel, expiry, or after M3 was accepted by the relay). */
+    /** Retires the rendezvous room once (cancel, expiry, accept). Until the relay confirms, its token stays remembered so a process
+     *  death cannot leave the room alive: the next app start retires it (GuardEngine.retireLeftoverRendezvous). */
     private fun retire(token: String) {
         if (retired) return
         retired = true
-        try { CloudRelay.retirePairingRoom(ctx, token) { _, _ -> } } catch (_: Exception) {}
+        try { CloudRelay.retirePairingRoom(ctx, token) { ok, _ -> if (ok) GuardEngine.forgetRendezvous(ctx, token) } } catch (_: Exception) {}
     }
 }
 
