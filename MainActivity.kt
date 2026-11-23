@@ -2701,6 +2701,9 @@ class ParentAlertService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
+/** Fill for controls that draw only a ripple (the nav tabs sit on the bar's own highlight). */
+private const val TRANSPARENT_FILL = "#00000000"
+
 // Native family UI. Monitoring, cryptography and pairing remain in the existing engine.
 class MainActivity : Activity() {
     private val parentAccess = ParentAccessSession()
@@ -2929,7 +2932,7 @@ class MainActivity : Activity() {
     }
     private fun ripple(fill: String, radius: Int = 10, border: String? = null): RippleDrawable {
         val t=currentTheme();val feedback=color(if(fill==t.btnPrimaryBg)t.btnPrimaryText else t.accentSeafoam)
-        return RippleDrawable(ColorStateList.valueOf((feedback and 0x00ffffff) or 0x24000000), focusSurface(fill,radius,border), background("#FFFFFF", radius))
+        return RippleDrawable(ColorStateList.valueOf((feedback and 0x00ffffff) or 0x24000000), focusSurface(fill,radius,border), background(t.bgCard, radius)) // mask: only its shape counts
     }
     /** Starts [animator], or returns null when the system "remove animations" setting is on: the caller then places the final state itself. */
     private fun motion(animator: ValueAnimator, ms: Long): ValueAnimator? =
@@ -3405,7 +3408,7 @@ class MainActivity : Activity() {
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).also { it.color = color(t.bgChip) }
             override fun draw(canvas: Canvas) {
                 canvas.drawColor(color(t.bgCard))
-                tab?.let { canvas.drawRoundRect(x, it.top.toFloat(), x + it.width, it.bottom.toFloat(), dp(8).toFloat(), dp(8).toFloat(), paint) }
+                tab?.let { canvas.drawRoundRect(x, it.top.toFloat(), x + it.width, it.bottom.toFloat(), dp(10).toFloat(), dp(10).toFloat(), paint) }
             }
             override fun setAlpha(alpha: Int) {}
             override fun setColorFilter(colorFilter: ColorFilter?) {}
@@ -3418,7 +3421,7 @@ class MainActivity : Activity() {
             val selected = section == destination || (destination == "overview" && section in setOf("scores", "scores_consent", "scores_change"))
             val tab = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; minimumHeight = dp(56)
-                background = ripple("#00000000", 8)
+                background = ripple(TRANSPARENT_FILL, 10)
                 isClickable = true; isFocusable = true; isSelected = selected; contentDescription = title
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 setOnClickListener { if (section != destination) navigateTo(destination) }
@@ -3481,7 +3484,7 @@ class MainActivity : Activity() {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(16), dp(20), dp(16), dp(20)); minimumHeight = dp(100)
-                background = ripple(if (selected) t.bgChip else t.bgCard, 12, if (selected) t.accentSeafoam else t.accentPowderSky)
+                background = ripple(if (selected) t.bgChip else t.bgCard, 14, if (selected) t.accentSeafoam else t.accentPowderSky)
                 isClickable = true; isFocusable = true; isSelected = selected
                 contentDescription = "$title。$description"
                 tag = "entry_$role"; setOnClickListener { selectEntryRole(role) }
@@ -3583,7 +3586,7 @@ class MainActivity : Activity() {
             tabs.addView(Button(this).apply {
                 text = title; textSize = 13f; typeface = font(chartMode == mode); isAllCaps = false
                 setTextColor(color(if (chartMode == mode) t.accentSeafoam else t.textMuted))
-                background = ripple(if (chartMode == mode) t.bgChip else t.bgCard, 7, t.accentPowderSky)
+                background = ripple(if (chartMode == mode) t.bgChip else t.bgCard, 10, t.accentPowderSky)
                 minimumHeight = dp(48); isSelected = chartMode == mode
                 setOnClickListener { chartMode = mode; renderUi(animate = true) }
             }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -3767,7 +3770,7 @@ class MainActivity : Activity() {
                 tabs.addView(Button(this).apply {
                     text=title;textSize=12f;isAllCaps=false;minimumHeight=dp(48);typeface=font(evidenceSection==key)
                     setTextColor(color(if(evidenceSection==key)t.btnPrimaryText else t.textSecondary))
-                    background=ripple(if(evidenceSection==key)t.btnPrimaryBg else t.bgCanvas,7)
+                    background=ripple(if(evidenceSection==key)t.btnPrimaryBg else t.bgCanvas,10)
                     isSelected=evidenceSection==key
                     setOnClickListener(sessionClick{evidenceSection=key;evidencePage=0;alertFilter="all";evidenceDirection="all";renderUi(animate=true)})
                 },LinearLayout.LayoutParams(0,-2,1f))
@@ -3874,8 +3877,8 @@ class MainActivity : Activity() {
         val outgoing=message.optString("direction")=="outgoing"
         val holder=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;setPadding(0,dp(5),0,dp(5))}
         val bubble=LinearLayout(this).apply {
-            orientation=LinearLayout.VERTICAL;minimumHeight=dp(64);setPadding(dp(14),dp(13),dp(14),dp(13))
-            background=ripple(if(outgoing)t.bgHero else t.bgCard,12,t.borderSubtle)
+            orientation=LinearLayout.VERTICAL;minimumHeight=dp(64);setPadding(dp(14),dp(12),dp(14),dp(12))
+            background=ripple(if(outgoing)t.bgHero else t.bgCard,14,t.borderSubtle)
             isClickable=true;isFocusable=true;tag="evidence_${message.optString("_id")}"
             describeAsControl()
             setOnClickListener(sessionClick{showAlertDetails(message,t)})
@@ -4257,7 +4260,7 @@ class MainActivity : Activity() {
             card.addView(label(body, 13f, t.textSecondary, bottomPad = 6))
             card.addView(actionButton(ScoresChildCopy.OK_DISMISS, t.btnSecondaryBg, t.btnSecondaryText) { InstagramImport.dismiss(); renderUi() }.apply { tag = "scores_export_dismiss" })
         }
-        card.addView(row("plus", ScoresChildCopy.IMPORT_EXPORT_ROW, ScoresChildCopy.IMPORT_EXPORT_DESC, t) { pickExportFile() }.apply { getChildAt(0).tag = "scores_export_row" })
+        card.addView(row("plus", ScoresChildCopy.IMPORT_EXPORT_ROW, ScoresChildCopy.IMPORT_EXPORT_DESC, t, fill = t.bgCard) { pickExportFile() }.apply { getChildAt(0).tag = "scores_export_row" })
     }
     private fun pickExportFile() {
         try { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), exportPickRequest) }
@@ -4465,7 +4468,7 @@ class MainActivity : Activity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(72)
             setPadding(dp(14), dp(12), dp(14), dp(12)); tag = "score_row"
-            background = background(t.bgCard, 12, t.borderSubtle)
+            background = background(t.bgCard, 14, t.borderSubtle)
             isFocusable = true; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
             contentDescription = ScoresUi.rowDescription(row)
             layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, 0, 0, dp(8)) }
@@ -4491,7 +4494,7 @@ class MainActivity : Activity() {
         val why = if (!on && !can) ScoresUi.enableBlockedWhy(state) else ""
         val line = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(74); setPadding(dp(14), dp(14), dp(14), dp(14)); tag = "scores_mode_switch"
-            background = ripple(t.bgCard, 12, t.borderSubtle); isEnabled = usable; isFocusable = true
+            background = ripple(t.bgCard, 14, t.borderSubtle); isEnabled = usable; isFocusable = true
             contentDescription = "僅分數模式。${if (on) "已開啟" else "未開啟"}。$status。$why"
             accessibilityDelegate = object : View.AccessibilityDelegate() {
                 override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
@@ -4903,7 +4906,7 @@ class MainActivity : Activity() {
         if(!parentUnlocked()){renderParentLock();return}
         activeSheet?.dismiss()
         val t = currentTheme(); val dialog = Dialog(this)
-        val wrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = background(t.bgCard, 18); setPadding(dp(24), dp(10), dp(24), dp(24)) }
+        val wrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = background(t.bgCard, 14); setPadding(dp(24), dp(10), dp(24), dp(24)) }
         val handle = View(this).apply { background = background(t.borderSubtle, 3) }
         wrap.addView(handle, LinearLayout.LayoutParams(dp(32), dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; setMargins(0, 0, 0, dp(14)) })
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -4940,11 +4943,12 @@ class MainActivity : Activity() {
         setPadding(dp(18), dp(18), dp(18), dp(18))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(12), 0, dp(12)) }
     }
-    private fun row(glyph: String, title: String, description: String, t: ThemeColors, tint: String = t.textPrimary, onClick: () -> Unit): LinearLayout {
+    /** [fill] is the surface the row sits on (the page by default, [ThemeColors.bgCard] inside a card). */
+    private fun row(glyph: String, title: String, description: String, t: ThemeColors, tint: String = t.textPrimary, fill: String = t.bgCanvas, onClick: () -> Unit): LinearLayout {
         val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val line = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(74); setPadding(0, dp(14), 0, dp(14))
-            isClickable = true; isFocusable = true; background = ripple(t.bgCanvas, 8)
+            isClickable = true; isFocusable = true; background = ripple(fill, 10)
             contentDescription = "$title。$description"; setOnClickListener(sessionClick(onClick))
             describeAsControl()
         }
@@ -4962,7 +4966,7 @@ class MainActivity : Activity() {
     }
     private fun inputBox(t: ThemeColors, hintText: String, initialValue: String, isPassword: Boolean = false, remember: Boolean = true): EditText = EditText(this).apply {
         hint = hintText; contentDescription = hintText; textSize = 15f; typeface = font()
-        setTextColor(color(t.textPrimary)); setHintTextColor(color(t.textMuted)); background = focusSurface(t.bgInput, 8, t.accentPowderSky)
+        setTextColor(color(t.textPrimary)); setHintTextColor(color(t.textMuted)); background = focusSurface(t.bgInput, 10, t.accentPowderSky)
         inputType = if (isPassword) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_CLASS_TEXT
         if (isPassword) inputDrafts.remove(hintText)
         setText(if (remember && !isPassword) inputDrafts[hintText] ?: initialValue else initialValue)
