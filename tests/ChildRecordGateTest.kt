@@ -170,6 +170,7 @@ class ChildRecordGateTest {
 
     /** Remote reset of a pinned child: once the relay holds it, K is unpinned and nothing later "from" that child is taken. */
     @Test fun aRemoteResetOfAVerifiedChildUnpinsItAndRefusesEveryLaterRecordUntilANewQrPairing() {
+        prefs.edit().putBoolean("family_qr_only", true).commit() // written with T1 by completeParentPairing; pin() alone skips that
         assertEquals(RelayConsumption.CONSUMED, deliver(signed(heartbeat())))
         assertEquals(GuardEngine.ChildTrust.VERIFIED, GuardEngine.childTrust(ctx)); assertTrue(GuardEngine.hasChildHeartbeat(ctx))
         val familyToken = token

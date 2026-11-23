@@ -269,6 +269,11 @@ object GuardEngine {
     // signed. Parent: K pinned (canonical text), when the accept happened (until the child's first verified record), a failed
     // pairing marker, the replay state of the child's control records, the last tamper notice time and a count of quiet drops.
     private const val CHILD_KEY_ALIAS = "child_signing_alias"
+    // Sticky facts (never cleared by unpinning or by the UI marks below). Parent: this family's token came from a QR pairing, or the
+    // family was created by this version, which pairs only by QR: no unsigned 5.2 child record is ever taken on it. Child: this
+    // pairing came from a QR: no record ever leaves unsigned.
+    private const val FAMILY_QR_ONLY = "family_qr_only"
+    private const val CHILD_QR_PAIRED = "child_qr_paired"
     private const val PINNED_CHILD_KEY = "pinned_child_key"
     private const val PAIRING_PENDING_MS = "child_pairing_pending_ms"
     private const val PAIRING_FAILED = "child_pairing_failed"
@@ -576,6 +581,10 @@ object GuardEngine {
     fun childKeyAlias(ctx:Context):String? = prefs(ctx).getString(CHILD_KEY_ALIAS,null)?.takeIf{isChildMode(ctx)}
     /** Parent: the child key pinned by a QR pairing; null for a 5.2 pairing, shown as not verified. */
     fun pinnedChildKey(ctx:Context):String? = prefs(ctx).getString(PINNED_CHILD_KEY,null)?.takeIf{isParentMode(ctx)}
+    /** Parent: no unsigned 5.2 child record is ever taken on this family (sticky; see FAMILY_QR_ONLY). */
+    fun familyQrOnly(ctx:Context):Boolean = prefs(ctx).getBoolean(FAMILY_QR_ONLY,false)
+    /** Child: this pairing came from a QR, so every record leaves signed with K or not at all (sticky; see CHILD_QR_PAIRED). */
+    fun childQrPaired(ctx:Context):Boolean = isChildMode(ctx) && prefs(ctx).getBoolean(CHILD_QR_PAIRED,false)
     /** Parent: accepted on this phone, waiting for the child's first verified record (design 2.5 P7). */
     fun childPairingPending(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getLong(PAIRING_PENDING_MS,0L)>0L
     /** Parent: the last QR pairing was rolled back because the child never confirmed within 10 minutes. */
@@ -599,7 +608,8 @@ object GuardEngine {
     /** Child after a QR pairing: [recordText] (built exactly as 5.2 does, without the receipt flag) wrapped and signed with K
      *  (design 3.2); null for a 5.2 pairing, which keeps the unsigned format. A key that cannot be used throws: never a fallback. */
     private fun signedForParent(ctx:Context,recordText:String,id:String,receiptRequested:Boolean?):JSONObject? {
-        val alias=childKeyAlias(ctx) ?: return null
+        // A QR pairing never falls back to the unsigned 5.2 format: without a usable K nothing leaves (the caller's error path).
+        val alias=childKeyAlias(ctx) ?: if(childQrPaired(ctx))throw SecurityException("Child signing key alias is missing") else return null
         val key=FamilySecurity.loadChildSigningKey(ctx,alias)
         return ChildRecords.wrapForParent(recordText,id,prefs(ctx).getString("parent_command_public_key","").orEmpty(),key.publicKey,{FamilySecurity.signChildBytes(it,key.alias)},receiptRequested)
     }
@@ -797,7 +807,7 @@ object GuardEngine {
         val identity=FamilySecurity.SigningIdentity(change.getString("signing_ref"),change.getString("public_key"))
         FamilyEvidence(ctx).use{it.discardPending(getChannelTopicForToken(old))}
         FamilySecurity.activateParentIdentity(ctx,identity)
-        val editor=prefs(ctx).edit().putString("family_uuid_token",fresh).putString("parent_signing_public",identity.publicKey)
+        val editor=prefs(ctx).edit().putString("family_uuid_token",fresh).putString("parent_signing_public",identity.publicKey).putBoolean(FAMILY_QR_ONLY,true)
         for(key in listOf("parent_signing_private","pending_rotation_json","evidence_transition_json","control_state_json","last_control_ts_ms",
             "capture_policy_id","capture_local_ack_id","capture_child_ack_id","capture_sequence","parent_master_password","parent_share_verifier",
             "parent_password_verifier","parent_command_public_key","trusted_csv","flagged_offenders_csv","child_self_handle","sent_setup_ok",
@@ -919,7 +929,7 @@ object GuardEngine {
         for (key in listOf("family_uuid_token", "parent_command_public_key", "parent_password_verifier", "control_state_json", "last_control_ts_ms",
             "pending_rotation_json", "capture_policy_id", "capture_local_ack_id", "capture_child_ack_id", "capture_sequence",
             "trusted_csv", "flagged_offenders_csv", "child_self_handle", "sent_setup_ok", "next_heartbeat_at_ms",
-            "synced_15m_code", "synced_15m_exp", "synced_15m_rt", "synced_15m_start_rt", "synced_15m_boot")) editor.remove(key)
+            "synced_15m_code", "synced_15m_exp", "synced_15m_rt", "synced_15m_start_rt", "synced_15m_boot", CHILD_QR_PAIRED)) editor.remove(key)
         check(editor.commit())
         forgetChildKey(ctx)
         relayGeneration++
@@ -955,7 +965,7 @@ object GuardEngine {
     }
     private fun wipeParentSecrets(ctx: Context): Boolean = try {
         check(prefs(ctx).edit().remove("parent_master_password").remove("parent_share_verifier")
-            .remove("parent_signing_public").remove("parent_signing_private").commit())
+            .remove("parent_signing_public").remove("parent_signing_private").remove(FAMILY_QR_ONLY).commit())
         FamilySecurity.deleteParentIdentity(ctx)
         identityCache = null
         true
@@ -967,7 +977,7 @@ object GuardEngine {
             if (previous != role) {relayGeneration++;CloudRelay.disconnect()}
             prefs(ctx).edit().putString("role", role).apply()
             // Leaving the child role (including a remote reset) ends scores-only mode and deletes the scoring store.
-            if (previous == "child" && role != "child") { RiskLocal.resetFamily(ctx); forgetChildKey(ctx) }
+            if (previous == "child" && role != "child") { RiskLocal.resetFamily(ctx); forgetChildKey(ctx); prefs(ctx).edit().remove(CHILD_QR_PAIRED).apply() }
         }
         syncChildComponents(ctx)
         // The child role was set or confirmed: install the model included in the app, if any (no-op everywhere else).
@@ -1045,7 +1055,9 @@ object GuardEngine {
         generated
     }
 
-    fun setFamilyToken(ctx: Context, token: String, preserveFamilyHistory: Boolean = false) = synchronized(pollLock) {
+    /** [qrOnly] marks the family FAMILY_QR_ONLY in the same commit as the token. With [preserveFamilyHistory] (rotation, QR pairing)
+     *  an existing mark is kept; a new family (no history) keeps it only when [qrOnly], and the child's CHILD_QR_PAIRED is dropped. */
+    fun setFamilyToken(ctx: Context, token: String, preserveFamilyHistory: Boolean = false, qrOnly: Boolean = false) = synchronized(pollLock) {
         recoverEvidenceTransition(ctx)
         val clean = token.trim().lowercase(Locale.US)
         if (clean.isNotEmpty()) {
@@ -1078,6 +1090,8 @@ object GuardEngine {
                         "child_self_handle", "pw_failed_count", "pw_lockout_until_ms", "sent_setup_ok", "next_heartbeat_at_ms", "checkpoint_logs") + parentChildKeys) editor.remove(key)
                     // A new family never keeps the previous family's child key; a QR pairing stores its own after this.
                     forgetChildKey(ctx)
+                    editor.remove(CHILD_QR_PAIRED)
+                    if (!qrOnly) editor.remove(FAMILY_QR_ONLY)
                     pauseTamperUntilMs = 0L
                     synchronized(this) { recentAlerts.clear(); seenNotifMsgTimestamps.clear() }
                     editor.remove("weekly_stats_json").remove("parent_alerts_json").remove("seen_msg_ids")
@@ -1085,6 +1099,7 @@ object GuardEngine {
                 }
             }
             // Token and family-scoped history change in the same state transaction.
+            if (qrOnly) editor.putBoolean(FAMILY_QR_ONLY, true)
             check(editor.putString("family_uuid_token", clean).remove("evidence_transition_json").commit())
             if(getRole(ctx)!="unconfigured")CloudRelay.connect(ctx)
         }
@@ -1166,7 +1181,7 @@ object GuardEngine {
                 .remove("synced_15m_code").remove("synced_15m_exp").remove("synced_15m_rt").remove("synced_15m_start_rt").remove("synced_15m_boot")
                 .putBoolean("sent_setup_ok", false)
             // A QR pairing (design 2.5 C6): from now on every record to the parent is signed with this key.
-            if (childKeyAlias != null) { forgetChildKey(ctx); editor.putString(CHILD_KEY_ALIAS, childKeyAlias) }
+            if (childKeyAlias != null) { forgetChildKey(ctx); editor.putString(CHILD_KEY_ALIAS, childKeyAlias).putBoolean(CHILD_QR_PAIRED, true) }
             check(editor.commit())
             setRole(ctx, "child"); scheduleNextRandomHeartbeat(ctx)
             true
@@ -1235,7 +1250,7 @@ object GuardEngine {
             if (FamilySecurity.canonicalKeyText(parentKey) == key) return null
             val eventId = result.complete.optString("event_id")
             if (!eventId.startsWith("control:")) return null
-            setFamilyToken(ctx, result.token, preserveFamilyHistory = true)
+            setFamilyToken(ctx, result.token, preserveFamilyHistory = true, qrOnly = true)
             val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json")
             for (stale in listOf(PAIRING_FAILED, PAIRING_CANCELLED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted")) editor.remove(stale)
             check(editor.commit())
@@ -1901,9 +1916,10 @@ object GuardEngine {
         val innerStr = outer.optString("message")
         val token = getOrCreateFamilyToken(ctx)
         val decoded = decryptPayload(token, innerStr) ?: return RelayConsumption.REJECTED
-        // Remotely reset (markChildRemotelyReset) or rolled back (expireUnconfirmedChildPairing): paired with no child phone, so no record
-        // is taken, signed or not, until a new QR pairing. Without this an unsigned record under T1 would pass the gate as Legacy.
-        if (role == "parent" && pinnedChildKey(ctx) == null && (childRemotelyReset(ctx) || childPairingFailed(ctx))) return RelayConsumption.REJECTED
+        // Legacy (the unsigned 5.2 format) only for a family without the sticky FAMILY_QR_ONLY fact. With it and no pinned key (rolled
+        // back, cancelled, remotely reset, or any other unpinning) no record is taken, signed or not, until a new QR pairing pins a key.
+        // The rollback/reset marks only choose the overview text.
+        if (role == "parent" && pinnedChildKey(ctx) == null && familyQrOnly(ctx)) return RelayConsumption.REJECTED
         val decrypted = if (decoded.optString("type") == "alert_fragment") {
             if (role != "parent" && !(role=="child" && decoded.optString("event_id").startsWith("control:"))) return RelayConsumption.REJECTED
             // A late part of a record already taken: reassembly would return the stored (unwrapped) record, which the gate must not see.
@@ -3745,7 +3761,7 @@ class MainActivity : Activity() {
         rootContainer.addView(actionButton("建立家庭", t.btnPrimaryBg, t.btnPrimaryText) {
             val candidate = password.text.toString().trim()
             if (!GuardEngine.isStrongPasswordValid(candidate)) { error.text = "請輸入最少 12 位字元，並同時包含字母及數字，避免常見密碼（例如 password、123456）。"; password.error = "密碼長度或格式不正確"; return@actionButton }
-            GuardEngine.setFamilyToken(this, UUID.randomUUID().toString()); GuardEngine.setPin(this, candidate); GuardEngine.setRole(this, "parent")
+            GuardEngine.setFamilyToken(this, UUID.randomUUID().toString(), qrOnly = true); GuardEngine.setPin(this, candidate); GuardEngine.setRole(this, "parent")
             section = "overview"; syncRoleServices(); renderUi(animate = true)
         })
         rootContainer.addView(label("主密碼用於保護角色切換及解鎖設定，請妥善保管。", 13f, t.textSecondary, topPad = 16))
