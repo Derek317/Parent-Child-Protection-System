@@ -156,6 +156,15 @@ internal object ScoresUi {
         m.method == ScoresMethod.UPLOAD && m.page != ScoresPage.OFF && m.page != ScoresPage.WAITING && m.state?.consent == "accepted" && !m.state.paused
     /** At most one request per 24 hours. A time ahead of the clock also counts as inside the window. */
     fun importRequestLocked(at: Long, now: Long = System.currentTimeMillis()): Boolean = at > 0 && now - at < RiskLocal.REQUEST_PARENT_GAP_MS
+    /** The line under the locked button: when it was asked, when it can be asked again and the time left. Null when not locked. The time left is capped at 24 h for a clock moved back. */
+    fun importRequestReset(at: Long, now: Long = System.currentTimeMillis()): String? {
+        if (!importRequestLocked(at, now)) return null
+        val again = at + RiskLocal.REQUEST_PARENT_GAP_MS
+        val min = (again - now).coerceIn(0L, RiskLocal.REQUEST_PARENT_GAP_MS) / 60_000L
+        val zh = when { min < 1 -> "不足 1 分鐘"; min < 60 -> "$min 分鐘"; else -> "${min / 60} 小時 ${min % 60} 分鐘" }
+        val en = when { min < 1 -> "less than 1 minute"; min < 60 -> "$min min"; else -> "${min / 60} h ${min % 60} min" }
+        return "已於 ${time(at)} 提出。可於 ${time(again)} 再次提出，尚餘 $zh。\nRequested ${time(at)}. You can ask again at ${time(again)}, in $en."
+    }
     fun noScoreSinceRequest(m: ScoresPageModel, at: Long, now: Long = System.currentTimeMillis()): Boolean =
         at > 0 && now - at > NO_SCORE_SINCE_REQUEST_DAYS * 86_400_000L && (latestAnalysis(m) ?: 0L) <= at
 

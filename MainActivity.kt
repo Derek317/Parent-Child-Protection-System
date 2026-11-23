@@ -2881,6 +2881,10 @@ class MainActivity : Activity() {
             maybeShowCaptureNotice()
             if (section == "overview" && GuardEngine.isParentMode(this@MainActivity) &&
                 Instant.now().atZone(chartZone).toLocalDate().toString() != displayedChartDate) renderUi()
+            // Keep the request's time left current; once the lock ends, one re-render enables the button (the line is then gone).
+            if (section == "scores") window.decorView.findViewWithTag<TextView>("scores_import_request_reset")?.let { line ->
+                ScoresUi.importRequestReset(RiskLocal.parentImportRequestAt(this@MainActivity))?.let { line.text = it } ?: renderUi()
+            }
             uiHandler.postDelayed(this, 5_000L)
         }
     }
@@ -4573,6 +4577,7 @@ class MainActivity : Activity() {
             val ok = ScoresEngineBridge.requestImport(this)
             Toast.makeText(this, if (ok) ScoresUi.IMPORT_REQUEST_QUEUED else ScoresUi.IMPORT_REQUEST_FAILED, Toast.LENGTH_LONG).show(); renderUi()
         }.apply { tag = "scores_import_request"; isEnabled = !locked })
+        ScoresUi.importRequestReset(at, now)?.let { out.addView(label(it, 13f, t.textSecondary, topPad = 4, bottomPad = 10).apply { tag = "scores_import_request_reset" }) }
         if (ScoresUi.noScoreSinceRequest(m, at, now)) out.addView(label(ScoresUi.NO_SCORE_SINCE_REQUEST, 13f, t.textSecondary, bottomPad = 10).apply { tag = "scores_no_score_since_request" })
     }
     private fun scoreRow(row: RiskScoreRow, t: ThemeColors): View {

@@ -54,6 +54,21 @@ class ImportRequestParentTest {
         assertFalse(ScoresUi.importRequestLocked(now - 24 * hour, now))
         assertTrue("a time ahead of the clock counts as inside", ScoresUi.importRequestLocked(now + hour, now))
     }
+    @Test fun theResetLineSaysWhenItWasAskedWhenItResetsAndTheTimeLeft() {
+        val at = now - 2 * hour; val gap = RiskLocal.REQUEST_PARENT_GAP_MS; val min = 60_000L
+        val line = { left: Long -> ScoresUi.importRequestReset(at, at + gap - left) }
+        val zh = "已於 ${ScoresUi.time(at)} 提出。可於 ${ScoresUi.time(at + gap)} 再次提出，尚餘 "
+        val en = "\nRequested ${ScoresUi.time(at)}. You can ask again at ${ScoresUi.time(at + gap)}, in "
+        assertEquals(zh + "23 小時 59 分鐘。" + en + "23 h 59 min.", line(23 * hour + 59 * min))
+        assertEquals(zh + "59 分鐘。" + en + "59 min.", line(59 * min + 30_000L))
+        assertEquals(zh + "不足 1 分鐘。" + en + "less than 1 minute.", line(59_000L))
+        assertNull("expired", line(0L)); assertNull("long expired", line(-day))
+        assertNull("never asked", ScoresUi.importRequestReset(0L, now))
+        val back = ScoresUi.importRequestReset(now + 3 * hour, now)!!
+        assertTrue("a clock moved back stays locked", ScoresUi.importRequestLocked(now + 3 * hour, now))
+        assertTrue("capped at 24 h: $back", back.contains("尚餘 24 小時 0 分鐘。") && back.endsWith(", in 24 h 0 min."))
+        assertFalse(back.contains("尚餘 -") || back.contains("in -"))
+    }
     @Test fun theCalmLineNeedsThreeDaysAndNoNewerScore() {
         val m = { at: Long -> ScoresUi.classify(policy(), state(), rows(at), now, true) }
         assertFalse(ScoresUi.noScoreSinceRequest(m(now - 5 * day), 0L, now))
@@ -61,7 +76,7 @@ class ImportRequestParentTest {
         assertTrue(ScoresUi.noScoreSinceRequest(m(now - 5 * day), now - 4 * day, now))
         assertFalse("a newer score", ScoresUi.noScoreSinceRequest(m(now - day), now - 4 * day, now))
         assertTrue("no score at all", ScoresUi.noScoreSinceRequest(ScoresUi.classify(policy(), state(), emptyList(), now, true), now - 4 * day, now))
-        for (s in listOf(ScoresUi.NO_SCORE_SINCE_REQUEST, ScoresUi.IMPORT_REQUEST_QUEUED, ScoresUi.importRequestedAt(now)))
+        for (s in listOf(ScoresUi.NO_SCORE_SINCE_REQUEST, ScoresUi.IMPORT_REQUEST_QUEUED, ScoresUi.importRequestedAt(now), ScoresUi.importRequestReset(now, now)!!))
             for (claim in listOf("已收到", "已閱讀", "delivered", "has read", "has seen")) assertFalse("$claim in $s", s.contains(claim))
     }
 
@@ -126,6 +141,7 @@ class ImportRequestParentTest {
         try {
             val b = button(UiSupport.views(c.get(), "scores_loading"))!!
             assertTrue(b.isEnabled); assertEquals(ScoresUi.IMPORT_REQUEST, b.text.toString())
+            assertTrue("no line before a request", UiSupport.all(c.get().window.decorView).none { it.tag == "scores_import_request_reset" })
             b.performClick(); org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
             assertEquals(ScoresUi.IMPORT_REQUEST_QUEUED, ShadowToast.getTextOfLatestToast())
         } finally { c.pause().stop().destroy() }
@@ -133,6 +149,34 @@ class ImportRequestParentTest {
         val after = button(page())!!
         assertFalse(after.isEnabled); assertEquals(ScoresUi.importRequestedAt(at), after.text.toString())
         assertTrue(after.text.toString().startsWith("已於 ") && after.text.toString().contains(" / Requested "))
+    }
+    private fun resetLine(views: List<android.view.View>) = views.filter { it.tag == "scores_import_request_reset" }.map { it as android.widget.TextView }.singleOrNull()
+    @Test fun theLockedButtonHasAFullContrastResetLineAndExpiryEnablesIt() {
+        upload(); val at = now - 2 * hour; RiskLocal.saveParentImportRequest(ctx, at)
+        val c = ShotSupport.open("scores")
+        try {
+            val a = c.get(); val views = UiSupport.views(a, "scores_loading")
+            assertFalse(button(views)!!.isEnabled)
+            val line = resetLine(views)!!
+            assertTrue(line.isEnabled)
+            assertEquals(android.graphics.Color.parseColor(UiSupport.token(UiSupport.theme(a), "textSecondary")), line.currentTextColor)
+            assertTrue(line.text.toString().startsWith("已於 ${ScoresUi.time(at)} 提出。可於 ${ScoresUi.time(at + day)} 再次提出，尚餘 21 小時 ") || line.text.toString().contains("尚餘 22 小時 0 分鐘"))
+            // The 5-second ticker rewrites only that line ...
+            RiskLocal.saveParentImportRequest(ctx, now - 23 * hour - 30 * 60_000L)
+            MainActivity::class.java.getDeclaredField("activityVisible").apply { isAccessible = true }.set(a, true)
+            val ticker = MainActivity::class.java.getDeclaredField("statusTicker").apply { isAccessible = true }.get(a) as Runnable
+            ticker.run()
+            assertSame(line, resetLine(UiSupport.all(a.window.decorView)))
+            assertTrue(line.text.toString(), line.text.toString().contains("尚餘 29 分鐘。") || line.text.toString().contains("尚餘 30 分鐘。"))
+            // ... and once the lock has ended, re-renders once so the button is enabled and the line is gone.
+            RiskLocal.saveParentImportRequest(ctx, now - 25 * hour)
+            ticker.run(); val after = UiSupport.views(a, "scores_loading")
+            assertTrue(button(after)!!.isEnabled); assertNull(resetLine(after))
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun anExpiredRequestShowsAnEnabledButtonAndNoLine() {
+        upload(); RiskLocal.saveParentImportRequest(ctx, now - 25 * hour)
+        val views = page(); assertTrue(button(views)!!.isEnabled); assertNull(resetLine(views))
     }
     @Test fun aRefusedSendSaysSoAndKeepsTheButton() {
         upload(); ScoresEngineBridge.requestImport = { false }
@@ -175,7 +219,10 @@ class ImportRequestParentScreenshotTest {
                 "no-score-since" -> RiskLocal.saveParentImportRequest(ctx, now - 3 * 86_400_000L - 3_600_000L)
             }
             val c = ShotSupport.open("scores")
-            try { UiSupport.views(c.get(), "scores_loading"); ShotSupport.shoot(c.get(), "import-request-parent-$state-" + if (bright) "light" else "dark", 360, 1400) } finally { c.pause().stop().destroy() }
+            try {
+                val views = UiSupport.views(c.get(), "scores_loading")
+                assertEquals(state, state == "requested", views.any { it.tag == "scores_import_request_reset" })
+                ShotSupport.shoot(c.get(), "import-request-parent-$state-" + if (bright) "light" else "dark", 360, 1400) } finally { c.pause().stop().destroy() }
         }
         GuardEngine.setBrightTheme(ctx, true)
     }
