@@ -964,8 +964,11 @@ object GuardEngine {
         wipeParentSecrets(ctx)
     }
     private fun wipeParentSecrets(ctx: Context): Boolean = try {
-        check(prefs(ctx).edit().remove("parent_master_password").remove("parent_share_verifier")
-            .remove("parent_signing_public").remove("parent_signing_private").remove(FAMILY_QR_ONLY).commit())
+        // The child's pinned public key and the rest of the per-child pairing state go with the parent role.
+        val editor = prefs(ctx).edit().remove("parent_master_password").remove("parent_share_verifier")
+            .remove("parent_signing_public").remove("parent_signing_private").remove(FAMILY_QR_ONLY)
+        for (key in parentChildKeys) editor.remove(key)
+        check(editor.commit())
         FamilySecurity.deleteParentIdentity(ctx)
         identityCache = null
         true

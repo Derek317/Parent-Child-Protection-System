@@ -107,6 +107,13 @@ class LegacyForbiddenTest {
         assertTrue(GuardEngine.leaveParentRole(ctx)); assertFalse(GuardEngine.familyQrOnly(ctx))
     }
 
+    @Test fun leavingTheParentRoleRemovesThePinnedChildKey() {
+        parentPhone(); acceptQrPairing()
+        assertNotNull(prefs.getString("pinned_child_key", null))
+        assertTrue(GuardEngine.leaveParentRole(ctx))
+        for (key in listOf("pinned_child_key", "child_pairing_pending_ms", "child_record_state_json")) assertFalse(key, prefs.contains(key))
+    }
+
     // ---------------- child side ----------------
     private fun queuedChildFrames() = FamilyEvidence(ctx).use { it.due(GuardEngine.getChannelTopicForToken(token), Long.MAX_VALUE) }
     private fun childSendsEverything() {
