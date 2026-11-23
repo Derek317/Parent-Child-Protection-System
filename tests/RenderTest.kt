@@ -162,6 +162,20 @@ class ThemedScreensRenderTest {
         }
         GuardEngine.setBrightTheme(ctx, true)
     }
+    /** Light only: a selected role card (the tinted chip surface with accent icons). */
+    @Test fun rolePageWithASelectedCardInLight() {
+        ctx.deleteDatabase("family_evidence.db"); LocalVault.preferences(ctx).edit().clear().commit()
+        GuardEngine.setRole(ctx, "unconfigured"); GuardEngine.setBrightTheme(ctx, true)
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            UiSupport.nav(c.get(), "role")
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+            views(c.get().window.decorView).single { it.tag == "entry_parent" }.performClick()
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+            assertTrue(views(c.get().window.decorView).single { it.tag == "continue_role" }.isEnabled)
+            ShotSupport.shoot(c.get(), "tier1-role-selected-light", 390, 844)
+        } finally { c.pause().stop().destroy() }
+    }
 }
 
 /** Seeds and renders the scores-only screens to PNG. Labels are invented; no message text is ever seeded. */
@@ -328,6 +342,32 @@ class ScoresScreenshotTest {
             RiskModelStore.expectation = RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES, RiskModelSpec.FILE_SHA256)
             RiskModelStore.abiProbe = { android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a") }
         }
+    }
+}
+
+/** Light only: the child's emphasised (navy) notice cards stacked on the overview. Written under build/test-screenshots/. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], qualifiers = "w360dp-h800dp-mdpi")
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class LightNoticeCardStackScreenshotTest : UploadTestBase() {
+    private fun shoot(name: String, vararg cards: String) {
+        val c = ShotSupport.open("overview")
+        try {
+            val tags = UiSupport.all(c.get().window.decorView).map { it.tag }
+            for (card in cards) assertTrue(card, card in tags)
+            ShotSupport.shoot(c.get(), name, 360, 1700)
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun consentRequestAndChangeCards() {
+        InstagramImport.dismiss(); GuardEngine.setBrightTheme(ctx, true)
+        activate(ScoresMethod.UPLOAD); assertTrue(RiskLocal.receiveImportRequest(ctx))
+        RiskLocal.receivePolicy(ctx, java.util.UUID.randomUUID().toString(), true, ScoresMethod.CAPTURE)   // a method change: the consent card asks again
+        shoot("light-child-card-stack", "scores_consent_card", "scores_import_request_card", "scores_change_card")
+    }
+    @Test fun holdCard() {
+        InstagramImport.dismiss(); GuardEngine.setBrightTheme(ctx, true)
+        activate(ScoresMethod.UPLOAD); switchOff()
+        shoot("light-child-hold-card", "scores_hold_card")
     }
 }
 
