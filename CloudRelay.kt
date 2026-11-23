@@ -49,7 +49,7 @@ object CloudRelay {
                         success -> "中繼已確認刪除及退役舊房間。"
                         // The current relay answers 426 before any state change: it simply cannot delete a room.
                         response.code in setOf(426,404,405,501) -> "目前的中繼不能刪除房間，原有配對已保留。可改選「只建立新配對」。"
-                        else -> "中繼未確認刪除（HTTP ${response.code}）；目前配對保留。"
+                        else -> "中繼未確認刪除；目前配對保留。"
                     })
                 }
             } catch(_:Exception){onComplete(false,"中繼未確認刪除；請檢查連線後重試。")}
@@ -179,7 +179,7 @@ object CloudRelay {
                         val delay=if(response?.code in listOf(401,403))300_000L else response?.header("Retry-After")?.toLongOrNull()?.times(1000)
                         // A retired room stays retired for months: say so, and ask at most daily in case it was re-registered.
                         if(response?.code==410)fail(ROOM_RETIRED,DAY_MS)
-                        else fail("連線未完成 · ${response?.code?.let{"HTTPS $it"}?:error.javaClass.simpleName} · 記錄保留",delay)
+                        else fail("連線未完成 · ${when(response?.code){null->"網絡未能連線";401,403->"中繼未接受此配對的驗證";else->"中繼暫時未能回應"}} · 記錄保留",delay)
                         response?.close()
                     }}
                     override fun onClosing(ws:WebSocket,code:Int,reason:String){ws.close(code,"")}

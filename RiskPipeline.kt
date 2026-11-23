@@ -549,7 +549,7 @@ internal object RiskLocal {
             val open = android.app.PendingIntent.getActivity(ctx, 7002, Intent(ctx, MainActivity::class.java), android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
             val text = if (held) "你之前選擇手動上載，IG Guard 不會讀取 Instagram 的通知或對話畫面，除非你在 App 內同意。\nYou chose manual upload, so IG Guard reads no Instagram notifications or conversation screens unless you agree in the app."
                 else "先前的模式再次適用：如已啟用完整擷取，訊息會再傳送給家長。\nThe earlier mode applies again: if full capture is on, messages are sent to your parent again."
-            val notice = android.app.Notification.Builder(ctx, "child_disclosure").setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            val notice = android.app.Notification.Builder(ctx, "child_disclosure").setSmallIcon(GuardEngine.notificationIcon(ctx)).setColor(GuardEngine.NOTIFICATION_COLOR)
                 .setContentTitle("IG Guard · 家長已關閉「只傳分數」模式 (scores-only mode turned off)")
                 .setContentText(text.replace("\n", " "))
                 .setStyle(android.app.Notification.BigTextStyle().bigText(text))
@@ -577,7 +577,7 @@ internal object RiskLocal {
             if (Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) return
             val open = android.app.PendingIntent.getActivity(ctx, 7003, Intent(ctx, MainActivity::class.java).setAction(OPEN_UPLOAD_ACTION), android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
             val text = ScoresChildCopy.REMINDER_TEXT
-            val notice = android.app.Notification.Builder(ctx, "child_disclosure").setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            val notice = android.app.Notification.Builder(ctx, "child_disclosure").setSmallIcon(GuardEngine.notificationIcon(ctx)).setColor(GuardEngine.NOTIFICATION_COLOR)
                 .setContentTitle(ScoresChildCopy.REMINDER_TITLE)
                 .setContentText(text.replace("\n", " "))
                 .setStyle(android.app.Notification.BigTextStyle().bigText(text))

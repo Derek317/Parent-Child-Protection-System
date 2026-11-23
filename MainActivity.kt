@@ -260,9 +260,9 @@ object GuardEngine {
     @Volatile var cpAccConnected: Boolean = false
     @Volatile var cpLastAccTime: String = "Never"
     @Volatile var cpLastCaptureStatus: String = "尚未讀取 Instagram 對話畫面"
-    @Volatile var cpLastHttpStatus: String = "Ready (TLS + AES-256-GCM)"
+    @Volatile var cpLastHttpStatus: String = "已就緒，連線已加密"
     @Volatile var cpLastPollStatus: String = "尚未同步"
-    @Volatile var cpParentStreamState: String = "Idle"
+    @Volatile var cpParentStreamState: String = "閒置"
 
     private val EMOJI_PALETTE = arrayOf(
         "🐼", "🦁", "🐬", "🦊", "🐨", "🐯", "🦄", "🐝",
@@ -401,14 +401,14 @@ object GuardEngine {
         val notifOn = isNotificationListenerEnabledStatic(ctx)
         val accOn = isAccessibilityEnabledStatic(ctx)
 
-        val statusSummary = "裝置 ${Build.MODEL} IG Guard 運作中 (通知讀取: ${if (notifOn) "ON ✅" else "OFF ❌"} | 畫面保護: ${if (accOn) "ON ✅" else "選用"}) • 下次隨機回報約 ${nextMins} 分鐘後" + if (RiskLocal.captureHeld(ctx)) CAPTURE_HELD_MARK else ""
+        val statusSummary = "裝置 ${Build.MODEL} IG Guard 運作中（通知讀取：${if (notifOn) "已開啟" else "已關閉"} · 畫面保護：${if (accOn) "已開啟" else "選用"}）· 下次回報約 ${nextMins} 分鐘後（時間隨機）" + if (RiskLocal.captureHeld(ctx)) CAPTURE_HELD_MARK else ""
         // Under manual upload the teen may switch notification access off, which is then no tampering. A held capture is not that: access is expected to stay on.
         val reason = if (notifOn || RiskLocal.uploadMethodOn(ctx)) "heartbeat_ok" else "tamper_attempt"
 
         sendAlertFromChild(
             ctx,
             reason = reason,
-            sender = "💓 子女手機定時回報",
+            sender = "子女手機定時回報",
             text = statusSummary,
             bypassDedupe = true
         )
@@ -430,7 +430,7 @@ object GuardEngine {
 
     fun getLastChildHeartbeatInfo(ctx: Context): String {
         val txt = prefs(ctx).getString("parent_last_child_hb_text", null)
-        return txt?.removeSuffix(CAPTURE_HELD_MARK) ?: "等待子女手機首次回報 (每 30–65 分鐘隨機發送一次心跳)"
+        return txt?.removeSuffix(CAPTURE_HELD_MARK) ?: "等待子女手機首次回報（每 30–65 分鐘自動回報一次，時間隨機）"
     }
 
     /** The child's latest report carried the exact marker at its end; anywhere else it counts for nothing. */
@@ -524,7 +524,7 @@ object GuardEngine {
                 val oldKey = legacy?.takeIf { it.isNotEmpty() }; val trusted = pub?.takeIf { it.isNotEmpty() }
                 if (oldKey == null || trusted == null) throw failure
                 val identity = try { FamilySecurity.verifiedLegacyIdentity(oldKey, trusted) } catch (_: Exception) { throw failure }
-                addCheckpointLog(ctx, "CP0-KEY", "Keystore import failed; continuing with the verified existing key and retrying at next start")
+                addCheckpointLog(ctx, "CP0-KEY", "Keystore 匯入失敗；繼續使用已核對的原有金鑰，下次啟動再試")
                 identityCache = IdentityCache(identity, pub, legacy, true)
                 identity
             }
@@ -778,7 +778,7 @@ object GuardEngine {
                 else isParentMode(ctx) && getOrCreateFamilyToken(ctx)==newToken
             }
             // Retain a pending transition until a child report arrives on the new channel.
-            addCheckpointLog(ctx, "CP3-KEY", if (accepted) "Published parent command; waiting for child confirmation" else "Publish failed or session changed; original family retained")
+            addCheckpointLog(ctx, "CP3-KEY", if (accepted) "已傳送家長指令，等待子女手機確認" else "傳送失敗或配對已變更；原有家庭保留")
             onComplete?.invoke(accepted)
             ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
         })
@@ -789,9 +789,9 @@ object GuardEngine {
      * those lines are rewritten without the name whenever the log is read or extended. */
     private fun scrubCheckpointLine(line: String): String = when {
         " CP4-RECV: " in line -> line.substringBefore(" from ")
-        " CP2-TRUSTED: " in line -> line.substringBefore(" CP2-TRUSTED: ") + " CP2-TRUSTED: Ignored trusted/self/status message"
-        " CP1-ID: " in line -> line.substringBefore(" CP1-ID: ") + " CP1-ID: Auto-detected Child IG ID"
-        " CP4-ID: " in line -> line.substringBefore(" CP4-ID: ") + " CP4-ID: Auto-synced Child IG ID from child phone"
+        " CP2-TRUSTED: " in line -> line.substringBefore(" CP2-TRUSTED: ") + " CP2-TRUSTED: 已略過信任對象、自己或狀態訊息"
+        " CP1-ID: " in line -> line.substringBefore(" CP1-ID: ") + " CP1-ID: 已自動識別子女 IG 帳號"
+        " CP4-ID: " in line -> line.substringBefore(" CP4-ID: ") + " CP4-ID: 已從子女手機同步子女 IG 帳號"
         else -> line
     }
     private fun scrubbedCheckpointLines(raw: String): List<String> = if (raw.isEmpty()) emptyList() else raw.split("\n").map { scrubCheckpointLine(it) }
@@ -806,7 +806,7 @@ object GuardEngine {
 
     @Synchronized
     fun getCheckpointLogs(ctx: Context): String {
-        val raw = prefs(ctx).getString("checkpoint_logs", null) ?: return "No checkpoint events recorded yet."
+        val raw = prefs(ctx).getString("checkpoint_logs", null) ?: return "尚未有診斷記錄。"
         val clean = scrubbedCheckpointLines(raw).joinToString("\n")
         if (clean != raw) prefs(ctx).edit().putString("checkpoint_logs", clean).apply()
         return clean
@@ -924,6 +924,9 @@ object GuardEngine {
         refreshMonitoringDisclosure(ctx)
     }
 
+    /** Every notification: the app's shield glyph as small icon (the stock lock only if the drawable is missing) and the brand colour. */
+    fun notificationIcon(ctx: Context): Int = ctx.resources.getIdentifier("ic_guard_shield", "drawable", ctx.packageName).takeIf { it != 0 } ?: android.R.drawable.ic_lock_idle_lock
+    val NOTIFICATION_COLOR: Int = 0xFF1F4E79.toInt()   // Harbour brand primary (accentSeafoam); the shade reads on light and dark shades
     fun captureScopeSummary(ctx:Context):String = "擴展擷取已啟用 · 傳入訊息" +
         (if(outgoingCaptureAllowed(ctx))"、已送出的傳出訊息" else "；不含傳出訊息") +
         (if(trustedContextAllowed(ctx))"；包含信任對象的一般脈絡" else "；不含信任對象的一般脈絡")
@@ -936,7 +939,7 @@ object GuardEngine {
         val open = PendingIntent.getActivity(ctx, 7001, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val active = collectionAllowed(ctx) && (isNotificationListenerEnabledStatic(ctx) || isAccessibilityEnabledStatic(ctx))
         val notification = Notification.Builder(ctx, "child_disclosure")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setSmallIcon(notificationIcon(ctx)).setColor(NOTIFICATION_COLOR)
             .setContentTitle(if (!collectionAllowed(ctx)) "IG Guard · 擷取及傳送已停止" else if (active) "IG Guard · 子女監察模式" else "IG Guard · 子女模式等待設定")
             .setContentText(if(!collectionAllowed(ctx))"不擷取新內容，也不傳送待傳記錄。" else RiskLocal.disclosure(ctx,if(fullCaptureEnabled(ctx))captureScopeSummary(ctx) else "IG 警報會加密傳送給已配對的家長。點按查看權限及狀態。"))
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
@@ -1271,7 +1274,7 @@ object GuardEngine {
         val existing = getChildSelfHandle(ctx)
         if (clean == existing) return
         setChildSelfHandle(ctx, clean)
-        addCheckpointLog(ctx, "CP1-ID", "Auto-detected Child IG ID")
+        addCheckpointLog(ctx, "CP1-ID", "已自動識別子女 IG 帳號")
         if (isChildMode(ctx)) {
             val token = getOrCreateFamilyToken(ctx)
             val topic = getChannelTopicForToken(token)
@@ -1424,12 +1427,12 @@ object GuardEngine {
                 bypassDedupe = bypassDedupe || reason == "test_alert" || reason == "heartbeat_ok"
             )
         ) {
-            addCheckpointLog(ctx, "CP2-DEDUPE", "Skipped duplicate alert")
+            addCheckpointLog(ctx, "CP2-DEDUPE", "略過重複警報")
             onComplete?.invoke(false, "Duplicate suppressed")
             return
         }
 
-        addCheckpointLog(ctx, "CP2-MATCH", "[$reason] Captured alert; message content omitted from diagnostics")
+        addCheckpointLog(ctx, "CP2-MATCH", "[$reason] 已擷取警報；診斷記錄不含訊息內容")
 
         val plain = JSONObject().apply {
             put("type", "alert")
@@ -1674,7 +1677,7 @@ object GuardEngine {
                             // A signed receipt may have overtaken the publish acknowledgment.
                             val stillPending=FamilyEvidence(app).use{it.pendingEvent(next.second,frame.id)}
                             if(!result.accepted || !frame.waitForReceipt || stillPending)cpLastHttpStatus=result.message
-                            addCheckpointLog(app,if(result.accepted)"CP3-RELAY" else "CP3-ERR",if(result.accepted)"Encrypted packet accepted; parent receipt is separate" else result.message)
+                            addCheckpointLog(app,if(result.accepted)"CP3-RELAY" else "CP3-ERR",if(result.accepted)"中繼已接收加密封包；家長是否收到另行確認" else result.message)
                         }
                         if(!result.accepted){if(result.contextFull || result.expired)continue@deliveryLoop else break@deliveryLoop}
                     }
@@ -1793,7 +1796,7 @@ object GuardEngine {
                 val csv = inner.optString("trusted_csv")
                 val list = csv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
                 setTrustedHandles(ctx, list)
-                addCheckpointLog(ctx, "CP4-SYNC", "Updated trusted list (${list.size} handles)")
+                addCheckpointLog(ctx, "CP4-SYNC", "已更新信任名單（${list.size} 個帳號）")
                 ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
             }
             "sync_child_handle" -> {
@@ -1801,7 +1804,7 @@ object GuardEngine {
                     val detected = inner.optString("child_self_handle")
                     if (detected.isNotEmpty()) {
                         setChildSelfHandle(ctx, detected)
-                        addCheckpointLog(ctx, "CP4-ID", "Auto-synced Child IG ID from child phone")
+                        addCheckpointLog(ctx, "CP4-ID", "已從子女手機同步子女 IG 帳號")
                         ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                     }
                 }
@@ -1818,7 +1821,7 @@ object GuardEngine {
                         .putLong("synced_15m_rt", now + minOf(exp - wallClock(), UNLOCK_CODE_MS))
                         .putLong("synced_15m_start_rt", now).putString("synced_15m_boot", bootMarker(ctx))
                         .apply()
-                    addCheckpointLog(ctx, "CP4-SYNC", "Received encrypted 15-min unlock code")
+                    addCheckpointLog(ctx, "CP4-SYNC", "已收到加密的 15 分鐘解鎖碼")
                 }
             }
             "key_rotated" -> {
@@ -1827,7 +1830,7 @@ object GuardEngine {
                 if (newToken.isNotEmpty()) {
                     setFamilyToken(ctx, newToken, preserveFamilyHistory = true)
                     storeChildVerifier(ctx, newPin)
-                    addCheckpointLog(ctx, "CP4-KEY", "Auto-updated to new Parent Family Key ✅")
+                    addCheckpointLog(ctx, "CP4-KEY", "已自動更新為新的家長家庭金鑰")
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
             }
@@ -1836,7 +1839,7 @@ object GuardEngine {
                     grantTemporaryUnlock(ctx, 10 * 60_000L)
                     setRole(ctx, "unconfigured")
                     if (inner.optBoolean("purge_family")) purgeChildFamily(ctx, token)
-                    addCheckpointLog(ctx, "CP4-RESET", "Parent remotely unlocked & reset Child Phone")
+                    addCheckpointLog(ctx, "CP4-RESET", "家長已遠端解除並重設子女手機")
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
             }
@@ -1859,7 +1862,7 @@ object GuardEngine {
                     }
                     val pending = try { JSONObject(prefs(ctx).getString("pending_rotation_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
                     if (token == pending.optString("new_token")) prefs(ctx).edit().remove("pending_rotation_json").apply()
-                    addCheckpointLog(ctx, "CP4-RECV", "Decrypted $reason")
+                    addCheckpointLog(ctx, "CP4-RECV", "已解密 $reason")
                     if(ConversationCapture.actionable(inner) || reason=="test_alert")onNewAlertForParent?.invoke(inner)
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
@@ -2026,7 +2029,7 @@ class IgNotificationListener : NotificationListenerService() {
         GuardEngine.cpNotifConnected = true
         GuardEngine.retryPendingAlerts(applicationContext,force=true)
         GuardEngine.refreshMonitoringDisclosure(this)
-        GuardEngine.addCheckpointLog(this, "CP1-NOTIF", "IG NotificationListener CONNECTED ✅")
+        GuardEngine.addCheckpointLog(this, "CP1-NOTIF", "Instagram 通知讀取已連接")
         heartbeatHandler.removeCallbacks(periodicCheckRunnable)
         heartbeatHandler.postDelayed(periodicCheckRunnable, 15_000L)
     }
@@ -2034,7 +2037,7 @@ class IgNotificationListener : NotificationListenerService() {
     override fun onListenerDisconnected() {
         GuardEngine.cpNotifConnected = false
         heartbeatHandler.removeCallbacks(periodicCheckRunnable)
-        GuardEngine.addCheckpointLog(this, "CP1-NOTIF", "NotificationListener DISCONNECTED ❌")
+        GuardEngine.addCheckpointLog(this, "CP1-NOTIF", "通知讀取已中斷")
         if (GuardEngine.isChildMode(this) && Build.VERSION.SDK_INT >= 24) {
             try {
                 requestRebind(ComponentName(this, IgNotificationListener::class.java))
@@ -2149,7 +2152,7 @@ class IgNotificationListener : NotificationListenerService() {
         if(GuardEngine.captureRelaySession(this)!=observationSession)return
         val reason = GuardEngine.evaluateMessage(this, resolvedSender, resolvedMessage)
         if (reason == null) {
-            GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "Ignored trusted/self/status message")
+            GuardEngine.addCheckpointLog(this, "CP2-TRUSTED", "已略過信任對象、自己或狀態訊息")
             return
         }
 
@@ -2273,7 +2276,7 @@ class IgAccessibilityService : AccessibilityService() {
         GuardEngine.cpAccConnected = true
         GuardEngine.refreshMonitoringDisclosure(this)
         GuardEngine.scheduleNextRandomHeartbeat(this)
-        GuardEngine.addCheckpointLog(this, "CP1-ACC", "IG DM Guard Connected ✅")
+        GuardEngine.addCheckpointLog(this, "CP1-ACC", "Instagram 畫面保護已連接")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -2607,9 +2610,9 @@ class ParentAlertService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val fgNotif = Notification.Builder(this, "ig_guard_monitor")
-            .setContentTitle("IG Guard 家長加密守護連線中 🔒")
-            .setContentText("核對圖案: ${GuardEngine.getSafetyEmojis(this)} • AES-256-GCM 即時守護")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setContentTitle("IG Guard · 家長守護連線中")
+            .setContentText("核對圖案：${GuardEngine.getSafetyEmojis(this)} · 加密即時守護")
+            .setSmallIcon(GuardEngine.notificationIcon(this)).setColor(GuardEngine.NOTIFICATION_COLOR)
             .setContentIntent(openIntent)
             .setOngoing(true)
             .build()
@@ -2630,7 +2633,7 @@ class ParentAlertService : Service() {
             val missingAlert = JSONObject().apply {
                 put("reason", "tamper_attempt")
                 put("ts_ms", System.currentTimeMillis())
-                put("sender", "🚨 子女手機離線/解除安裝警告")
+                put("sender", "子女手機離線/解除安裝警告")
                 put("text", "已超過 100 分鐘未收到子女手機的定時心跳回報！子女可能已熄機、斷網或解除安裝 IG Guard。")
                 put("time", GuardEngine.nowDateTimeStr())
             }
@@ -2681,13 +2684,13 @@ class ParentAlertService : Service() {
             else -> "有新的家庭提醒，請開啟 App 查看。"
         }
         val publicNotice = Notification.Builder(this, "ig_guard_alerts")
-            .setContentTitle("IG Guard 家庭提醒").setContentText("解鎖後開啟 App 查看。")
-            .setSmallIcon(android.R.drawable.stat_sys_warning).build()
+            .setContentTitle("IG Guard · 家庭提醒").setContentText("解鎖後開啟 App 查看。")
+            .setSmallIcon(GuardEngine.notificationIcon(this)).setColor(GuardEngine.NOTIFICATION_COLOR).build()
         val notif = Notification.Builder(this, "ig_guard_alerts")
-            .setContentTitle(if(reason == "sexual_or_grooming_content") "有一則需要留意的對話" else "IG Guard 家庭提醒")
+            .setContentTitle(if(reason == "sexual_or_grooming_content") "IG Guard · 有一則需要留意的對話" else "IG Guard · 家庭提醒")
             .setContentText(generic).setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(publicNotice)
             .setOnlyAlertOnce(!elevate).addExtras(Bundle().apply{putInt("ig_review_priority",maxOf(priority,previous?.extras?.getInt("ig_review_priority",0)?:0))})
-            .setSmallIcon(android.R.drawable.stat_sys_warning).setContentIntent(openIntent).setAutoCancel(true).build()
+            .setSmallIcon(GuardEngine.notificationIcon(this)).setColor(GuardEngine.NOTIFICATION_COLOR).setContentIntent(openIntent).setAutoCancel(true).build()
         nm.notify(tag, 100, notif)
     }
 
@@ -4186,15 +4189,15 @@ class MainActivity : Activity() {
             addView(label(text, sizeSp, t.textPrimary, bold).apply { setPadding(dp(10), 0, 0, 0); if (tag != null) this.tag = tag }, LinearLayout.LayoutParams(0, -2, 1f))
         }
     private fun noticeCard(t: ThemeColors, hero: Boolean = false, cardTag: String? = null): LinearLayout = makeCard(t, hero).apply { if (cardTag != null) tag = cardTag }
-
-    // ================= Scores-only family mode: child's phone =================
-    private val modelPickRequest = 9032
     /** Empty, loading, error and inline-warning states: one notice card with one icon line. The icon carries the kind, so colour is never the only signal. */
     private enum class Note(val glyph: String) { EMPTY("info"), LOADING("clock"), ERROR("shield-warning"), WARNING("shield-warning") }   // ERROR (coral) also marks danger warnings
     private fun stateNote(kind: Note, text: String, t: ThemeColors, cardTag: String? = null): LinearLayout = noticeCard(t, cardTag = cardTag).apply {
         val tint = when (kind) { Note.EMPTY, Note.LOADING -> t.textSecondary; Note.WARNING -> t.warmHoney; Note.ERROR -> t.warmCoral }
         addView(iconLine(kind.glyph, tint, text, t, 14f, bold = false))
     }
+
+    // ================= Scores-only family mode: child's phone =================
+    private val modelPickRequest = 9032
     private val exportPickRequest = 9033
     private var modelPickAuthorized = false
     private var scoresReadOnly = false

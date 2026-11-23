@@ -169,6 +169,38 @@ class Tier2UiTest {
         } finally { c.pause().stop().destroy() }
     }
 
+    private fun assertBranded(n: android.app.Notification, what: String) {
+        val shield = ctx.resources.getIdentifier("ic_guard_shield", "drawable", ctx.packageName)
+        assertNotEquals(0, shield); assertEquals(what, shield, n.smallIcon.resId); assertEquals(what, GuardEngine.NOTIFICATION_COLOR, n.color)
+        val title = n.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString(); val text = n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString() ?: ""
+        assertTrue("$what: $title", title.startsWith("IG Guard · "))
+        for (dev in listOf("🔒", "AES", "GCM", "✅", "❌")) assertFalse("$what: $title $text", (title + text).contains(dev))
+    }
+
+    @Test fun notificationsUseTheAppGlyphBrandColourAndOneTitlePatternWithPrivacyUnchanged() {
+        val nm = shadowOf(ctx.getSystemService(android.app.NotificationManager::class.java))
+        GuardEngine.setFamilyToken(ctx, java.util.UUID.randomUUID().toString())
+        val service = Robolectric.buildService(ParentAlertService::class.java).create().startCommand(0, 1).get()
+        try {
+            assertBranded(shadowOf(service).lastForegroundNotification, "parent connection")
+            assertEquals("ig_guard_monitor", shadowOf(service).lastForegroundNotification.channelId)
+            val fire = ParentAlertService::class.java.getDeclaredMethod("fireNativeParentNotification", org.json.JSONObject::class.java).apply { isAccessible = true }
+            fire.invoke(service, org.json.JSONObject().put("type", "alert").put("event_id", "e1").put("reason", "sexual_or_grooming_content").put("sender", "test_account_a").put("text", "Synthetic").put("ts_ms", System.currentTimeMillis()))
+            val alert = nm.allNotifications.single { it.channelId == "ig_guard_alerts" }
+            assertBranded(alert, "parent alert"); assertBranded(alert.publicVersion, "parent alert public version")
+            assertEquals(android.app.Notification.VISIBILITY_PRIVATE, alert.visibility); assertEquals("ig_guard_alerts", alert.channelId)
+            assertFalse("no sender or message text", (alert.extras.toString() + alert.publicVersion.extras.toString()).let { it.contains("test_account_a") || it.contains("Synthetic") })
+            assertTrue((alert.contentIntent != null))
+        } finally { service.onDestroy() }
+        GuardEngine.setRole(ctx, "child"); GuardEngine.refreshMonitoringDisclosure(ctx)
+        assertBranded(nm.allNotifications.last { it.channelId == "child_disclosure" }, "child disclosure")
+    }
+
+    @Test fun statusTextIsPlainWording() {
+        assertFalse(GuardEngine.getCheckpointLogs(ctx).any { it in 'A'..'z' })
+        assertFalse(GuardEngine.getLastChildHeartbeatInfo(ctx).contains("心跳"))
+    }
+
     @Test fun aLockedParentGetsNoBackLinkPastTheLock() {
         ParentUiAuthFixture.autoApprove = false
         try {
