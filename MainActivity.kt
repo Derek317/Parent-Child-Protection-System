@@ -4182,7 +4182,7 @@ class MainActivity : Activity() {
             card.addView(label(ScoresChildCopy.HOLD_TITLE, 16f, t.textPrimary, true, bottomPad = 6))
             card.addView(label(ScoresChildCopy.HOLD_BODY, 14f, t.textSecondary, bottomPad = 8))
             card.addView(label(ScoresChildCopy.HOLD_ASK, 14f, t.textPrimary, true, bottomPad = 8))
-            card.addView(actionButton(ScoresChildCopy.HOLD_ALLOW, t.btnSecondaryBg, t.btnSecondaryText) { RiskLocal.releaseCaptureHold(this); ScoresEngineBridge.acknowledgeNotice(this, "off"); renderUi() }.apply { tag = "scores_hold_agree" })
+            card.addView(actionButton(ScoresChildCopy.HOLD_ALLOW, t.btnSecondaryBg, t.btnSecondaryText, critical = true) { RiskLocal.releaseCaptureHold(this); ScoresEngineBridge.acknowledgeNotice(this, "off"); renderUi() }.apply { tag = "scores_hold_agree" })
             rootContainer.addView(card)
         }
         ScoresEngineBridge.pendingNotice(this)?.let {
@@ -4273,7 +4273,7 @@ class MainActivity : Activity() {
         if (decide) {
             // No pre-ticked box: the agree button is the only thing that accepts.
             rootContainer.addView(label("", 12f, t.textMuted, bottomPad = 8))
-            rootContainer.addView(actionButton(ScoresChildCopy.AGREE, t.btnPrimaryBg, t.btnPrimaryText) {
+            rootContainer.addView(actionButton(ScoresChildCopy.AGREE, t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
                 if (ScoresEngineBridge.accept(this, shownPolicyId, method)) navigateTo(if (ScoresEngineBridge.pendingNotice(this) == "on") "scores_change" else "overview")
                 else { Toast.makeText(this, ScoresChildCopy.ACCEPT_FAILED, Toast.LENGTH_LONG).show(); renderUi() }   // the page may be stale: draw what is asked now
             }.apply { tag = "scores_agree" })

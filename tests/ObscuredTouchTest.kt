@@ -98,6 +98,35 @@ class ObscuredTouchTest {
         } finally {child.pause().stop().destroy()}
     }
 
+    @Test fun scoresConsentAndHoldReleaseAreGuarded() {
+        val tiny="tiny model file for tests".toByteArray()
+        val sha=java.security.MessageDigest.getInstance("SHA-256").digest(tiny).joinToString(""){"%02x".format(it)}
+        ctx.getSharedPreferences("ig_guard_scores_consent",android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        RiskModelStore.directory(ctx).deleteRecursively()
+        GuardEngine.setFamilyToken(ctx,UUID.randomUUID().toString());GuardEngine.setRole(ctx,"child")
+        val id=UUID.randomUUID().toString()
+        prefs.edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey).putString("capture_policy_id",id).putString("capture_local_ack_id",id).commit()
+        RiskModelStore.memoryProbe={8L shl 30};RiskModelStore.abiProbe={true}
+        RiskModelStore.expectation=RiskModelStore.Expectation(tiny.size.toLong(),sha)
+        try {
+            assertEquals(RiskImportResult.OK,RiskModelStore.importModel(ctx,java.io.ByteArrayInputStream(tiny),{},tiny.size.toLong(),sha))
+            RiskLocal.receivePolicy(ctx,UUID.randomUUID().toString(),true,ScoresMethod.UPLOAD)
+            var c=Robolectric.buildActivity(MainActivity::class.java).setup()
+            try {
+                UiSupport.nav(c.get(),"scores_consent")
+                assertGuarded(all(c.get().window.decorView).single{it.tag=="scores_agree"},"scores agree")
+                assertFalse("not now stays usable under overlays",all(c.get().window.decorView).single{it.tag=="scores_not_now"}.filterTouchesWhenObscured)
+            } finally {c.pause().stop().destroy()}
+            assertTrue(RiskLocal.accept(ctx));RiskLocal.receivePolicy(ctx,UUID.randomUUID().toString(),false)
+            c=Robolectric.buildActivity(MainActivity::class.java).setup()
+            try { assertGuarded(all(c.get().window.decorView).single{it.tag=="scores_hold_agree"},"scores hold allow") } finally {c.pause().stop().destroy()}
+        } finally {
+            RiskModelStore.abiProbe={android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")}
+            RiskModelStore.expectation=RiskModelStore.Expectation(RiskModelSpec.FILE_BYTES,RiskModelSpec.FILE_SHA256)
+            RiskModelStore.memoryProbe={c->val i=android.app.ActivityManager.MemoryInfo();c.getSystemService(android.app.ActivityManager::class.java)?.getMemoryInfo(i);i.totalMem}
+            RiskModelStore.directory(ctx).deleteRecursively()
+        }
+    }
     @Test fun aFilteredTouchExplainsWhyAndOnlyCriticalControlsFilter() {
         ctx.getSharedPreferences("ig_guard_consent",android.content.Context.MODE_PRIVATE).edit().clear().commit()
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val root=c.get().findViewById<View>(android.R.id.content)
