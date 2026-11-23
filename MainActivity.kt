@@ -2748,10 +2748,9 @@ class MainActivity : Activity() {
             if(GuardEngine.isParentMode(this)){Toast.makeText(this,"請先設定 Android 螢幕鎖。",Toast.LENGTH_LONG).show();renderParentLock()}
             else {
                 // Not a parent screen: explain and stay where we are instead of showing a dead lock screen.
-                val notice=AlertDialog.Builder(this).setTitle("需要手機螢幕鎖").setMessage("要確認這個操作，請先在 Android 設定螢幕鎖，然後再試一次。")
+                alert().setTitle("需要手機螢幕鎖").setMessage("要確認這個操作，請先在 Android 設定螢幕鎖，然後再試一次。")
                     .setNegativeButton("知道了",null)
-                    .setPositiveButton("開啟安全設定"){_,_->try{startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))}catch(_:Exception){}}.create()
-                trackDialog(notice);notice.show()
+                    .setPositiveButton("開啟安全設定"){_,_->try{startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))}catch(_:Exception){}}.show()
             }
             return
         }
@@ -4119,14 +4118,13 @@ class MainActivity : Activity() {
     private fun maybeShowTermsUpdatedNotice() {
         if (!activityVisible || !parentUnlocked() || !AppConsent.termsUpdateNoticePending(this)) return
         AppConsent.markTermsUpdateNoticeSeen(this)
-        val dialog = AlertDialog.Builder(this).setTitle("條款已更新")
+        alert().setTitle("條款已更新")
             .setMessage("IG Guard 的使用條款已更新（修訂 ${AppConsent.VERSION}）。你原來的同意記錄保持不變，不需要重新同意；請在方便時查看新條款。")
             .setNegativeButton("知道了", null)
             .setPositiveButton("查看條款") { _, _ ->
                 val t = currentTheme()
                 showSheet("使用條款與同意記錄") { _ -> addView(label(AppConsent.reviewText(this@MainActivity), 14f, t.textPrimary).apply { setTextIsSelectable(true) }) }
-            }.create()
-        trackDialog(dialog); dialog.show()
+            }.show()
     }
     private fun maybeShowCaptureNotice() {
         if(!activityVisible || !GuardEngine.isChildMode(this) || section=="role" || activeSheet?.isShowing==true)return
@@ -4841,8 +4839,7 @@ class MainActivity : Activity() {
                         val message = if (roomDeleted) "舊中繼房間已刪除，但此手機沒有完成重新配對；原有本機資料已保留。舊邀請已不能使用，請重試「重新安全配對」以建立新配對。"
                             else if (resetSent) "子女手機可能已收到解除指令並變成未設定狀態，但此手機沒有完成重新配對；原有家庭資料已保留。請重試「重新安全配對」，或用目前的邀請重新配對子女手機。"
                             else "未能完成；原有資料已保留。請重試或聯絡支援。"
-                        val failure = AlertDialog.Builder(this@MainActivity).setTitle("未能完成重新配對").setMessage(message).setPositiveButton("知道了", null).create()
-                        trackDialog(failure); failure.show()
+                        alert().setTitle("未能完成重新配對").setMessage(message).setPositiveButton("知道了", null).show()
                     }
             }
             fun fresh() {
@@ -4928,19 +4925,27 @@ class MainActivity : Activity() {
         }
     }
     private fun warnObscured() { Toast.makeText(this, OBSCURED_TOUCH_MESSAGE, Toast.LENGTH_LONG).show() }
-    /** [critical] dialogs (destructive or identity-changing confirmations) ignore touches under another app's window and say so. */
+    /** The one dialog builder: the platform alert theme matching the app theme (list rows, ripples), then the card surface, 14 dp corners, token text and the app font.
+     *  [critical] dialogs (destructive or identity-changing confirmations) ignore touches under another app's window and say so. */
     private fun alert(critical: Boolean = false): AlertDialog.Builder {
         val session = GuardEngine.captureRelaySession(this)
-        return object : AlertDialog.Builder(this@MainActivity) {
+        val bright = GuardEngine.isBrightTheme(this); val t = themeColors(bright)
+        return object : AlertDialog.Builder(this@MainActivity, if (bright) android.R.style.Theme_Material_Light_Dialog_Alert else android.R.style.Theme_Material_Dialog_Alert) {
             override fun show(): AlertDialog = create().also { dialog ->
-                if (critical) dialog.setOnShowListener {
-                    for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) dialog.getButton(which)?.filterTouchesWhenObscured = true
-                    dialog.window?.let { window ->
-                        val inner = window.callback
-                        window.callback = object : Window.Callback by inner {
-                            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-                                if (event.actionMasked == MotionEvent.ACTION_DOWN && event.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED != 0) warnObscured()
-                                return inner.dispatchTouchEvent(event)
+                dialog.window?.setBackgroundDrawable(android.graphics.drawable.InsetDrawable(background(t.bgCard, 14, t.borderSubtle), dp(16)))
+                dialog.setOnShowListener {
+                    dialog.findViewById<TextView>(resources.getIdentifier("alertTitle", "id", "android"))?.apply { setTextColor(color(t.textPrimary)); typeface = font(true) }
+                    dialog.findViewById<TextView>(android.R.id.message)?.apply { setTextColor(color(t.textSecondary)); typeface = font() }
+                    for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) dialog.getButton(which)?.apply { setTextColor(color(t.accentSeafoam)); typeface = font(true); isAllCaps = false }
+                    if (critical) {
+                        for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) dialog.getButton(which)?.filterTouchesWhenObscured = true
+                        dialog.window?.let { window ->
+                            val inner = window.callback
+                            window.callback = object : Window.Callback by inner {
+                                override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                                    if (event.actionMasked == MotionEvent.ACTION_DOWN && event.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED != 0) warnObscured()
+                                    return inner.dispatchTouchEvent(event)
+                                }
                             }
                         }
                     }

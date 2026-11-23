@@ -83,4 +83,6 @@ class Checks(unittest.TestCase):
    p=dict(re.findall(r'(\w+) = "(#[0-9A-Fa-f]{6})"',raw))
    for a,b in [('textPrimary','bgCard'),('textSecondary','bgCard'),('textMuted','bgInput'),('btnPrimaryText','btnPrimaryBg'),('btnSecondaryText','btnSecondaryBg'),('accentSeafoam','bgCard'),('accentSeafoam','bgHero'),('warmHoney','bgCard'),('warmHoney','bgHero'),('warmCoral','bgHero'),('warmCoral','bgCard'),('riskLow','bgCard'),('riskLow','bgHero'),('warningButtonText','warningButtonBg')]:
     self.assertGreaterEqual(contrast(p[a],p[b]),4.5,(a,b,p[a],p[b]))
+ def test_dialogs_are_built_only_through_the_themed_alert_helper(self):
+  self.assertEqual(S.count('AlertDialog.Builder('),1,'build dialogs with alert() so they are themed, tracked and session-guarded')
 if __name__=='__main__': unittest.main()
