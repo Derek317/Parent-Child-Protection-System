@@ -22,13 +22,46 @@ class CollectionGuideTest : UploadTestBase() {
 
     private fun launch(): ActivityController<MainActivity> = Robolectric.buildActivity(MainActivity::class.java).setup().also { UiSupport.nav(it.get(), "overview") }
     private fun tagged(c: ActivityController<MainActivity>, tag: String) = UiSupport.all(c.get().window.decorView).single { it.tag == tag }
+    private fun idle() = shadowOf(android.os.Looper.getMainLooper()).idle()
+    /** One tap on the card's link: it must open the guide sheet and nothing else. */
+    private fun openGuide(c: ActivityController<MainActivity>): android.app.Dialog {
+        tagged(c, "scores_export_guide_link").performClick(); idle()
+        assertNull("the link only opens the sheet", shadowOf(c.get()).nextStartedActivity)
+        val sheet = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+        assertTrue(sheet.isShowing); assertFalse("the sheet is not the cloud notice", sheet is android.app.AlertDialog)
+        return sheet
+    }
+    private fun inSheet(sheet: android.app.Dialog, tag: String) = UiSupport.all(sheet.window!!.decorView).single { it.tag == tag }
 
+    @Test fun theCardKeepsOnlyTheLinkTheExportButtonAndTheImportRowInThatOrder() {
+        activate(ScoresMethod.UPLOAD)
+        val c = launch()
+        try {
+            val views = UiSupport.all(c.get().window.decorView)
+            val order = listOf("scores_export_guide_link", "scores_export_open", "scores_export_row").map { tag -> views.indexOfFirst { it.tag == tag } }
+            assertTrue("$order", order.all { it >= 0 } && order == order.sorted())
+            assertEquals(ScoresChildCopy.EXPORT_GUIDE_TITLE, (tagged(c, "scores_export_guide_link") as android.widget.TextView).text.toString())
+            val text = UiSupport.texts(c.get().window.decorView).joinToString("\n")
+            for (needle in listOf("Messages only", "four days", "Meta's", ScoresChildCopy.CLOUD_TITLE)) assertFalse("$needle is in the sheet, not on the card", text.contains(needle))
+            for (tag in listOf("scores_export_guide", "scores_cloud_title", "scores_cloud_drive", "scores_cloud_dropbox")) assertTrue(tag, views.none { it.tag == tag })
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun theGuideSheetHoldsTheStepsAndTheCloudSectionAndClosesWithItsButton() {
+        activate(ScoresMethod.UPLOAD)
+        val c = launch()
+        try {
+            val sheet = openGuide(c)
+            val text = UiSupport.texts(sheet.window!!.decorView).joinToString("\n")
+            for (needle in listOf(ScoresChildCopy.EXPORT_GUIDE_TITLE, "Messages only", "JSON", "four days", ScoresChildCopy.EXPORT_GUIDE_NOTE, ScoresChildCopy.CLOUD_TITLE, ScoresChildCopy.CLOUD_NOTICE)) assertTrue(needle, text.contains(needle))
+            for (tag in listOf("scores_export_guide", "scores_cloud_title", "scores_cloud_drive", "scores_cloud_dropbox")) inSheet(sheet, tag)
+            UiSupport.all(sheet.window!!.decorView).filterIsInstance<android.widget.Button>().single { it.text.toString() == "關閉" }.performClick(); idle()
+            assertFalse(sheet.isShowing)
+        } finally { c.pause().stop().destroy() }
+    }
     @Test fun theGuideOpensInstagramsOwnExportToolWithAFixedHttpsLinkAndNothingElse() {
         activate(ScoresMethod.UPLOAD)
         val c = launch()
         try {
-            val text = UiSupport.texts(c.get().window.decorView).joinToString("\n")
-            for (needle in listOf(ScoresChildCopy.EXPORT_GUIDE_TITLE, "Messages only", "JSON", "four days")) assertTrue(needle, text.contains(needle))
             tagged(c, "scores_export_open").performClick()
             val sent = shadowOf(c.get()).nextStartedActivity
             assertEquals(Intent.ACTION_VIEW, sent.action)
@@ -65,16 +98,17 @@ class CollectionGuideTest : UploadTestBase() {
         activate(ScoresMethod.UPLOAD)
         val c = launch()
         try {
-            val text = UiSupport.texts(c.get().window.decorView).joinToString("\n")
+            val sheet = openGuide(c)
+            val text = UiSupport.texts(sheet.window!!.decorView).joinToString("\n")
             for (needle in listOf("Meta's", "never sees it", "under that provider's terms")) assertTrue(needle, text.contains(needle))
-            tagged(c, "scores_cloud_drive").performClick(); shadowOf(android.os.Looper.getMainLooper()).idle()
+            inSheet(sheet, "scores_cloud_drive").performClick(); shadowOf(android.os.Looper.getMainLooper()).idle()
             assertNull("one tap only shows the notice", shadowOf(c.get()).nextStartedActivity)
             val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() as android.app.AlertDialog
             assertTrue(UiSupport.texts(dialog.window!!.decorView).any { it == ScoresChildCopy.CLOUD_NOTICE })
             dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).performClick(); shadowOf(android.os.Looper.getMainLooper()).idle()
             assertNull("cancel opens nothing", shadowOf(c.get()).nextStartedActivity)
             for ((tag, service) in listOf("scores_cloud_drive" to "GoogleDrive", "scores_cloud_dropbox" to "Dropbox")) {
-                tagged(c, tag).performClick(); shadowOf(android.os.Looper.getMainLooper()).idle()
+                inSheet(sheet, tag).performClick(); shadowOf(android.os.Looper.getMainLooper()).idle()
                 (org.robolectric.shadows.ShadowDialog.getLatestDialog() as android.app.AlertDialog).getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick()
                 shadowOf(android.os.Looper.getMainLooper()).idle()
                 val sent = shadowOf(c.get()).nextStartedActivity

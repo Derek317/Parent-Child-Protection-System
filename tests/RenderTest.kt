@@ -302,7 +302,7 @@ class ScoresScreenshotTest {
             RiskModelStore.abiProbe = { android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a") }
         }
     }
-    /** Tier 1 collection: the child's upload card (guide, picker row, optional cloud export, a good import) and the parent's freshness line. */
+    /** Tier 1 collection: the child's upload card (guide link, export button, picker row, a good import), its guide sheet (steps, optional cloud export) and the parent's freshness line. */
     @Test fun collectionUploadCardAndParentFreshnessInBothThemes() {
         try {
             for (bright in listOf(true, false)) {
@@ -311,7 +311,12 @@ class ScoresScreenshotTest {
                 RiskLocal.receivePolicy(ctx, java.util.UUID.randomUUID().toString(), true, ScoresMethod.UPLOAD); RiskLocal.accept(ctx); RiskLocal.acknowledgeChangeNotice(ctx)
                 InstagramImport.last = ImportSummary(ImportResult.OK, 3, 1, 42)
                 val c = ShotSupport.open("overview")
-                try { ShotSupport.shoot(c.get(), "tier1-collection-child-upload-$s", 360, 3400) } finally { c.pause().stop().destroy() }
+                try {
+                    ShotSupport.shoot(c.get(), "tier1-collection-child-upload-$s", 360, 3400)
+                    UiSupport.all(c.get().window.decorView).single { it.tag == "scores_export_guide_link" }.performClick()
+                    org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                    ShotSupport.shootDialog("tier1-collection-child-guide-sheet-$s", 360, 2400)
+                } finally { c.pause().stop().destroy() }
                 InstagramImport.dismiss()
                 val old = System.currentTimeMillis() - 10 * 86_400_000L
                 parentShot("tier1-collection-parent-scores-$s", height = 1900, bright = bright) {
