@@ -139,4 +139,25 @@ class NativeDesignTest {
         assertEquals("unconfigured",GuardEngine.getRole(ctx))
         c.destroy()
     }
+    @Test fun aNewPasswordNeedsTwelveCharactersAndNoCommonPatternButOldOnesStillVerify() {
+        for (weak in listOf("Summer2024", "abc12345", "Hk3x9Qm2", "aaaaaaaaaaa1", "ababababab12", "MyPassword2024", "qwerty123456x", "Family123456", "igguard2024ok", "abcdefghijkl", "123456789012"))
+            assertFalse(weak,GuardEngine.isStrongPasswordValid(weak))
+        for (strong in listOf("Harbour-Tram-1987", "ParentPrivate928!", "x7Kp2mQ9vLr4"))
+            assertTrue(strong,GuardEngine.isStrongPasswordValid(strong))
+        repeat(200) { val g=GuardEngine.generateRandomStrongPassword(); assertTrue(g,GuardEngine.isStrongPasswordValid(g) && g.length>=12) }
+        // A password set under the old 8-character rule keeps working: parent (plaintext) and child (verifier) sides.
+        GuardEngine.setRole(ctx,"parent");LocalVault.preferences(ctx).edit().putString("parent_master_password","Summer2024").commit()
+        assertTrue(GuardEngine.verifyParentPassword(ctx,"Summer2024"));assertFalse(GuardEngine.verifyParentPassword(ctx,"Summer2025"))
+        GuardEngine.setRole(ctx,"child");LocalVault.preferences(ctx).edit().putString("parent_password_verifier",FamilySecurity.passwordVerifier("Summer2024")).commit()
+        assertTrue(GuardEngine.verifyParentPassword(ctx,"Summer2024"))
+        // The setup screen recommends the generated password and refuses a short one without creating a family.
+        GuardEngine.setRole(ctx,"unconfigured");LocalVault.preferences(ctx).edit().remove("parent_master_password").remove("parent_password_verifier").commit()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
+        invoke(c.get(),"navigateTo","parent_setup")
+        assertNotNull(root(c.get()).findViewWithTag<TextView>("password_recommendation"))
+        all(root(c.get())).filterIsInstance<android.widget.EditText>().first().setText("Summer2024")
+        all(root(c.get())).filterIsInstance<Button>().first{it.text.toString()=="建立家庭"}.performClick()
+        assertEquals("unconfigured",GuardEngine.getRole(ctx))
+        c.destroy()
+    }
 }

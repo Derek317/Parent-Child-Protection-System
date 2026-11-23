@@ -547,22 +547,30 @@ object GuardEngine {
         if(isParentMode(ctx) && current==pending.optString("new_token") && FamilySecurity.validToken(old))listOf(current,old).distinct() else listOf(current)
     }
 
+    private val COMMON_PASSWORD_PARTS = listOf("password", "passw0rd", "qwerty", "123456", "abc123", "iloveyou", "igguard")
+    /**
+     * Rule for setting a NEW parent password: 12+ characters with a letter and a digit, at least 6 different characters, and none of
+     * the common stems above. The invite carries a PBKDF2 verifier that can be attacked offline, so short or common passwords are
+     * refused. Existing passwords are never re-checked: verification ([verifyParentPassword]) does not use this rule.
+     */
     fun isStrongPasswordValid(password: String): Boolean {
         val clean = password.trim()
-        if (clean.length < 8) return false
-        val hasLetter = clean.any { it.isLetter() }
-        val hasDigit = clean.any { it.isDigit() }
-        return hasLetter && hasDigit
+        if (clean.length < 12 || clean.toSet().size < 6) return false
+        val lower = clean.lowercase(Locale.ROOT)
+        if (COMMON_PASSWORD_PARTS.any { lower.contains(it) }) return false
+        return clean.any { it.isLetter() } && clean.any { it.isDigit() }
     }
 
     fun generateRandomStrongPassword(): String {
         val chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$"
         val rnd = SecureRandom()
-        return buildString {
-            append("Hk")
-            repeat(6) { append(chars[rnd.nextInt(chars.length)]) }
-            append(10 + rnd.nextInt(90))
-        }
+        return generateSequence {
+            buildString {
+                append("Hk")
+                repeat(10) { append(chars[rnd.nextInt(chars.length)]) }
+                append(10 + rnd.nextInt(90))
+            }
+        }.first { isStrongPasswordValid(it) }
     }
 
     private const val LOCKOUT_MS = 10 * 60_000L
@@ -3521,14 +3529,15 @@ class MainActivity : Activity() {
     private fun renderParentSetup(t: ThemeColors) {
         heading("從一個安心的家開始。", "設定只由家長保管的主密碼，再邀請子女手機加入。", t)
         rootContainer.addView(label("家長主密碼", 14f, t.textPrimary, true, bottomPad = 10))
-        val password = inputBox(t, "最少 8 位字元，包含字母及數字", "", true); rootContainer.addView(password)
+        val password = inputBox(t, "最少 12 位字元，包含字母及數字", "", true); rootContainer.addView(password)
         val error = label("", 13f, t.warmCoral); rootContainer.addView(error)
+        rootContainer.addView(label("建議使用下方產生的高強度密碼。配對邀請帶有由密碼推算的驗證資料，簡短或常見的密碼較易被猜中。", 13f, t.textSecondary, bottomPad = 8).apply { tag = "password_recommendation" })
         rootContainer.addView(textAction("產生高強度密碼") {
             password.setText(GuardEngine.generateRandomStrongPassword()); error.text = ""; password.error = null
         })
         rootContainer.addView(actionButton("建立家庭", t.btnPrimaryBg, t.btnPrimaryText) {
             val candidate = password.text.toString().trim()
-            if (!GuardEngine.isStrongPasswordValid(candidate)) { error.text = "請輸入最少 8 位字元，並同時包含字母及數字。"; password.error = "密碼長度或格式不正確"; return@actionButton }
+            if (!GuardEngine.isStrongPasswordValid(candidate)) { error.text = "請輸入最少 12 位字元，並同時包含字母及數字，避免常見密碼（例如 password、123456）。"; password.error = "密碼長度或格式不正確"; return@actionButton }
             GuardEngine.setFamilyToken(this, UUID.randomUUID().toString()); GuardEngine.setPin(this, candidate); GuardEngine.setRole(this, "parent")
             section = "overview"; syncRoleServices(); renderUi(animate = true)
         })
