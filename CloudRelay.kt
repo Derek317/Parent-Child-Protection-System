@@ -21,6 +21,8 @@ object CloudRelay {
     data class PublishResult(val accepted:Boolean,val message:String,val contextFull:Boolean=false,val expired:Boolean=false)
     private const val ROOM_RETIRED="中繼房間已刪除或已停用 · 請兩部手機重新配對"
     private const val DAY_MS=24*60*60_000L
+    /** The relay asks a child that proves its key to come back in 15 s while its parent has not registered that key (409). */
+    internal const val PAIRING_RETRY_MS=15_000L
     private val executor=ScheduledThreadPoolExecutor(1){task->Thread(task,"ig-guard-relay").apply{isDaemon=true}}.apply{removeOnCancelPolicy=true}
     private val client=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(0,TimeUnit.SECONDS)
         .pingInterval(60,TimeUnit.SECONDS).build()
@@ -29,16 +31,19 @@ object CloudRelay {
     @Volatile private var parentAlert:((JSONObject)->Unit)?=null
 
     /** Parent-authorized erasure uses the old room proof; it carries no replacement pairing secrets. */
-    fun retireRoom(ctx:Context, endpoint:String = BuildConfig.RELAY_BASE_URL, onComplete:(Boolean,String)->Unit) {
+    fun retireRoom(ctx:Context, endpoint:String = BuildConfig.RELAY_BASE_URL, onComplete:(Boolean,String)->Unit) = retire(ctx,endpoint,null,onComplete)
+    /** The same erasure for a QR pairing's rendezvous room (token S, v1 proof): on completion, cancel and expiry (design 2.5). */
+    internal fun retirePairingRoom(ctx:Context, token:String, endpoint:String = BuildConfig.RELAY_BASE_URL, onComplete:(Boolean,String)->Unit) = retire(ctx,endpoint,token,onComplete)
+    private fun retire(ctx:Context, endpoint:String, token:String?, onComplete:(Boolean,String)->Unit) {
         val origin:Triple<String,String,Int>;val request:Request
         try {
             check(GuardEngine.isParentMode(ctx) && GuardEngine.transferAllowed(ctx))
             origin=GuardEngine.captureRelaySession(ctx)
-            val scope=GuardEngine.getChannelTopicForToken(origin.second)
+            val scope=GuardEngine.getChannelTopicForToken(token ?: origin.second)
             val room=FamilyRelay.room(GuardEngine.relayPublicKey(ctx),scope)
             val socket=FamilyRelay.socketUrl(endpoint,room,BuildConfig.DEBUG)
             val url=socket.replaceFirst("wss://","https://").replaceFirst("ws://","http://")
-            request=Request.Builder().url(url).delete().header("Authorization",GuardEngine.relayAuthorization(ctx,origin.second)).build()
+            request=Request.Builder().url(url).delete().header("Authorization",GuardEngine.relayAuthorization(ctx,token ?: origin.second)).build()
         } catch(_:Exception){onComplete(false,"未能準備中繼刪除請求；目前配對保留。");return}
         executor.execute {
             if(GuardEngine.captureRelaySession(ctx)!=origin){onComplete(false,"配對已變更，刪除請求已停止。");return@execute}
@@ -92,6 +97,17 @@ object CloudRelay {
         active?.close();oldRoute?.close();active=null;oldRoute=null;parentAlert=null
     }
     }
+    /**
+     * A short-lived QR pairing room beside the family connection (design 2.5): the rendezvous room (v1 proofs, token S) or the
+     * new family room before the child has stored T1. Records are decrypted under [token] and handed to [onRecord]; nothing
+     * touches the family outbox or the family state. [onRefused] gets 401/403/410 or a
+     * `retired` notice (the pairing is over); other failures reconnect with the relay's Retry-After (15 s for 409). Callbacks run on the relay thread.
+     */
+    internal class PairingRoute(val publicKey:String,val token:String,val authorization:()->String,
+        val onReady:(JSONObject)->Unit,val onRecord:(JSONObject)->Unit,val onRefused:(Int)->Unit)
+    internal fun openPairingRoom(ctx:Context,route:PairingRoute,endpoint:String=BuildConfig.RELAY_BASE_URL):Connection =
+        Connection(ctx.applicationContext,Triple(GuardEngine.getRole(ctx),"",0),route.token,endpoint,route=route).also{it.start()}
+
     fun publishBlocking(ctx:Context,token:String,id:String,wire:String,kind:String):PublishResult {
         if(!AppConsent.hasAccepted(ctx))return PublishResult(false,"尚未同意使用條款，轉傳未啟用")
         val completed=CountDownLatch(1)
@@ -111,13 +127,19 @@ object CloudRelay {
         val origin:Triple<String,String,Int>,
         val token:String,
         endpoint:String,
-        private val temporary:Boolean=false
+        private val temporary:Boolean=false,
+        private val route:PairingRoute?=null
     ) {
-        private val publicKey=GuardEngine.relayPublicKey(ctx)
+        private val publicKey=route?.publicKey ?: GuardEngine.relayPublicKey(ctx)
         private val room=FamilyRelay.room(publicKey,GuardEngine.getChannelTopicForToken(token))
         private val url=FamilyRelay.socketUrl(endpoint,room,BuildConfig.DEBUG)
-        private val cooldownKey="relay_cooldown_${origin.first}_$room"
+        // A pairing room lives for minutes: its back-off stays in memory instead of the family's preferences.
+        private val cooldownKey=if(route==null)"relay_cooldown_${origin.first}_$room" else null
+        private var pairingCooldown=0L
         private val prefs=ctx.getSharedPreferences("ig_guard_prefs",Context.MODE_PRIVATE)
+        private fun cooldownUntil()=cooldownKey?.let{prefs.getLong(it,0)} ?: pairingCooldown
+        private fun setCooldown(until:Long){ if(cooldownKey!=null)prefs.edit().putLong(cooldownKey,until).commit() else pairingCooldown=until }
+        private fun clearCooldown(){ if(cooldownKey!=null)prefs.edit().remove(cooldownKey).commit() else pairingCooldown=0L }
         private var socket:WebSocket?=null
         private var ready=false
         @Volatile private var closed=false
@@ -129,11 +151,13 @@ object CloudRelay {
         private data class Pending(val json:JSONObject,val callback:(PublishResult)->Unit,var sent:Boolean=false,var timeout:ScheduledFuture<*>?=null)
         private val pending=linkedMapOf<String,Pending>()
         private fun current():Boolean {
+            // A pairing room is not the family session: it ends when its pairing ends (close) or consent is withdrawn.
+            if(route!=null)return !closed && AppConsent.hasAccepted(ctx)
             if(closed || !GuardEngine.transferAllowed(ctx) || GuardEngine.captureRelaySession(ctx)!=origin)return false
             return try{FamilyRelay.room(GuardEngine.relayPublicKey(ctx),GuardEngine.getChannelTopicForToken(token))==room}catch(_:Exception){false}
         }
         private fun state(text:String) {
-            if(!current())return
+            if(route!=null || !current())return
             GuardEngine.cpLastPollStatus=text
             if(origin.first=="parent")GuardEngine.cpParentStreamState=text
             ctx.sendBroadcast(android.content.Intent(GuardEngine.ACTION_UI_REFRESH).setPackage(ctx.packageName))
@@ -142,8 +166,8 @@ object CloudRelay {
         /** "Retry now": a person asked, so the client's own back-off (at most about 5 minutes) is dropped once.
          *  A longer delay came from the relay (Retry-After, retired room) and stays. */
         fun retryNow(){executor.execute{
-            if(socket!=null || prefs.getLong(cooldownKey,0)-System.currentTimeMillis()>301_000L)return@execute
-            prefs.edit().remove(cooldownKey).apply();reconnect?.cancel(false);reconnect=null;open()
+            if(socket!=null || cooldownUntil()-System.currentTimeMillis()>301_000L)return@execute
+            clearCooldown();reconnect?.cancel(false);reconnect=null;open()
         }}
         fun close(){executor.execute{stop()}}
         private fun stop() {
@@ -167,19 +191,28 @@ object CloudRelay {
         private fun open() {
             if(!current()){stop();return}
             if(socket!=null || reconnect?.isDone==false)return
-            val wait=prefs.getLong(cooldownKey,0)-System.currentTimeMillis()
+            val wait=cooldownUntil()-System.currentTimeMillis()
             if(wait>0){schedule(wait);state("中繼暫緩 · 加密記錄保留，約 ${maxOf(1,wait/1000)} 秒後重試");return}
             try {
-                val request=Request.Builder().url(url).header("Authorization",GuardEngine.relayAuthorization(ctx,token)).build()
+                val request=Request.Builder().url(url).header("Authorization",route?.authorization?.invoke() ?: GuardEngine.relayAuthorization(ctx,token)).build()
                 state("正在連接加密中繼 · 尚未代表家長收妥")
+                // Only a child that proves its own key (v2) can be told apart: 409 = its parent has not registered the key yet.
+                val keyedChild=route==null && origin.first=="child" && GuardEngine.childKeyAlias(ctx)!=null
                 socket=client.newWebSocket(request,object:WebSocketListener(){
                     override fun onMessage(ws:WebSocket,text:String){executor.execute{incoming(ws,text)}}
                     override fun onFailure(ws:WebSocket,error:Throwable,response:Response?){executor.execute{
                         if(socket!==ws){response?.close();return@execute}
-                        val delay=if(response?.code in listOf(401,403))300_000L else response?.header("Retry-After")?.toLongOrNull()?.times(1000)
-                        // A retired room stays retired for months: say so, and ask at most daily in case it was re-registered.
-                        if(response?.code==410)fail(ROOM_RETIRED,DAY_MS)
-                        else fail("連線未完成 · ${when(response?.code){null->"網絡未能連線";401,403->"中繼未接受此配對的驗證";else->"中繼暫時未能回應"}} · 記錄保留",delay)
+                        val code=response?.code
+                        val delay=if(code in listOf(401,403))300_000L else response?.header("Retry-After")?.toLongOrNull()?.times(1000)
+                        when {
+                            route!=null && code in listOf(401,403,410) -> {stop();route.onRefused(code!!)}
+                            (route!=null || keyedChild) && code==409 -> fail("正在等待家長手機完成配對 · 15 秒後重試",PAIRING_RETRY_MS,exact=true)
+                            // Its key is not the one registered for this locked room: nothing is wiped, the person is told.
+                            keyedChild && code==401 -> {GuardEngine.cpChildKeyRefused=true;fail("中繼未接受此手機的配對金鑰 · 需要重新配對",delay)}
+                            // A retired room stays retired for months: say so, and ask at most daily in case it was re-registered.
+                            code==410 -> fail(ROOM_RETIRED,DAY_MS)
+                            else -> fail("連線未完成 · ${when(code){null->"網絡未能連線";401,403->"中繼未接受此配對的驗證";else->"中繼暫時未能回應"}} · 記錄保留",delay)
+                        }
                         response?.close()
                     }}
                     override fun onClosing(ws:WebSocket,code:Int,reason:String){ws.close(code,"")}
@@ -195,12 +228,13 @@ object CloudRelay {
             val items=pending.values.toList();pending.clear()
             for(item in items){item.timeout?.cancel(false);item.callback(PublishResult(false,text))}
         }
-        private fun fail(text:String,serverDelay:Long?=null) {
+        /** [exact]: wait exactly [serverDelay] (the relay's fixed 15 s for a key not registered yet), not the growing back-off. */
+        private fun fail(text:String,serverDelay:Long?=null,exact:Boolean=false) {
             val old=socket;socket=null;ready=false;old?.cancel()
             val exponential=min(300_000L,2000L*(1L shl failures.coerceAtMost(8)))+Random.nextLong(1000)
             failures=(failures+1).coerceAtMost(8)
-            val backoff=maxOf(serverDelay?.coerceIn(1000,24*60*60_000L) ?: 0L,exponential)
-            prefs.edit().putLong(cooldownKey,System.currentTimeMillis()+backoff).commit()
+            val backoff=if(exact && serverDelay!=null)serverDelay else maxOf(serverDelay?.coerceIn(1000,24*60*60_000L) ?: 0L,exponential)
+            setCooldown(System.currentTimeMillis()+backoff)
             state(text);finishAll(text)
             if(current() && !temporary)schedule(backoff)
         }
@@ -212,7 +246,7 @@ object CloudRelay {
                 if(delay>0){flush?.cancel(false);flush=executor.schedule({sendNext()},delay,TimeUnit.MILLISECONDS);return}
                 // Cached frames may have expired or been discarded while awaiting socket readiness.
                 val id=item.json.getString("id")
-                val eligible=try{FamilyEvidence(ctx).use{it.pendingEvent(GuardEngine.getChannelTopicForToken(token),id)}}
+                val eligible=route!=null || try{FamilyEvidence(ctx).use{it.pendingEvent(GuardEngine.getChannelTopicForToken(token),id)}}
                     catch(_:Exception){fail("未能核對本機待傳期限；傳送已停止。");return}
                 if(!eligible) {
                     pending.remove(id);item.timeout?.cancel(false)
@@ -234,8 +268,9 @@ object CloudRelay {
                 when(message.optString("type")) {
                     "ready" -> {
                         require(message.optInt("protocol")==1)
-                        ready=true;prefs.edit().remove(cooldownKey).commit()
+                        ready=true;clearCooldown()
                         state("加密中繼已連線 · 家長收妥需另行確認")
+                        if(route!=null){route.onReady(message);sendNext();return}
                         sendNext();if(!temporary)GuardEngine.retryPendingAlerts(ctx)
                     }
                     "accepted" -> {
@@ -254,6 +289,12 @@ object CloudRelay {
                         require(message.opt("buffered") is Boolean && message.optString("wire").toByteArray(Charsets.UTF_8).size<4096)
                         require(message.optString("delivery_id").matches(Regex("[a-f0-9-]{36}")))
                         require(AlertFrames.digest(message.getString("wire").toByteArray(Charsets.UTF_8))==message.getString("digest"))
+                        if(route!=null) {
+                            // Only a record that decrypts under the pairing token goes on; the relay copy is consumed either way.
+                            GuardEngine.decryptPayload(route.token,message.getString("wire"))?.let(route.onRecord)
+                            if(message.getBoolean("buffered"))ws.send(JSONObject().put("type","consume").put("id",message.getString("id")).put("digest",message.getString("digest")).toString())
+                            return
+                        }
                         val outer=JSONObject().put("event","message").put("id",message.getString("delivery_id")).put("message",message.getString("wire"))
                         val result=GuardEngine.processIncomingRelayLine(ctx,outer.toString(),origin.first,parentAlert,token,origin.third)
                         if(result==RelayConsumption.RETRY){fail("本機尚未完成儲存 · 中繼記錄保留並重試");return}
@@ -261,8 +302,8 @@ object CloudRelay {
                         if(message.getBoolean("buffered"))ws.send(JSONObject().put("type","consume").put("id",message.getString("id")).put("digest",message.getString("digest")).toString())
                         if(!current())stop()
                     }
-                    "peer" -> if(message.optBoolean("online")){ws.send("{\"type\":\"replay\"}");GuardEngine.retryPendingAlerts(ctx)}
-                    "retired" -> fail(ROOM_RETIRED,DAY_MS)
+                    "peer" -> if(message.optBoolean("online")){ws.send("{\"type\":\"replay\"}");if(route==null)GuardEngine.retryPendingAlerts(ctx)}
+                    "retired" -> if(route!=null){stop();route.onRefused(410)} else fail(ROOM_RETIRED,DAY_MS)
                     "error" -> {
                         val code=message.optString("code").takeIf{it.matches(Regex("[a-z_]{1,40}"))}?:"relay_unavailable"
                         val id=message.optString("id")

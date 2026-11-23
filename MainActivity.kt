@@ -263,8 +263,22 @@ object GuardEngine {
     @Volatile var cpLastHttpStatus: String = "已就緒，連線已加密"
     @Volatile var cpLastPollStatus: String = "尚未同步"
     @Volatile var cpParentStreamState: String = "閒置"
+    /** Child: the relay answered 401 to this phone's own key proof (another key is registered for the room). Nothing is wiped. */
+    @Volatile var cpChildKeyRefused: Boolean = false
 
-    private val EMOJI_PALETTE = arrayOf(
+    // QR pairing state (design m2 rev. 3). Child: the alias of its signing key K once a QR pairing completed; its records are then
+    // signed. Parent: K pinned (canonical text), when the accept happened (until the child's first verified record), a failed
+    // pairing marker, the replay state of the child's control records, the last tamper notice time and a count of quiet drops.
+    private const val CHILD_KEY_ALIAS = "child_signing_alias"
+    private const val PINNED_CHILD_KEY = "pinned_child_key"
+    private const val PAIRING_PENDING_MS = "child_pairing_pending_ms"
+    private const val PAIRING_FAILED = "child_pairing_failed"
+    private const val CHILD_RECORD_STATE = "child_record_state_json"
+    private const val TAMPER_NOTICE_MS = "child_tamper_notice_ms"
+    private const val QUIET_DROPS = "child_quiet_drops"
+    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS)
+
+    internal val EMOJI_PALETTE = arrayOf(
         "🐼", "🦁", "🐬", "🦊", "🐨", "🐯", "🦄", "🐝",
         "🚀", "🌈", "🍀", "🌻", "🍎", "🍉", "⚽", "🎸"
     )
@@ -484,7 +498,7 @@ object GuardEngine {
         else constantTimeEquals(candidate.trim(), prefs(ctx).getString("parent_master_password", "") ?: "") && candidate.isNotBlank()
     }
 
-    private fun parentPasswordVerifier(ctx: Context): String = synchronized(pollLock) {
+    internal fun parentPasswordVerifier(ctx: Context): String = synchronized(pollLock) {
         prefs(ctx).getString("parent_share_verifier", null)?.takeIf { FamilySecurity.isVerifier(it) }
             ?: FamilySecurity.passwordVerifier(getPin(ctx)).also { prefs(ctx).edit().putString("parent_share_verifier", it).apply() }
     }
@@ -538,10 +552,38 @@ object GuardEngine {
         val key=if(isParentMode(ctx))parentIdentity(ctx).publicKey else prefs(ctx).getString("parent_command_public_key","").orEmpty()
         require(FamilySecurity.validPublicKey(key)){"Pairing needs a pinned parent key"};key
     }
+    /** v2 proofs only for the current family room of a QR pairing (parent: carrying the pinned K; child: signed by K). Every other
+     *  room (5.2 pairings, the room left by a rotation, a rendezvous room) keeps v1; a v1 parent never removes the relay's child lock. */
     fun relayAuthorization(ctx:Context,token:String):String = synchronized(pollLock) {
         val scope=getChannelTopicForToken(token)
-        if(isParentMode(ctx))FamilyRelay.parentAuthorization(parentIdentity(ctx),scope,token)
-        else {check(isChildMode(ctx));FamilyRelay.childAuthorization(relayPublicKey(ctx),scope,token)}
+        val family=token==getOrCreateFamilyToken(ctx)
+        if(isParentMode(ctx)) {
+            val pinned=pinnedChildKey(ctx)
+            if(family && pinned!=null)FamilyRelay.parentAuthorizationV2(parentIdentity(ctx),scope,token,pinned)
+            else FamilyRelay.parentAuthorization(parentIdentity(ctx),scope,token)
+        } else {
+            check(isChildMode(ctx))
+            val alias=childKeyAlias(ctx)
+            if(family && alias!=null)FamilyRelay.childAuthorizationV2(relayPublicKey(ctx),scope,token,FamilySecurity.loadChildSigningKey(ctx,alias))
+            else FamilyRelay.childAuthorization(relayPublicKey(ctx),scope,token)
+        }
+    }
+    /** Child: K's alias after a completed QR pairing; null for a 5.2 pairing (records keep the unsigned 5.2 format). */
+    fun childKeyAlias(ctx:Context):String? = prefs(ctx).getString(CHILD_KEY_ALIAS,null)?.takeIf{isChildMode(ctx)}
+    /** Parent: the child key pinned by a QR pairing; null for a 5.2 pairing, shown as not verified. */
+    fun pinnedChildKey(ctx:Context):String? = prefs(ctx).getString(PINNED_CHILD_KEY,null)?.takeIf{isParentMode(ctx)}
+    /** Parent: accepted on this phone, waiting for the child's first verified record (design 2.5 P7). */
+    fun childPairingPending(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getLong(PAIRING_PENDING_MS,0L)>0L
+    /** Parent: the last QR pairing was rolled back because the child never confirmed within 10 minutes. */
+    fun childPairingFailed(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getBoolean(PAIRING_FAILED,false)
+    /** Parent: signed records refused quietly (valid signature, outside the rules); a local count only. */
+    fun childQuietDrops(ctx:Context):Int = prefs(ctx).getInt(QUIET_DROPS,0)
+    /** Forgets this phone's child signing key (new pairing, reset, role change, purge). A Keystore entry that cannot be deleted
+     *  is left behind unreferenced: nothing signs with it again. */
+    private fun forgetChildKey(ctx:Context) {
+        val alias=prefs(ctx).getString(CHILD_KEY_ALIAS,null) ?: return
+        check(prefs(ctx).edit().remove(CHILD_KEY_ALIAS).commit())
+        try{FamilySecurity.deleteChildSigningKey(ctx,alias)}catch(_:Exception){}
     }
     private fun relayRouteTokens(ctx:Context):List<String> = synchronized(pollLock) {
         val current=getOrCreateFamilyToken(ctx)
@@ -736,7 +778,7 @@ object GuardEngine {
             "parent_password_verifier","parent_command_public_key","trusted_csv","flagged_offenders_csv","child_self_handle","sent_setup_ok",
             "parent_last_child_hb_ms","parent_last_child_hb_text","parent_hb_missing_alerted","weekly_stats_json","parent_alerts_json",
             "synced_15m_code","synced_15m_exp","unlock_until_ms","synced_15m_rt","synced_15m_start_rt","synced_15m_boot",
-            "unlock_until_rt","unlock_start_rt","unlock_boot","pw_lockout_rt","pw_lockout_start_rt","pw_lockout_boot"))editor.remove(key)
+            "unlock_until_rt","unlock_start_rt","unlock_boot","pw_lockout_rt","pw_lockout_start_rt","pw_lockout_boot")+parentChildKeys)editor.remove(key)
         check(editor.remove("fresh_family_recovery_json").commit())
         pauseTamperUntilMs=0L;relayGeneration++;CloudRelay.disconnect()
     }
@@ -851,6 +893,7 @@ object GuardEngine {
             "trusted_csv", "flagged_offenders_csv", "child_self_handle", "sent_setup_ok", "next_heartbeat_at_ms",
             "synced_15m_code", "synced_15m_exp", "synced_15m_rt", "synced_15m_start_rt", "synced_15m_boot")) editor.remove(key)
         check(editor.commit())
+        forgetChildKey(ctx)
         relayGeneration++
         CloudRelay.disconnect()
     }
@@ -896,7 +939,7 @@ object GuardEngine {
             if (previous != role) {relayGeneration++;CloudRelay.disconnect()}
             prefs(ctx).edit().putString("role", role).apply()
             // Leaving the child role (including a remote reset) ends scores-only mode and deletes the scoring store.
-            if (previous == "child" && role != "child") RiskLocal.resetFamily(ctx)
+            if (previous == "child" && role != "child") { RiskLocal.resetFamily(ctx); forgetChildKey(ctx) }
         }
         syncChildComponents(ctx)
         // The child role was set or confirmed: install the model included in the app, if any (no-op everywhere else).
@@ -1004,7 +1047,9 @@ object GuardEngine {
                         "pw_lockout_rt", "pw_lockout_start_rt", "pw_lockout_boot",
                         "capture_policy_id","capture_local_ack_id","capture_child_ack_id","capture_sequence",
                         "parent_master_password", "parent_share_verifier", "parent_password_verifier", "parent_command_public_key", "trusted_csv", "flagged_offenders_csv",
-                        "child_self_handle", "pw_failed_count", "pw_lockout_until_ms", "sent_setup_ok", "next_heartbeat_at_ms", "checkpoint_logs")) editor.remove(key)
+                        "child_self_handle", "pw_failed_count", "pw_lockout_until_ms", "sent_setup_ok", "next_heartbeat_at_ms", "checkpoint_logs") + parentChildKeys) editor.remove(key)
+                    // A new family never keeps the previous family's child key; a QR pairing stores its own after this.
+                    forgetChildKey(ctx)
                     pauseTamperUntilMs = 0L
                     synchronized(this) { recentAlerts.clear(); seenNotifMsgTimestamps.clear() }
                     editor.remove("weekly_stats_json").remove("parent_alerts_json").remove("seen_msg_ids")
@@ -1106,7 +1151,7 @@ object GuardEngine {
      * Before the old family is replaced, a tamper alert is queued to it; with [noticeWaitMs] > 0 (background thread only)
      * delivery is awaited for that long. Relay delivery after the switch is impossible, so a notice not yet accepted is lost.
      */
-    fun applyPairing(ctx: Context, invite: FamilySecurity.Invite, parentPassword: String? = null, noticeWaitMs: Long = 0L): Boolean {
+    fun applyPairing(ctx: Context, invite: FamilySecurity.Invite, parentPassword: String? = null, noticeWaitMs: Long = 0L, childKeyAlias: String? = null): Boolean {
         if (!inviteUsable(ctx, invite)) return false
         if (isChildMode(ctx)) {
             if (parentPassword.isNullOrBlank() || lockoutRemainingMs(ctx) > 0L) return false
@@ -1121,10 +1166,13 @@ object GuardEngine {
             // Pairing is a fresh authorization, even if the same family invite is reused.
             grantTemporaryUnlock(ctx, 0)
             storeChildVerifier(ctx, invite.passwordVerifier)
-            prefs(ctx).edit().putString("parent_command_public_key", invite.parentPublicKey)
+            val editor = prefs(ctx).edit().putString("parent_command_public_key", invite.parentPublicKey)
                 .remove("capture_policy_id").remove("capture_local_ack_id").remove("capture_child_ack_id")
                 .remove("synced_15m_code").remove("synced_15m_exp").remove("synced_15m_rt").remove("synced_15m_start_rt").remove("synced_15m_boot")
-                .putBoolean("sent_setup_ok", false).apply()
+                .putBoolean("sent_setup_ok", false)
+            // A QR pairing (design 2.5 C6): from now on every record to the parent is signed with this key.
+            if (childKeyAlias != null) { forgetChildKey(ctx); editor.putString(CHILD_KEY_ALIAS, childKeyAlias) }
+            check(editor.commit())
             setRole(ctx, "child"); scheduleNextRandomHeartbeat(ctx)
             true
         }
@@ -1139,6 +1187,77 @@ object GuardEngine {
         sendAlertFromChild(ctx, "tamper_attempt", "Deep-Link Guard",
             "有程式在子女手機開啟了家庭配對邀請。更換家庭需要家長主密碼；每小時最多通知一次。", bypassDedupe = true)
     }
+    // ---------------- QR pairing (design m2 rev. 3, 2.5): storage and relay side of the state machines ----------------
+    fun newParentPairing(ctx: Context): ParentPairing {
+        check(isParentMode(ctx))
+        return ParentPairing({ FamilySecurity.signCommand(it, parentIdentity(ctx).privateKey) }, EMOJI_PALETTE.toList())
+    }
+    /** [created] receives K as soon as it exists: the child proves it to the new family room before M3 (relay v2). */
+    fun newChildPairing(ctx: Context, created: (FamilySecurity.ChildSigningKey) -> Unit = {}): ChildPairing =
+        ChildPairing({ FamilySecurity.createChildSigningKey(ctx).also(created) }, { FamilySecurity.deleteChildSigningKey(ctx, it) }, EMOJI_PALETTE.toList())
+
+    /**
+     * Parent, after ParentPairing.accept and the fresh authentication (design 2.5 P6). (a) In one state transaction T1 replaces the
+     * family token (history kept, as a rotation does), K is pinned and the child's record state starts empty. (b) M3 is queued in the
+     * new room's outbox: the family connection opens that room with the v2 proof carrying K and publishes nothing before the relay's
+     * `ready`, so the room is registered and locked to K before (c) M3 can go out. A failed registration is retried by the outbox
+     * like any record; the overview says the pairing is not complete until the child's first verified record, and after
+     * [Pairing.CONFIRM_WINDOW_MS] without one [expireUnconfirmedChildPairing] unpins K. [onSent] reports M3's relay acceptance, after
+     * which the caller retires the rendezvous room (d). Null: nothing changed.
+     */
+    fun completeParentPairing(ctx: Context, result: ParentPairing.Result, now: Long = System.currentTimeMillis(), onSent: ((Boolean) -> Unit)? = null): String? {
+        val eventId = synchronized(pollLock) {
+            if (!isParentMode(ctx) || !FamilySecurity.validToken(result.token) || result.family.token != result.token) return null
+            val key = FamilySecurity.canonicalKeyText(result.childKey) ?: return null
+            val parentKey = parentIdentity(ctx).publicKey
+            if (FamilySecurity.canonicalKeyText(parentKey) == key) return null
+            val eventId = result.complete.optString("event_id")
+            if (!eventId.startsWith("control:")) return null
+            setFamilyToken(ctx, result.token, preserveFamilyHistory = true)
+            val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json")
+            for (stale in listOf(PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted")) editor.remove(stale)
+            check(editor.commit())
+            relayGeneration++; CloudRelay.disconnect()
+            val scope = getChannelTopicForToken(result.token)
+            val frames = AlertFrames.split(result.complete).mapIndexed { index, frame -> "$eventId:$index" to encryptPayload(result.token, frame.toString()) }
+            FamilyEvidence(ctx).use { it.enqueueBatch(scope, frames, role = "parent", kind = "control") }
+            if (onSent != null) deliveryCallbacks[scope to eventId] = DeliveryCallback(captureRelaySession(ctx)) { ok, _ -> onSent(ok) }
+            addCheckpointLog(ctx, "CP3-PAIR", "已固定子女手機金鑰，等待子女手機確認")
+            eventId
+        }
+        CloudRelay.connect(ctx); retryPendingAlerts(ctx)
+        return eventId
+    }
+
+    /** Parent: an accepted pairing whose child sent no verified record within 10 minutes is undone (nothing stays pinned, the queued
+     *  M3 is dropped); the overview then asks for a new pairing. True when it rolled back. */
+    fun expireUnconfirmedChildPairing(ctx: Context, now: Long = System.currentTimeMillis()): Boolean = synchronized(pollLock) {
+        if (!isParentMode(ctx)) return false
+        val since = prefs(ctx).getLong(PAIRING_PENDING_MS, 0L)
+        if (since == 0L || now - since < Pairing.CONFIRM_WINDOW_MS) return false
+        FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx), "parent") }
+        check(prefs(ctx).edit().remove(PINNED_CHILD_KEY).remove(PAIRING_PENDING_MS).remove(CHILD_RECORD_STATE).putBoolean(PAIRING_FAILED, true).commit())
+        addCheckpointLog(ctx, "CP3-PAIR", "子女手機未在 10 分鐘內確認；配對已取消")
+        relayGeneration++; CloudRelay.disconnect()
+        true
+    }
+
+    /**
+     * Child, after ChildPairing.onComplete (design 2.5 C6): T1, P, the verifier and K's alias are stored through [applyPairing], so a
+     * phone already in child mode needs the current parent password and tells its old family first, exactly as a 5.2 re-pair. Then a
+     * signed pairing_verified goes out at once. Off the main thread when [noticeWaitMs] > 0. False: nothing stored and K deleted.
+     */
+    fun completeChildPairing(ctx: Context, result: ChildPairing.Result, parentPassword: String? = null, noticeWaitMs: Long = 0L): Boolean {
+        val ok = try {
+            FamilySecurity.canonicalKeyText(FamilySecurity.loadChildSigningKey(ctx, result.childKeyAlias).publicKey) == FamilySecurity.canonicalKeyText(result.childKey) &&
+                applyPairing(ctx, FamilySecurity.Invite(result.token, result.passwordVerifier, result.parentKey), parentPassword, noticeWaitMs, result.childKeyAlias)
+        } catch (_: Exception) { false }
+        if (!ok) { try { FamilySecurity.deleteChildSigningKey(ctx, result.childKeyAlias) } catch (_: Exception) {}; return false }
+        cpChildKeyRefused = false
+        sendAlertFromChild(ctx, "pairing_verified", Build.MODEL ?: "Child_Phone", "子女手機已用 QR 碼完成配對。", bypassDedupe = true)
+        return true
+    }
+
     private fun announceRepair(ctx: Context, waitMs: Long) = noticeToParent(ctx, "Re-pair Guard",
         "子女手機已用家長主密碼確認，改為配對另一個家庭。若這不是你操作的，請盡快查看。", waitMs)
     /** The child phone confirmed with the parent password that it is leaving the family (role switch to unconfigured). */
@@ -2613,6 +2732,7 @@ class ParentAlertService : Service() {
         override fun run() {
             if(!running || !GuardEngine.isParentMode(this@ParentAlertService))return
             checkHeartbeatMissing()
+            if(GuardEngine.expireUnconfirmedChildPairing(applicationContext))sendBroadcast(Intent(GuardEngine.ACTION_UI_REFRESH).setPackage(packageName))
             CloudRelay.connect(applicationContext){fireNativeParentNotification(it)}
             GuardEngine.retryPendingAlerts(applicationContext)
             watchdogHandler.postDelayed(this,60_000L)
