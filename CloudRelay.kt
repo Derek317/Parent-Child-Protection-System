@@ -22,7 +22,9 @@ object CloudRelay {
     private const val ROOM_RETIRED="中繼房間已刪除或已停用 · 請兩部手機重新配對"
     private const val DAY_MS=24*60*60_000L
     /** The relay asks a child that proves its key to come back in 15 s while its parent has not registered that key (409). */
-    internal const val PAIRING_RETRY_MS=15_000L
+    @Volatile internal var PAIRING_RETRY_MS=15_000L
+    /** The relay base URL; tests point both phones at a local fake relay (debug builds allow http to localhost). */
+    @Volatile internal var endpoint:String=BuildConfig.RELAY_BASE_URL
     private val executor=ScheduledThreadPoolExecutor(1){task->Thread(task,"ig-guard-relay").apply{isDaemon=true}}.apply{removeOnCancelPolicy=true}
     private val client=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(0,TimeUnit.SECONDS)
         .pingInterval(60,TimeUnit.SECONDS).build()
@@ -31,9 +33,9 @@ object CloudRelay {
     @Volatile private var parentAlert:((JSONObject)->Unit)?=null
 
     /** Parent-authorized erasure uses the old room proof; it carries no replacement pairing secrets. */
-    fun retireRoom(ctx:Context, endpoint:String = BuildConfig.RELAY_BASE_URL, onComplete:(Boolean,String)->Unit) = retire(ctx,endpoint,null,onComplete)
+    fun retireRoom(ctx:Context, endpoint:String = this.endpoint, onComplete:(Boolean,String)->Unit) = retire(ctx,endpoint,null,onComplete)
     /** The same erasure for a QR pairing's rendezvous room (token S, v1 proof): on completion, cancel and expiry (design 2.5). */
-    internal fun retirePairingRoom(ctx:Context, token:String, endpoint:String = BuildConfig.RELAY_BASE_URL, onComplete:(Boolean,String)->Unit) = retire(ctx,endpoint,token,onComplete)
+    internal fun retirePairingRoom(ctx:Context, token:String, endpoint:String = this.endpoint, onComplete:(Boolean,String)->Unit) = retire(ctx,endpoint,token,onComplete)
     private fun retire(ctx:Context, endpoint:String, token:String?, onComplete:(Boolean,String)->Unit) {
         val origin:Triple<String,String,Int>;val request:Request
         try {
@@ -70,7 +72,7 @@ object CloudRelay {
         val old=if(temporary)oldRoute else active
         if(old!=null && old.usable && old.origin==session && old.token==token)return old
         old?.close()
-        val next=Connection(ctx.applicationContext,session,token,BuildConfig.RELAY_BASE_URL,temporary)
+        val next=Connection(ctx.applicationContext,session,token,endpoint,temporary)
         if(temporary)oldRoute=next else active=next
         return next
     }
@@ -105,7 +107,7 @@ object CloudRelay {
      */
     internal class PairingRoute(val publicKey:String,val token:String,val authorization:()->String,
         val onReady:(JSONObject)->Unit,val onRecord:(JSONObject)->Unit,val onRefused:(Int)->Unit)
-    internal fun openPairingRoom(ctx:Context,route:PairingRoute,endpoint:String=BuildConfig.RELAY_BASE_URL):Connection =
+    internal fun openPairingRoom(ctx:Context,route:PairingRoute,endpoint:String=this.endpoint):Connection =
         Connection(ctx.applicationContext,Triple(GuardEngine.getRole(ctx),"",0),route.token,endpoint,route=route).also{it.start()}
 
     fun publishBlocking(ctx:Context,token:String,id:String,wire:String,kind:String):PublishResult {

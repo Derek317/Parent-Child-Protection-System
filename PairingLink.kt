@@ -57,12 +57,16 @@ internal class ParentPairingLink(
         val s = machine.start(GuardEngine.relayPublicKey(ctx), clock())
         start = s
         val token = s.rendezvous.token
-        socket = try {
+        // As on the child: callbacks of a connection that is no longer this link's socket are ignored.
+        var mine: PairingSocket? = null
+        fun current() = mine != null && socket === mine
+        mine = try {
             open(ctx, CloudRelay.PairingRoute(GuardEngine.relayPublicKey(ctx), token, { GuardEngine.relayAuthorization(ctx, token) },
-                onReady = { ready -> main.post { ready(ready) } },
-                onRecord = { record -> main.post { hello(record) } },
-                onRefused = { main.post { if (!ended) { relay = Relay.REFUSED; machine.cancel(); finish() } } }))
+                onReady = { ready -> main.post { if (current()) ready(ready) } },
+                onRecord = { record -> main.post { if (current()) hello(record) } },
+                onRefused = { main.post { if (current() && !ended) { relay = Relay.REFUSED; machine.cancel(); finish() } } }))
         } catch (_: Exception) { relay = Relay.UNREACHABLE; machine.cancel(); finish(); return }
+        socket = mine
         main.postDelayed(ticker, 1_000L)
         onChange()
     }
@@ -156,17 +160,26 @@ internal class ChildPairingLink(
     }
     private fun connect(room: Pairing.Rendezvous, authorization: () -> String) {
         socket?.close()
-        socket = try {
+        // Every callback first checks that its connection is still this link's current one: a room left behind (the rendezvous
+        // room after M2, which the parent retires) can never advance or cancel the pairing.
+        var mine: PairingSocket? = null
+        fun current() = mine != null && socket === mine
+        mine = try {
             open(ctx, CloudRelay.PairingRoute(parentKey, room.token, authorization,
-                onReady = { main.post { if (!ended) hello?.let { o -> socket?.publish(o.id, o.wire) {} } } },
-                onRecord = { record -> main.post { received(record) } },
-                onRefused = { main.post { if (!ended) { refused = true; machine.cancel(); stop() } } }))
+                onReady = { main.post { if (current() && !ended) hello?.let { o -> socket?.publish(o.id, o.wire) {} } } },
+                onRecord = { record -> main.post { if (current()) received(record) } },
+                onRefused = { main.post { if (current() && !ended) { refused = true; machine.cancel(); stop() } } }))
         } catch (_: Exception) { refused = true; machine.cancel(); stop(); null }
+        socket = mine
     }
     private fun received(record: JSONObject) {
         if (ended) return
         when (machine.state) {
-            ChildPairingState.AwaitingReply, is ChildPairingState.ShowingDigits -> machine.onReply(record, clock())
+            ChildPairingState.AwaitingReply -> if (machine.onReply(record, clock())) {
+                // M2 accepted: leave the rendezvous room now, before the parent retires it.
+                socket?.close(); socket = null; hello = null
+            }
+            is ChildPairingState.ShowingDigits -> machine.onReply(record, clock())
             ChildPairingState.AwaitingComplete -> machine.onComplete(record, clock())?.let { result -> stop(); onResult(result); return }
             else -> {}
         }
