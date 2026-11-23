@@ -54,6 +54,9 @@ class TestKeyStore : KeyStoreSpi() {
         var failEcImport = false
         var failEcSigning = false
         var ecAuthenticationRequired = false
+        /** Whether each EC generation asked for StrongBox; [failStrongBox] makes such a request fail as a phone without it does. */
+        val strongBoxRequests = java.util.Collections.synchronizedList(mutableListOf<Boolean>())
+        var failStrongBox = false
     }
     override fun engineLoad(stream: InputStream?, password: CharArray?) { check(!failReads) { "Synthetic unavailable Keystore" } }
     override fun engineStore(stream: OutputStream?, password: CharArray?) = throw UnsupportedOperationException()
@@ -110,15 +113,20 @@ class TestEcPrivateKey(val delegate: PrivateKey) : PrivateKey {
 
 class EcTestKeys : KeyPairGeneratorSpi() {
     private var alias = ""
+    private var strongBox = false
     override fun initialize(keysize: Int, random: SecureRandom?) = throw UnsupportedOperationException()
     override fun initialize(params: AlgorithmParameterSpec, random: SecureRandom?) {
         alias = params.javaClass.getMethod("getKeystoreAlias").invoke(params) as String
+        // isStrongBoxBacked exists from API 28 only.
+        strongBox = try { params.javaClass.getMethod("isStrongBoxBacked").invoke(params) as Boolean } catch (_: NoSuchMethodException) { false }
         TestKeyStore.ecAuthenticationRequired = params.javaClass.getMethod("isUserAuthenticationRequired").invoke(params) as Boolean
         val curve = params.javaClass.getMethod("getAlgorithmParameterSpec").invoke(params) as ECGenParameterSpec
         require(curve.name == "secp256r1")
     }
     override fun generateKeyPair(): KeyPair {
         check(!TestKeyStore.failEcGeneration) { "Synthetic EC generation failure" }
+        TestKeyStore.strongBoxRequests.add(strongBox)
+        if (strongBox && TestKeyStore.failStrongBox) throw ProviderException("Synthetic StrongBox unavailable")
         val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
         TestKeyStore.privateKeys[alias] = TestEcPrivateKey(pair.private)
         // Generation only needs a public-key certificate; import separately demands a real, signed X.509 certificate.
