@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — final review build (local, not published)
+## Final review build — local, not published (23 November 2026)
 
 Local build for the final review. Not released; version name and code are unchanged (5.1). Bundled Terms revision `2026-11-23-v7`. The Terms have not been reviewed by a lawyer and are not legal advice. Nothing here is approved by Meta, and the scores still do not reliably detect grooming.
 
