@@ -223,4 +223,34 @@ class QrPairingUiTest {
             } finally { c.pause().stop().destroy() }
         }
     }
+
+    /** The overview for a parent state with no paired child: [tag]'s banner, [card] on the child card, nothing that looks verified or waiting. */
+    private fun unpairedOverview(mark: String, tag: String, card: String, banner: List<String>) {
+        for (bright in listOf(true, false)) {
+            prefs.edit().clear().commit()
+            GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD); GuardEngine.setBrightTheme(ctx, bright)
+            prefs.edit().putBoolean(mark, true).commit()
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+            try {
+                call(a, "navigateTo", "overview")
+                val shell = field(a, "screenShell").get(a) as View
+                val note = shell.findViewWithTag<View>(tag)
+                assertNotNull(note)
+                val noteText = all(note).filterIsInstance<TextView>().joinToString("\n") { it.text.toString() }
+                for (part in banner) assertTrue("$tag: '$part' in $noteText", noteText.contains(part))
+                val texts = all(shell).filterIsInstance<TextView>().map { it.text.toString() }
+                assertTrue(texts.contains(card))
+                assertTrue(texts.none { it.contains("等待子女手機") || it.contains("已收到子女回報") || it.contains("子女回報逾時") })
+                assertNull(shell.findViewWithTag<View>("child_not_verified"))
+                assertTrue(all(shell).filterIsInstance<Button>().any { it.text.contains("重新配對 · Pair again") })
+                shell.measure(View.MeasureSpec.makeMeasureSpec(390, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(844, View.MeasureSpec.EXACTLY)); shell.layout(0, 0, 390, 844)
+                val bitmap = Bitmap.createBitmap(390, 844, Bitmap.Config.ARGB_8888); shell.draw(Canvas(bitmap))
+                File("build/test-screenshots/qr-parent-banner-$tag-${suffix(bright)}.png").apply { parentFile?.mkdirs() }.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            } finally { c.pause().stop().destroy() }
+        }
+    }
+
+    @Test fun parentOverviewSaysPlainlyThatTheChildWasRemotelyReset() =
+        unpairedOverview("child_remote_reset", "child_remote_reset", "已遠端重設 · Remotely reset",
+            listOf("子女手機已遠端重設", "沒有與任何子女手機配對", "請用 QR 碼重新配對", "The child phone was remotely reset", "not paired with any child phone", "Pair again with the QR code"))
 }

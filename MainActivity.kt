@@ -275,7 +275,10 @@ object GuardEngine {
     private const val CHILD_RECORD_STATE = "child_record_state_json"
     private const val TAMPER_NOTICE_MS = "child_tamper_notice_ms"
     private const val QUIET_DROPS = "child_quiet_drops"
-    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS)
+    // Parent: the event id of a signed remote reset queued for a pinned child, and the mark set once the relay holds it.
+    private const val REMOTE_RESET_EVENT = "child_remote_reset_event"
+    private const val CHILD_REMOTE_RESET = "child_remote_reset"
+    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, REMOTE_RESET_EVENT, CHILD_REMOTE_RESET)
 
     internal val EMOJI_PALETTE = arrayOf(
         "🐼", "🦁", "🐬", "🦊", "🐨", "🐯", "🦄", "🐝",
@@ -575,11 +578,14 @@ object GuardEngine {
     fun childPairingPending(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getLong(PAIRING_PENDING_MS,0L)>0L
     /** Parent: the last QR pairing was rolled back because the child never confirmed within 10 minutes. */
     fun childPairingFailed(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getBoolean(PAIRING_FAILED,false)
-    enum class ChildTrust { NO_CHILD, NOT_VERIFIED, PAIRING, PAIRING_FAILED, VERIFIED }
+    /** Parent: the relay took a signed remote reset for the pinned child; no child is paired until a new QR pairing. */
+    fun childRemotelyReset(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getBoolean(CHILD_REMOTE_RESET,false)
+    enum class ChildTrust { NO_CHILD, NOT_VERIFIED, PAIRING, PAIRING_FAILED, VERIFIED, REMOTE_RESET }
     /** Parent overview model: NOT_VERIFIED is a child that reports without a pinned key (a 5.2 pairing): a permanent banner. */
     fun childTrust(ctx:Context):ChildTrust = when {
         childPairingPending(ctx) -> ChildTrust.PAIRING
         pinnedChildKey(ctx)!=null -> ChildTrust.VERIFIED
+        childRemotelyReset(ctx) -> ChildTrust.REMOTE_RESET
         childPairingFailed(ctx) -> ChildTrust.PAIRING_FAILED
         hasChildHeartbeat(ctx) -> ChildTrust.NOT_VERIFIED
         else -> ChildTrust.NO_CHILD
@@ -830,6 +836,9 @@ object GuardEngine {
         // Sent just before the parent deletes the relay room: the child must not keep that room's secrets or unsent records.
         if (resetChildToUnconfigured && purgeFamily && !queued) command.put("purge_family", true)
         if (resetChildToUnconfigured) lastResetEvent = getChannelTopicForToken(oldToken) to "control:" + command.getString("command_id")
+        // A pinned child deletes K on receipt: once the relay holds this reset the pin is dropped (recordRelayAcceptance).
+        if (resetChildToUnconfigured && pinnedChildKey(ctx) != null)
+            check(prefs(ctx).edit().putString(REMOTE_RESET_EVENT, "control:" + command.getString("command_id")).commit())
         if (!resetChildToUnconfigured) check(prefs(ctx).edit().putString("pending_rotation_json",
             JSONObject().put("old_token", oldToken).put("new_token", newToken).put("command",command).toString()).commit())
         postEncryptedToChannel(ctx, getChannelTopicForToken(oldToken), oldToken, command.toString(),onComplete={ success, _ ->
@@ -1224,7 +1233,7 @@ object GuardEngine {
             if (!eventId.startsWith("control:")) return null
             setFamilyToken(ctx, result.token, preserveFamilyHistory = true)
             val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json")
-            for (stale in listOf(PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted")) editor.remove(stale)
+            for (stale in listOf(PAIRING_FAILED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted")) editor.remove(stale)
             check(editor.commit())
             relayGeneration++; CloudRelay.disconnect()
             val scope = getChannelTopicForToken(result.token)
@@ -1789,6 +1798,21 @@ object GuardEngine {
             if(frame.waitForReceipt || rotation)db.relayAccepted(scope,frame.id,System.currentTimeMillis()) else db.acknowledge(scope,frame.id)
         }
         if(rotation)completePendingRotation(ctx)
+        val event=frame.id.substringBeforeLast(':')
+        if(isParentMode(ctx) && scope==getChannelTopic(ctx) && event==prefs(ctx).getString(REMOTE_RESET_EVENT,null) &&
+            FamilyEvidence(ctx).use{it.unacceptedEventCount(scope,event)==0})markChildRemotelyReset(ctx)
+    }
+    /**
+     * The relay holds every frame of a signed remote reset for the pinned child, which deletes K and its pairing on receipt. Rule: the
+     * pin, the pending-pairing mark, the child's record state and its last report are dropped and the reset is remembered, so the
+     * overview says so and processIncomingRelayLine refuses every later record on this family, signed or not (no fall-back to the
+     * unsigned 5.2 format). The family token stays until a new QR pairing replaces it and clears the mark: the reset still waits in its room.
+     */
+    private fun markChildRemotelyReset(ctx:Context) {
+        val editor=prefs(ctx).edit().putBoolean(CHILD_REMOTE_RESET,true)
+        for(key in listOf(PINNED_CHILD_KEY,PAIRING_PENDING_MS,CHILD_RECORD_STATE,REMOTE_RESET_EVENT,"parent_last_child_hb_ms","parent_last_child_hb_text","parent_hb_missing_alerted"))editor.remove(key)
+        check(editor.commit())
+        addCheckpointLog(ctx,"CP3-RESET","子女手機已遠端重設；已停止信任其金鑰，須用 QR 碼重新配對")
     }
     fun retryPendingAlerts(ctx: Context, force: Boolean = false) {
         if (!AppConsent.hasAccepted(ctx) || getRole(ctx)=="unconfigured") return
@@ -1869,6 +1893,8 @@ object GuardEngine {
         val innerStr = outer.optString("message")
         val token = getOrCreateFamilyToken(ctx)
         val decoded = decryptPayload(token, innerStr) ?: return RelayConsumption.REJECTED
+        // Remotely reset (markChildRemotelyReset): paired with no child phone, so no record is taken, signed or not, until a new QR pairing.
+        if (role == "parent" && pinnedChildKey(ctx) == null && childRemotelyReset(ctx)) return RelayConsumption.REJECTED
         val decrypted = if (decoded.optString("type") == "alert_fragment") {
             if (role != "parent" && !(role=="child" && decoded.optString("event_id").startsWith("control:"))) return RelayConsumption.REJECTED
             // A late part of a record already taken: reassembly would return the stored (unwrapped) record, which the gate must not see.
@@ -3630,6 +3656,7 @@ class MainActivity : Activity() {
         val t = currentTheme()
         statusText.text = when (GuardEngine.getRole(this)) {
             "parent" -> when {
+                GuardEngine.childRemotelyReset(this) -> "子女手機已遠端重設 · 須用 QR 碼重新配對"
                 GuardEngine.isChildHeartbeatOverdue(this) -> "子女回報逾時 · 請查看連接狀態"
                 GuardEngine.hasChildHeartbeat(this) -> "已收到子女回報 · 加密守護通道"
                 else -> childReportWaiting()
@@ -3728,7 +3755,7 @@ class MainActivity : Activity() {
         card.addView(label(if (handle.isEmpty()) "子女手機" else "@$handle", 16f, t.textPrimary, true, bottomPad = 8))
         GuardEngine.expireUnconfirmedChildPairing(this)
         val trust = GuardEngine.childTrust(this)
-        val waiting = if (connected) "" else childReportWaiting()
+        val waiting = if (connected) "" else if (trust == GuardEngine.ChildTrust.REMOTE_RESET) "已遠端重設 · Remotely reset" else childReportWaiting()
         card.addView(label(if (connected) (if (trust == GuardEngine.ChildTrust.NOT_VERIFIED) "未核實 · " else "") + GuardEngine.getLastChildHeartbeatInfo(this) else waiting, 13f, t.textSecondary))
         if (connected && GuardEngine.isChildCaptureHeld(this)) card.addView(label(ScoresUi.PARENT_CAPTURE_HELD, 13f, t.textPrimary, true, topPad = 6))
         if (!connected && trust == GuardEngine.ChildTrust.NO_CHILD) card.addView(textAction("加入子女 · Add a child") { startParentPairing() })
@@ -3863,6 +3890,10 @@ class MainActivity : Activity() {
             }
             GuardEngine.ChildTrust.PAIRING_FAILED -> {
                 rootContainer.addView(stateNote(Note.ERROR, "上次配對未完成：子女手機未在 10 分鐘內確認。\nThe last pairing did not complete: the child phone did not confirm within 10 minutes.", t, cardTag = "child_pairing_failed"))
+                rootContainer.addView(textAction("重新配對 · Pair again") { startParentPairing() })
+            }
+            GuardEngine.ChildTrust.REMOTE_RESET -> {
+                rootContainer.addView(stateNote(Note.WARNING, "子女手機已遠端重設。此手機現時沒有與任何子女手機配對，亦不會接受來自該手機的回報；請用 QR 碼重新配對。\nThe child phone was remotely reset. This phone is now not paired with any child phone and accepts no reports from it. Pair again with the QR code.", t, cardTag = "child_remote_reset"))
                 rootContainer.addView(textAction("重新配對 · Pair again") { startParentPairing() })
             }
             else -> {}

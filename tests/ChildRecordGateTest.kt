@@ -164,4 +164,41 @@ class ChildRecordGateTest {
         assertEquals(RelayConsumption.CONSUMED, deliver(frame))
         assertEquals("banner gone", GuardEngine.ChildTrust.VERIFIED, GuardEngine.childTrust(ctx))
     }
+
+    private fun relayTakesEverythingQueued() { for (frame in FamilyEvidence(ctx).use { it.due(scope, Long.MAX_VALUE, "parent") }) GuardEngine.recordRelayAcceptance(ctx, scope, frame) }
+
+    /** Remote reset of a pinned child: once the relay holds it, K is unpinned and nothing later "from" that child is taken. */
+    @Test fun aRemoteResetOfAVerifiedChildUnpinsItAndRefusesEveryLaterRecordUntilANewQrPairing() {
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(heartbeat())))
+        assertEquals(GuardEngine.ChildTrust.VERIFIED, GuardEngine.childTrust(ctx)); assertTrue(GuardEngine.hasChildHeartbeat(ctx))
+        val familyToken = token
+        GuardEngine.rotateKeyAndNotifyChild(ctx, true)
+        assertEquals("queued, not yet with the relay", GuardEngine.ChildTrust.VERIFIED, GuardEngine.childTrust(ctx))
+        relayTakesEverythingQueued()
+        assertEquals(GuardEngine.ChildTrust.REMOTE_RESET, GuardEngine.childTrust(ctx)); assertTrue(GuardEngine.childRemotelyReset(ctx))
+        assertNull("the pin is dropped", GuardEngine.pinnedChildKey(ctx))
+        assertFalse("not a silent offline child", GuardEngine.hasChildHeartbeat(ctx) || GuardEngine.isChildHeartbeatOverdue(ctx))
+        assertEquals("the token stays until a new QR pairing", familyToken, token)
+        val kept = stored()
+        for (frame in listOf(signed(heartbeat()), heartbeat(), signed(heartbeat(), by = stranger), signed(scoresReport().put("command_id", UUID.randomUUID().toString()))))
+            assertEquals(RelayConsumption.REJECTED, deliver(frame))
+        assertEquals(kept, stored()); assertEquals(0L, lastSeen()); assertEquals(GuardEngine.ChildTrust.REMOTE_RESET, GuardEngine.childTrust(ctx))
+        // Pairing again with the QR code clears the mark and replaces the token.
+        val rooms = FakeRooms(); val link = ParentPairingLink(ctx, {}, rooms.opener)
+        link.begin(); rooms.rooms[0].ready()
+        val child = ChildPairing({ FamilySecurity.createChildSigningKey(ctx) }, { FamilySecurity.deleteChildSigningKey(ctx, it) }, QrPairing.palette)
+        rooms.rooms[0].deliver(child.start(link.qrText!!, "Pixel 7", System.currentTimeMillis())!!.hello)
+        assertTrue(child.onReply(rooms.rooms[0].records().single(), System.currentTimeMillis()))
+        assertTrue(link.enterDigits((child.state as ChildPairingState.ShowingDigits).digits))
+        child.confirm(System.currentTimeMillis()); assertTrue(link.accept())
+        assertFalse(GuardEngine.childRemotelyReset(ctx)); assertEquals(GuardEngine.ChildTrust.PAIRING, GuardEngine.childTrust(ctx))
+        assertNotEquals(familyToken, token)
+    }
+
+    @Test fun aRemoteResetOfA52PairingChangesNothingOnTheParent() {
+        prefs.edit().remove("pinned_child_key").commit()
+        assertEquals(RelayConsumption.CONSUMED, deliver(heartbeat()))
+        GuardEngine.rotateKeyAndNotifyChild(ctx, true); relayTakesEverythingQueued()
+        assertFalse(GuardEngine.childRemotelyReset(ctx)); assertEquals(GuardEngine.ChildTrust.NOT_VERIFIED, GuardEngine.childTrust(ctx))
+    }
 }
