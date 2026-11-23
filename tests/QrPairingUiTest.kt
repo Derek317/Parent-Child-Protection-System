@@ -106,6 +106,10 @@ class QrPairingUiTest {
                 cleared.setText(right); idle()
                 assertTrue(all(dialog.window!!.decorView).filterIsInstance<Button>().single { it.tag == "pairing_accept" }.isEnabled)
                 save(dialog, "qr-parent-ready-${suffix(bright)}")
+                // The accept step is confirmed with the device's own lock, never a typed parent password.
+                val acceptTexts = all(dialog.window!!.decorView).filterIsInstance<TextView>().map { it.text.toString() }
+                assertTrue(acceptTexts.any { it.contains("用此手機的螢幕鎖或生物辨識確認") && it.contains("this phone's screen lock or biometric") })
+                assertTrue(acceptTexts.none { it.contains("密碼") || it.contains("password", ignoreCase = true) })
                 assertTrue(link.accept())
                 save(dialog, "qr-parent-finishing-${suffix(bright)}")
                 // Cancelled states on fresh links.

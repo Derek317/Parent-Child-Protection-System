@@ -4003,7 +4003,7 @@ class MainActivity : Activity() {
                         renderUi()
                     }
                 }.apply { isEnabled = ready; tag = "pairing_accept" })
-                body.addView(label("按「接受」後需要再次驗證家長身份。\nAfter Accept you confirm it with your device lock.", 12f, t.textMuted, bottomPad = 6))
+                body.addView(label("按「接受」後，用此手機的螢幕鎖或生物辨識確認。\nAfter Accept you confirm it with this phone's screen lock or biometric.", 12f, t.textMuted, bottomPad = 6))
                 closeButton()
             }
             else -> closeButton("關閉 · Close")

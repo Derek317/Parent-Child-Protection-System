@@ -70,7 +70,7 @@
 
 ### 2D. 配對、子女手機的簽署金鑰及相機
 
-**以 QR 碼配對。** 新的配對只用 QR 碼：家長手機顯示一次性 QR 碼，子女手機當面掃描。QR 碼每次都是新的，3分鐘內有效，只可使用一次；內含一次性秘密及家長手機的公鑰，不含任何長期秘密。掃描後，兩部手機之間自行協定新的家庭秘密；該秘密不會顯示、輸入，亦不會經聊天程式傳送。子女手機會顯示6位數字，家長須在家長手機輸入（最多3次），再以家長密碼接受；子女在自己的手機確認。兩部手機亦顯示四個圖案，只作視覺輔助。如有兩部手機回應同一個 QR 碼，配對即停止。聊天邀請（配對文字或連結）不再用於新的配對，子女手機會拒絕它們。
+**以 QR 碼配對。** 新的配對只用 QR 碼：家長手機顯示一次性 QR 碼，子女手機當面掃描。QR 碼每次都是新的，3分鐘內有效，只可使用一次；內含一次性秘密及家長手機的公鑰，不含任何長期秘密。掃描後，兩部手機之間自行協定新的家庭秘密；該秘密不會顯示、輸入，亦不會經聊天程式傳送。子女手機會顯示6位數字，家長須在家長手機輸入（最多3次），再按「接受」，並以家長手機本身的螢幕鎖或生物辨識（指紋、圖案或 PIN）確認；子女在自己的手機確認。兩部手機亦顯示四個圖案，只作視覺輔助。如有兩部手機回應同一個 QR 碼，配對即停止。聊天邀請（配對文字或連結）不再用於新的配對，子女手機會拒絕它們。
 
 **此版本之前的配對。** 之前已配對的手機繼續運作；父母手機會持續顯示「未核實」提示，直至兩部手機再以 QR 碼配對。
 
@@ -179,7 +179,7 @@ The model can be wrong in both directions. It cannot reliably tell sexual conver
 
 ### 2D. Pairing, the child phone's signing key and the camera
 
-**Pairing by QR code.** New pairings use only a QR code: the parent phone shows a one-time QR code and the child phone scans it in person. The code is new each time, valid for 3 minutes and works once. It holds a one-time secret and the parent phone's public key; it holds no long-term secret. After the scan the two phones agree a new family secret between themselves; it is never shown, typed or sent through a chat app. The child phone then shows 6 digits, the parent types them on the parent phone (3 tries), and then accepts with the parent password; the child confirms on its own phone. Four pictures are also shown on both phones as a visual aid only. If two phones answer the same QR code, pairing stops. Chat invitations (the pairing text or link) are no longer used for new pairings, and a child phone refuses them.
+**Pairing by QR code.** New pairings use only a QR code: the parent phone shows a one-time QR code and the child phone scans it in person. The code is new each time, valid for 3 minutes and works once. It holds a one-time secret and the parent phone's public key; it holds no long-term secret. After the scan the two phones agree a new family secret between themselves; it is never shown, typed or sent through a chat app. The child phone then shows 6 digits, the parent types them on the parent phone (3 tries), and then accepts, confirming with the parent phone's own screen lock or biometric (fingerprint, pattern or PIN); the child confirms on its own phone. Four pictures are also shown on both phones as a visual aid only. If two phones answer the same QR code, pairing stops. Chat invitations (the pairing text or link) are no longer used for new pairings, and a child phone refuses them.
 
 **Pairings made before this version.** They keep working. The parent phone shows a permanent "not verified" (未核實) notice until the two phones are paired again with the QR code.
 
