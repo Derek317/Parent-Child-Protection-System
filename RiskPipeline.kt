@@ -464,7 +464,7 @@ internal object RiskLocal {
     /** Store and results only: queued reports (such as the "model is valid" state) are left alone. */
     private fun wipeStore(ctx: Context) = retrying("store") {
         FamilyEvidence(ctx).use { it.wipeRisk() }
-        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(LAST_IMPORT).remove(WIPE_PENDING).commit()
+        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(LAST_IMPORT).remove(WIPE_PENDING).remove(RiskBatch.IN_FLIGHT).commit()
     }
 
     /** Leaving the child role, a new family, or a remote reset: data plus all mode state and the consent receipt. */
@@ -898,6 +898,8 @@ internal object RiskBatch {
     @Volatile internal var instructionLoader: (Context) -> String? = { ctx -> checkedInstruction(ctx.resources.openRawResource(R.raw.risk_instruction_v1).use { it.readBytes() }) }
 
     private fun failed(app: Context, outcome: Outcome): Result { RiskLocal.recordFailure(app); return Result(outcome) }
+    /** Content-free marker (scope, blind thread index, sequence) of the scorer call in progress. */
+    internal const val IN_FLIGHT = "risk_scoring_in_flight"
 
     /**
      * A thread whose scorer call throws anything but [RiskContextTooLong] is stored as "insufficient_context" at its
@@ -916,6 +918,20 @@ internal object RiskBatch {
         halt()?.let { return Result(it) }
         val instruction = instructionLoader(app) ?: return failed(app, Outcome.INSTRUCTION_MISMATCH)
         val scope = GuardEngine.getChannelTopicForToken(session.second)
+        val prefs = LocalVault.preferences(app)
+        // Still set from the last run: that scorer call took the process down (native abort, out of memory). The thread is not
+        // retried on every charging window: it is stored as "needs review" at the sequence it had, which the parent sees,
+        // and it is scored again as soon as it has new messages.
+        prefs.getString(IN_FLIGHT, null)?.let { raw ->
+            prefs.edit().remove(IN_FLIGHT).commit()
+            try {
+                val marker = JSONObject(raw)
+                if (marker.getString("scope") == scope) {
+                    Log.w("IGGuard", "A thread stopped the last scoring run; marked for review until new messages arrive")
+                    FamilyEvidence(app).use { it.saveRiskResult(scope, marker.getString("thread"), marker.getLong("seq"), null, "insufficient_context", System.currentTimeMillis()) }
+                }
+            } catch (_: Exception) { }
+        }
         val due = FamilyEvidence(app).use { it.riskDueThreads(scope) }
         var scored = 0
         var review = 0
@@ -937,6 +953,8 @@ internal object RiskBatch {
                     if (messages.isEmpty()) continue
                     var score: Double? = null
                     var reason: String? = null
+                    // Written to disk before the call; only a process death leaves it behind.
+                    prefs.edit().putString(IN_FLIGHT, JSONObject().put("scope", scope).put("thread", thread).put("seq", seq).toString()).commit()
                     try {
                         val result = RiskScoring.fromLogits(RiskFit.score(scorer, instruction, messages))
                         score = result.reportScore
@@ -945,7 +963,7 @@ internal object RiskBatch {
                     } catch (e: Exception) {
                         Log.w("IGGuard", "One thread could not be scored: ${e.javaClass.simpleName}")
                         reason = "insufficient_context"; failures++
-                    }
+                    } finally { prefs.edit().remove(IN_FLIGHT).commit() }
                     // A pause, withdrawal or session change during the (uninterruptible) scorer call discards the result.
                     val after = halt()
                     if (after != null) { outcome = after; break }

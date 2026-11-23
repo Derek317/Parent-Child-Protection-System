@@ -420,6 +420,33 @@ class ScoresModeChildTest {
         FamilyEvidence(ctx).use { assertEquals("context_too_long", it.riskReportRows(scope, System.currentTimeMillis()).single().reason) }
         assertEquals("context_too_long", reports().last().getJSONArray("conversations").getJSONObject(0).getString("review_reason"))
     }
+    @Test fun aThreadThatKilledTheProcessIsMarkedForReviewAndRetriedOnlyWithNewMessages() {
+        activate(); capture(obs(text(1)), obs(text(2)))
+        // While the scorer runs, the in-flight marker is on disk; an ordinary failure clears it.
+        var seenDuring: String? = null
+        runBatch(FakeScorer(onScore = { seenDuring = prefs.getString(RiskBatch.IN_FLIGHT, null); throw IllegalStateException("native failure") }))
+        assertNull(prefs.getString(RiskBatch.IN_FLIGHT, null))
+        val (thread, _) = JSONObject(seenDuring!!).let { it.getString("thread") to it.getLong("seq") }
+        assertEquals(scope, JSONObject(seenDuring!!).getString("scope"))
+        // New messages, then a scorer call that kills the process: no finally runs, so the marker stays as written.
+        capture(obs(text(3)))
+        val seq = FamilyEvidence(ctx).use { db -> db.riskDueThreads(scope).single() }.also { assertEquals(thread, it.first) }.second
+        prefs.edit().putString(RiskBatch.IN_FLIGHT, JSONObject().put("scope", scope).put("thread", thread).put("seq", seq).toString()).commit()
+        // Next charging window: the marked thread is not given to the scorer again, it is stored as "needs review".
+        val next = FakeScorer()
+        runBatch(next)
+        assertTrue("the crashing thread is not retried", next.prompts.isEmpty())
+        assertNull(prefs.getString(RiskBatch.IN_FLIGHT, null))
+        FamilyEvidence(ctx).use { db ->
+            assertTrue(db.riskDueThreads(scope).isEmpty())
+            val row = db.riskReportRows(scope, System.currentTimeMillis()).single(); assertNull(row.score); assertEquals("insufficient_context", row.reason)
+        }
+        // New messages make it due again and it is scored.
+        capture(obs(text(4)))
+        val retry = FakeScorer(); runBatch(retry)
+        assertEquals(1, retry.prompts.size)
+        FamilyEvidence(ctx).use { db -> assertNotNull(db.riskReportRows(scope, System.currentTimeMillis()).single().score) }
+    }
     @Test fun aPaddedThreadIsScoredOnTheNewestMessagesThatFit() {
         activate()
         capture(*Array(12) { obs(text(it) + " " + "填".repeat(300)) })
