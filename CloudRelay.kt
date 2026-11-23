@@ -172,7 +172,10 @@ object CloudRelay {
             clearCooldown();reconnect?.cancel(false);reconnect=null;open()
         }}
         fun close(){executor.execute{stop()}}
+        /** The parent's own family connection: its continuous readiness gates the records-not-delivered warning. */
+        private val parentFamily=route==null && !temporary && origin.first=="parent"
         private fun stop() {
+            if(parentFamily)GuardEngine.parentRelayReady(false)
             closed=true;ready=false;reconnect?.cancel(false);flush?.cancel(false)
             socket?.close(1000,"Session ended");socket=null
             finishAll("原連線已停止；加密記錄仍由本機佇列保管")
@@ -232,6 +235,7 @@ object CloudRelay {
         }
         /** [exact]: wait exactly [serverDelay] (the relay's fixed 15 s for a key not registered yet), not the growing back-off. */
         private fun fail(text:String,serverDelay:Long?=null,exact:Boolean=false) {
+            if(parentFamily)GuardEngine.parentRelayReady(false)
             val old=socket;socket=null;ready=false;old?.cancel()
             val exponential=min(300_000L,2000L*(1L shl failures.coerceAtMost(8)))+Random.nextLong(1000)
             failures=(failures+1).coerceAtMost(8)
@@ -271,6 +275,7 @@ object CloudRelay {
                     "ready" -> {
                         require(message.optInt("protocol")==1)
                         ready=true;clearCooldown()
+                        if(parentFamily)GuardEngine.parentRelayReady(true)
                         state("加密中繼已連線 · 家長收妥需另行確認")
                         if(route!=null){route.onReady(message);sendNext();return}
                         sendNext();if(!temporary)GuardEngine.retryPendingAlerts(ctx)

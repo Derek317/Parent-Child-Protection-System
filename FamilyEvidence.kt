@@ -173,9 +173,24 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         return db.update("evidence",ContentValues().apply{put("preserved_until",now+90*DAY);put("expires",now+90*DAY)},
             "scope=? AND id=? AND preserved_until IS NULL AND (expires IS NULL OR expires>?)",arrayOf(scope,id,now.toString()))>0
     }
+    /** Child: distinct events still waiting for a parent receipt, without [excluded] (heartbeats), and the oldest one's enqueue time. */
+    fun receiptWaiting(scope:String,excluded:Set<String>):Pair<Int,Long?> {
+        val rows=readableDatabase.rawQuery("SELECT o.event_id,MIN(l.expires) FROM outbox o JOIN outbox_lifetimes l ON l.scope=o.scope AND l.id=o.event_id WHERE o.scope=? AND o.role='child' AND o.receipt=1 GROUP BY o.event_id",arrayOf(scope)).use{c->
+            buildList{while(c.moveToNext())add(c.getString(0) to c.getLong(1)-PENDING_TTL)}
+        }.filter{it.first !in excluded}
+        return rows.size to rows.minOfOrNull{it.second}
+    }
+    /** When [id] was first queued here (its lifetime started then), or null. */
+    fun enqueuedAt(scope:String,id:String):Long? = readableDatabase.rawQuery("SELECT expires FROM outbox_lifetimes WHERE scope=? AND id=?",arrayOf(scope,id))
+        .use{if(it.moveToFirst())it.getLong(0)-PENDING_TTL else null}
     fun pruneExpired(scope:String,now:Long=System.currentTimeMillis()):Int {
         val db=writableDatabase;db.beginTransaction()
         try {
+            // Child: a record that waited for a parent receipt and leaves by its deadline was never confirmed delivered (heartbeats aside).
+            val heartbeats=LocalVault.preferences(app).getStringSet(DeliveryHealth.HEARTBEAT_IDS,emptySet()).orEmpty()
+            val undelivered=db.rawQuery("SELECT DISTINCT o.event_id FROM outbox o JOIN outbox_lifetimes l ON l.scope=o.scope AND l.id=o.event_id WHERE o.scope=? AND o.role='child' AND o.receipt=1 AND l.expires<=?",arrayOf(scope,now.toString()))
+                .use{c->buildList{while(c.moveToNext())add(c.getString(0))}}.any{it !in heartbeats}
+            if(undelivered)check(LocalVault.preferences(app).edit().putLong(DeliveryHealth.EXPIRED_AT_MS,now).commit())
             db.execSQL("INSERT OR IGNORE INTO seen SELECT scope,id FROM evidence WHERE scope=? AND expires<=?",arrayOf(scope,now))
             db.execSQL("INSERT OR IGNORE INTO seen SELECT scope,id FROM fragments WHERE scope=? AND expires<=?",arrayOf(scope,now))
             db.execSQL("INSERT OR IGNORE INTO capture_seen SELECT scope,id FROM outbox_lifetimes WHERE scope=? AND expires<=?",arrayOf(scope,now))

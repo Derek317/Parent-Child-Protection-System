@@ -1,0 +1,47 @@
+package app.family.igguard
+
+import org.json.JSONObject
+
+/**
+ * "Records not delivered" warning. A QR-paired child puts three fixed-width fields inside every signed heartbeat: how many of
+ * its records still wait for a parent receipt (heartbeats excluded), how old the oldest is, and whether one ever expired
+ * unreceipted. The parent, on a VERIFIED heartbeat only, raises one content-free notice at most once an hour.
+ * Counted: everything that waits for a parent receipt (alerts, tamper notices, pairing_verified, captured messages).
+ * Not counted: scores reports and other control records (they do not wait for a receipt).
+ */
+object DeliveryHealth {
+    // Child (encrypted preferences): ids of heartbeat events (not counted), and when a counted record last expired unreceipted.
+    const val HEARTBEAT_IDS = "child_heartbeat_event_ids"
+    const val EXPIRED_AT_MS = "child_receipt_expired_ms"
+    // Parent: the notice's own once-per-hour timer.
+    const val NOTICE_MS = "child_undelivered_notice_ms"
+
+    const val NOTICE_SENDER = "送達檢查"
+    const val NOTICE_TEXT = "有子女手機的回報超過 1 小時仍未送達此手機。請檢查兩部手機的網絡；如持續出現，請當面查看子女手機。 / Reports from the child phone have not reached this phone for over an hour. Check both phones' network; if it continues, check the child phone in person."
+    const val NOTICE_INTERVAL_MS = 60 * 60_000L
+    /** Receipts must have had a chance to flow: the parent has been continuously relay-connected at least this long. */
+    const val READY_FOR_MS = 15 * 60_000L
+    const val OLDEST_LIMIT_MIN = 60
+
+    /** The three heartbeat fields, always present and fixed width (2, 4 and 1 characters). */
+    fun fields(waiting: Int, oldestEnqueuedAt: Long?, expired: Boolean, now: Long): JSONObject {
+        val minutes = if (oldestEnqueuedAt == null) 0L else ((now - oldestEnqueuedAt).coerceAtLeast(0L) / 60_000L)
+        return JSONObject().put("waiting", "%02d".format(waiting.coerceIn(0, 99)))
+            .put("oldest_min", "%04d".format(minutes.coerceIn(0L, 9999L)))
+            .put("expired", if (expired) "1" else "0")
+    }
+
+    data class Report(val waiting: Int, val oldestMin: Int, val expired: Boolean) {
+        val bad get() = expired || waiting > 0 && oldestMin >= OLDEST_LIMIT_MIN
+        val clear get() = waiting == 0 && !expired
+    }
+    private val two = Regex("[0-9]{2}"); private val four = Regex("[0-9]{4}"); private val one = Regex("[01]")
+    /** Strict: exactly 2 / 4 / 1 digits, else null (the fields are then ignored; the heartbeat itself still counts). */
+    fun parse(record: JSONObject): Report? {
+        val w = record.opt("waiting") as? String ?: return null
+        val o = record.opt("oldest_min") as? String ?: return null
+        val e = record.opt("expired") as? String ?: return null
+        if (!two.matches(w) || !four.matches(o) || !one.matches(e)) return null
+        return Report(w.toInt(), o.toInt(), e == "1")
+    }
+}

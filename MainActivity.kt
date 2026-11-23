@@ -431,14 +431,40 @@ object GuardEngine {
         // Under manual upload the teen may switch notification access off, which is then no tampering. A held capture is not that: access is expected to stay on.
         val reason = if (notifOn || RiskLocal.uploadMethodOn(ctx)) "heartbeat_ok" else "tamper_attempt"
 
+        // A QR-paired child reports, inside the signed heartbeat, how its records wait for a parent receipt (DeliveryHealth).
+        // A 5.2-paired child sends the 5.2 heartbeat unchanged.
+        val eventId = UUID.randomUUID().toString()
+        val health = if (childQrPaired(ctx)) deliveryHealthFields(ctx, eventId, now) else null
         sendAlertFromChild(
             ctx,
             reason = reason,
             sender = "子女手機定時回報",
             text = statusSummary,
-            bypassDedupe = true
+            bypassDedupe = true,
+            extra = health,
+            eventId = eventId
         )
         RiskLocal.dailyReport(ctx)
+    }
+
+    /** Child: the heartbeat [heartbeatId]'s three delivery fields. Heartbeats are not counted: their ids are remembered (only while
+     *  still queued) so the count and FamilyEvidence.pruneExpired can leave them out. */
+    internal fun deliveryHealthFields(ctx: Context, heartbeatId: String, now: Long): JSONObject = synchronized(pollLock) {
+        val scope = getChannelTopic(ctx)
+        FamilyEvidence(ctx).use { db ->
+            val known = prefs(ctx).getStringSet(DeliveryHealth.HEARTBEAT_IDS, emptySet()).orEmpty()
+            val stillQueued = known.filter { db.hasQueuedEvent(scope, it) }.toSet()
+            check(prefs(ctx).edit().putStringSet(DeliveryHealth.HEARTBEAT_IDS, stillQueued + heartbeatId).commit())
+            val (waiting, oldest) = db.receiptWaiting(scope, stillQueued + heartbeatId)
+            DeliveryHealth.fields(waiting, oldest, prefs(ctx).getLong(DeliveryHealth.EXPIRED_AT_MS, 0L) > 0L, now)
+        }
+    }
+    /** Child, on a parent receipt for [eventId]: a counted record queued after the last unreceipted expiry clears the sticky bit. */
+    private fun noteReceiptForDeliveryHealth(ctx: Context, scope: String, eventId: String) {
+        val expiredAt = prefs(ctx).getLong(DeliveryHealth.EXPIRED_AT_MS, 0L)
+        if (expiredAt <= 0L || eventId in prefs(ctx).getStringSet(DeliveryHealth.HEARTBEAT_IDS, emptySet()).orEmpty()) return
+        val queuedAt = FamilyEvidence(ctx).use { it.enqueuedAt(scope, eventId) } ?: return
+        if (queuedAt > expiredAt) check(prefs(ctx).edit().remove(DeliveryHealth.EXPIRED_AT_MS).commit())
     }
 
     fun recordChildHeartbeatOnParent(ctx: Context, summary: String, sentAt: Long) {
@@ -980,7 +1006,7 @@ object GuardEngine {
             if (previous != role) {relayGeneration++;CloudRelay.disconnect()}
             prefs(ctx).edit().putString("role", role).apply()
             // Leaving the child role (including a remote reset) ends scores-only mode and deletes the scoring store.
-            if (previous == "child" && role != "child") { RiskLocal.resetFamily(ctx); forgetChildKey(ctx); prefs(ctx).edit().remove(CHILD_QR_PAIRED).apply() }
+            if (previous == "child" && role != "child") { RiskLocal.resetFamily(ctx); forgetChildKey(ctx); prefs(ctx).edit().remove(CHILD_QR_PAIRED).remove(DeliveryHealth.EXPIRED_AT_MS).remove(DeliveryHealth.HEARTBEAT_IDS).apply() }
         }
         syncChildComponents(ctx)
         // The child role was set or confirmed: install the model included in the app, if any (no-op everywhere else).
@@ -1182,7 +1208,7 @@ object GuardEngine {
             val editor = prefs(ctx).edit().putString("parent_command_public_key", invite.parentPublicKey)
                 .remove("capture_policy_id").remove("capture_local_ack_id").remove("capture_child_ack_id")
                 .remove("synced_15m_code").remove("synced_15m_exp").remove("synced_15m_rt").remove("synced_15m_start_rt").remove("synced_15m_boot")
-                .putBoolean("sent_setup_ok", false)
+                .putBoolean("sent_setup_ok", false).remove(DeliveryHealth.EXPIRED_AT_MS).remove(DeliveryHealth.HEARTBEAT_IDS)
             // A QR pairing (design 2.5 C6): from now on every record to the parent is signed with this key.
             if (childKeyAlias != null) { forgetChildKey(ctx); editor.putString(CHILD_KEY_ALIAS, childKeyAlias).putBoolean(CHILD_QR_PAIRED, true) }
             check(editor.commit())
@@ -1597,6 +1623,9 @@ object GuardEngine {
         bypassDedupe: Boolean = false,
         fromNotification: Boolean = false,
         expectedSession: Triple<String,String,Int>? = null,
+        /** Extra fields inside the record (signed with it after a QR pairing), and its event id: the heartbeat's delivery counters. */
+        extra: JSONObject? = null,
+        eventId: String = UUID.randomUUID().toString(),
         onComplete: ((Boolean, String) -> Unit)? = null
     ) {
         if (!transferAllowed(ctx)) {
@@ -1629,7 +1658,7 @@ object GuardEngine {
 
         val plain = JSONObject().apply {
             put("type", "alert")
-            put("event_id", UUID.randomUUID().toString())
+            put("event_id", eventId)
             put("capture_source", if (fromNotification) "notification" else "app_or_visible_screen")
             put("reason", reason)
             put("sender", cleanSender)
@@ -1640,6 +1669,7 @@ object GuardEngine {
             put("time", nowDateTimeStr())
             put("trusted_csv", getTrustedHandles(ctx).joinToString(","))
             put("child_self_handle", getChildSelfHandle(ctx))
+            extra?.keys()?.forEach { put(it, extra.get(it)) }
         }.toString()
 
         postEncryptedToChannel(ctx, topic, token, plain, onComplete,expectedSession)
@@ -2045,6 +2075,7 @@ object GuardEngine {
                 }
             }
             "alert_receipt" -> {
+                if(role=="child")noteReceiptForDeliveryHealth(ctx,getChannelTopic(ctx),inner.getString("event_id"))
                 FamilyEvidence(ctx).use{it.acknowledgeEvent(getChannelTopic(ctx),inner.getString("event_id"))}
                 cpLastHttpStatus = if(inner.optString("outcome")=="discarded") "家長已刪除此記錄 · 停止重試" else "家長手機已確認接收 · 不代表已閱讀"
                 ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
@@ -2118,6 +2149,8 @@ object GuardEngine {
                     if (reason in setOf("heartbeat_ok", "pairing_verified", "tamper_attempt", "test_alert") && (verified != null || pinned == null)) {
                         recordChildHeartbeatOnParent(ctx, inner.optString("text"), msgTs)
                     }
+                    // Records-not-delivered warning: only from a VERIFIED heartbeat (never Legacy), whose fields are inside the signed text.
+                    if (verified != null && reason in setOf("heartbeat_ok", "tamper_attempt")) noteDeliveryHealth(ctx, inner, onNewAlertForParent, System.currentTimeMillis())
                     val pending = try { JSONObject(prefs(ctx).getString("pending_rotation_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
                     if (token == pending.optString("new_token")) prefs(ctx).edit().remove("pending_rotation_json").apply()
                     addCheckpointLog(ctx, "CP4-RECV", "已解密 $reason")
@@ -2148,6 +2181,27 @@ object GuardEngine {
             RelayConsumption.RETRY
         }
 
+    }
+
+    /** Parent: since when the family relay connection has been continuously ready (0: not ready). In memory on purpose: a new
+     *  process starts disconnected, so app start clears it; set on `ready`, cleared on every close or failure (CloudRelay). */
+    @Volatile internal var parentRelayReadySince = 0L
+    internal fun parentRelayReady(ready: Boolean, now: Long = System.currentTimeMillis()) {
+        if (!ready) parentRelayReadySince = 0L else if (parentRelayReadySince == 0L) parentRelayReadySince = now
+    }
+    /** Parent, on a verified heartbeat: one content-free notice at most once an hour while the child reports records that wait over
+     *  an hour (or expired) without a receipt, and only after 15 minutes of continuous relay connection here (receipts could flow). */
+    private fun noteDeliveryHealth(ctx: Context, record: JSONObject, onNewAlertForParent: ((JSONObject) -> Unit)?, now: Long) {
+        val report = DeliveryHealth.parse(record) ?: return
+        if (report.clear) { check(prefs(ctx).edit().remove(DeliveryHealth.NOTICE_MS).commit()); return }
+        if (!report.bad) return
+        val since = parentRelayReadySince
+        if (since == 0L || now - since < DeliveryHealth.READY_FOR_MS) return
+        if (!ChildRecords.tamperNoticeDue(prefs(ctx).getLong(DeliveryHealth.NOTICE_MS, 0L), now)) return
+        check(prefs(ctx).edit().putLong(DeliveryHealth.NOTICE_MS, now).commit())
+        val notice = JSONObject().put("type", "alert").put("event_id", "delivery:" + UUID.randomUUID()).put("reason", "tamper_attempt")
+            .put("sender", DeliveryHealth.NOTICE_SENDER).put("text", DeliveryHealth.NOTICE_TEXT).put("ts_ms", now).put("time", nowDateTimeStr())
+        if (recordParentAlert(ctx, notice, notice.getString("event_id"))) onNewAlertForParent?.invoke(notice)
     }
 
     /** One content-free local evidence row for a refused frame (design 3.5), at most one per hour. Never a sign of life. */
