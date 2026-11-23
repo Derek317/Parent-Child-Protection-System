@@ -269,6 +269,24 @@ class TwoPhoneRelayTest {
         try { waitUntil("redelivered to the child's family connection") { received.containsAll(keys) } } finally { socket.cancel() }
     }
 
+    /** The parent's "取消並重新配對" and the automatic 10-minute rollback both retire the new family room: a late child gets 410. */
+    @Test fun aRolledBackPairingRetiresTheNewRoomSoALateChildStops() {
+        for (force in listOf(true, false)) {
+            val p = Phones(); p.upToDigits()
+            assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
+            val token = GuardEngine.getOrCreateFamilyToken(ctx); val family = roomOf(token)
+            waitUntil("M3 at the relay") { synchronized(relay) { family.published.size == 1 } }
+            assertTrue(GuardEngine.expireUnconfirmedChildPairing(ctx, if (force) System.currentTimeMillis() else System.currentTimeMillis() + Pairing.CONFIRM_WINDOW_MS, force))
+            waitUntil("the new room is retired (force=$force)") { family.retired }
+            val alias = TestKeyStore.privateKeys.keys.single { it.startsWith("ig_guard.child_signing") }
+            assertTrue(p.child.confirm())
+            waitUntil("the late child stops (force=$force)") { p.child.machine.state is CS.Cancelled }
+            assertTrue(p.child.refused); assertNull(p.result)
+            assertFalse("its key is deleted", TestKeyStore.privateKeys.containsKey(alias))
+            assertNull(GuardEngine.pinnedChildKey(ctx)); assertEquals(force, GuardEngine.childPairingCancelled(ctx))
+        }
+    }
+
     @Test fun threeWrongDigitsCancelAndPinNothing() {
         val p = Phones(); p.upToDigits()
         val token = GuardEngine.getOrCreateFamilyToken(ctx)

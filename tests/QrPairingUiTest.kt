@@ -279,6 +279,30 @@ class QrPairingUiTest {
         }
     }
 
+    @Test fun aPendingPairingCanBeCancelledAndPairedAgain() {
+        GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
+        prefs.edit().putString("pinned_child_key", FamilySecurity.canonicalKeyText(FamilySecurity.newSigningIdentity().publicKey))
+            .putLong("child_pairing_pending_ms", System.currentTimeMillis()).commit()
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            call(a, "navigateTo", "overview")
+            val shell = field(a, "screenShell").get(a) as View
+            assertNotNull(shell.findViewWithTag<View>("child_pairing_pending"))
+            val cancel = shell.findViewWithTag<Button>("cancel_pairing")
+            assertTrue("overlay-protected", cancel is ObscuredAwareButton); assertTrue(cancel.text.contains("取消並重新配對 · Cancel and pair again"))
+            shadowOf(ctx.getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager).setIsDeviceSecure(true)
+            cancel.performClick(); idle()
+            assertNotNull("nothing happens before the fresh authentication", GuardEngine.pinnedChildKey(ctx))
+            MainActivity::class.java.getDeclaredMethod("completeParentAuthentication", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(a, true); idle()
+            assertNull(GuardEngine.pinnedChildKey(ctx)); assertFalse(GuardEngine.childPairingPending(ctx)); assertTrue(GuardEngine.childPairingCancelled(ctx))
+            assertTrue("the QR sheet opens", sheet(a).isShowing)
+            sheet(a).dismiss(); call(a, "navigateTo", "overview"); idle()
+            val note = (field(a, "screenShell").get(a) as View).findViewWithTag<View>("child_pairing_failed")
+            val text = all(note).filterIsInstance<TextView>().joinToString { it.text.toString() }
+            assertTrue(text, text.contains("配對已取消") && text.contains("沒有與任何子女手機配對")); assertFalse(text.contains("上次配對未完成"))
+        } finally { c.pause().stop().destroy() }
+    }
+
     @Test fun parentOverviewSaysPlainlyThatTheChildWasRemotelyReset() =
         unpairedOverview("child_remote_reset", "child_remote_reset", "已遠端重設 · Remotely reset",
             listOf("子女手機已遠端重設", "沒有與任何子女手機配對", "請用 QR 碼重新配對", "The child phone was remotely reset", "not paired with any child phone", "Pair again with the QR code"))

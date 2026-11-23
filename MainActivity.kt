@@ -278,7 +278,9 @@ object GuardEngine {
     // Parent: the event id of a signed remote reset queued for a pinned child, and the mark set once the relay holds it.
     private const val REMOTE_RESET_EVENT = "child_remote_reset_event"
     private const val CHILD_REMOTE_RESET = "child_remote_reset"
-    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, REMOTE_RESET_EVENT, CHILD_REMOTE_RESET)
+    /** Parent: the last rollback was the parent's own cancel, not the 10-minute expiry (PAIRING_FAILED is set either way). */
+    private const val PAIRING_CANCELLED = "child_pairing_cancelled"
+    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, REMOTE_RESET_EVENT, CHILD_REMOTE_RESET, PAIRING_CANCELLED)
 
     internal val EMOJI_PALETTE = arrayOf(
         "🐼", "🦁", "🐬", "🦊", "🐨", "🐯", "🦄", "🐝",
@@ -578,6 +580,8 @@ object GuardEngine {
     fun childPairingPending(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getLong(PAIRING_PENDING_MS,0L)>0L
     /** Parent: the last QR pairing was rolled back because the child never confirmed within 10 minutes. */
     fun childPairingFailed(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getBoolean(PAIRING_FAILED,false)
+    /** Parent: that rollback was the parent's own "取消並重新配對". */
+    fun childPairingCancelled(ctx:Context):Boolean = childPairingFailed(ctx) && prefs(ctx).getBoolean(PAIRING_CANCELLED,false)
     /** Parent: the relay took a signed remote reset for the pinned child; no child is paired until a new QR pairing. */
     fun childRemotelyReset(ctx:Context):Boolean = isParentMode(ctx) && prefs(ctx).getBoolean(CHILD_REMOTE_RESET,false)
     enum class ChildTrust { NO_CHILD, NOT_VERIFIED, PAIRING, PAIRING_FAILED, VERIFIED, REMOTE_RESET }
@@ -1233,7 +1237,7 @@ object GuardEngine {
             if (!eventId.startsWith("control:")) return null
             setFamilyToken(ctx, result.token, preserveFamilyHistory = true)
             val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json")
-            for (stale in listOf(PAIRING_FAILED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted")) editor.remove(stale)
+            for (stale in listOf(PAIRING_FAILED, PAIRING_CANCELLED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted")) editor.remove(stale)
             check(editor.commit())
             relayGeneration++; CloudRelay.disconnect()
             val scope = getChannelTopicForToken(result.token)
@@ -1248,15 +1252,19 @@ object GuardEngine {
     }
 
     /** Parent: an accepted pairing whose child sent no verified record within 10 minutes is undone (nothing stays pinned, the queued
-     *  M3 is dropped); the overview then asks for a new pairing. True when it rolled back. */
-    fun expireUnconfirmedChildPairing(ctx: Context, now: Long = System.currentTimeMillis()): Boolean = synchronized(pollLock) {
+     *  M3 is dropped, the phone is marked unpaired) and the new family room is retired at the relay, so a child that confirms late
+     *  gets 410 and deletes its key instead of waiting. [force]: the parent's own "取消並重新配對", the same rollback at once and
+     *  marked as a deliberate cancel. True when it rolled back. */
+    fun expireUnconfirmedChildPairing(ctx: Context, now: Long = System.currentTimeMillis(), force: Boolean = false): Boolean = synchronized(pollLock) {
         if (!isParentMode(ctx)) return false
         val since = prefs(ctx).getLong(PAIRING_PENDING_MS, 0L)
-        if (since == 0L || now - since < Pairing.CONFIRM_WINDOW_MS) return false
+        if (since == 0L || !force && now - since < Pairing.CONFIRM_WINDOW_MS) return false
         FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx), "parent") }
-        check(prefs(ctx).edit().remove(PINNED_CHILD_KEY).remove(PAIRING_PENDING_MS).remove(CHILD_RECORD_STATE).putBoolean(PAIRING_FAILED, true).commit())
-        addCheckpointLog(ctx, "CP3-PAIR", "子女手機未在 10 分鐘內確認；配對已取消")
+        check(prefs(ctx).edit().remove(PINNED_CHILD_KEY).remove(PAIRING_PENDING_MS).remove(CHILD_RECORD_STATE).putBoolean(PAIRING_FAILED, true)
+            .putBoolean(PAIRING_CANCELLED, force).commit())
+        addCheckpointLog(ctx, "CP3-PAIR", if (force) "家長已取消未完成的配對" else "子女手機未在 10 分鐘內確認；配對已取消")
         relayGeneration++; CloudRelay.disconnect()
+        CloudRelay.retireRoom(ctx) { ok, _ -> addCheckpointLog(ctx, "CP3-PAIR", if (ok) "已刪除未完成配對的中繼房間" else "未能確認刪除未完成配對的中繼房間") }
         true
     }
 
@@ -3890,9 +3898,19 @@ class MainActivity : Activity() {
             GuardEngine.ChildTrust.PAIRING -> {
                 rootContainer.addView(stateNote(Note.LOADING, "配對尚未完成 · 等待子女手機首次已核實回報。\nPairing not complete yet · waiting for the child phone's first verified report.", t, cardTag = "child_pairing_pending"))
                 rootContainer.addView(textAction("立即重試傳送 · Retry now") { CloudRelay.retryNow(this); GuardEngine.retryPendingAlerts(this, force = true) })
+                // The 10-minute rollback at once (unpin, drop M3, retire the new room), then a new QR.
+                rootContainer.addView(actionButton("取消並重新配對 · Cancel and pair again", t.btnSecondaryBg, t.btnSecondaryText, critical = true) {
+                    requireFreshParentAuth {
+                        if (!GuardEngine.expireUnconfirmedChildPairing(this, force = true)) return@requireFreshParentAuth
+                        // The relay session changed by this authenticated action itself, as in showCompromiseRecovery.
+                        parentAccess.authenticated(GuardEngine.captureRelaySession(this)); renderUi(); showParentPairingSheet()
+                    }
+                }.apply { tag = "cancel_pairing" })
             }
             GuardEngine.ChildTrust.PAIRING_FAILED -> {
-                rootContainer.addView(stateNote(Note.ERROR, "上次配對未完成：子女手機未在 10 分鐘內確認。此手機現時沒有與任何子女手機配對，之前的配對亦已結束；請用 QR 碼重新配對。\nThe last pairing did not complete: the child phone did not confirm within 10 minutes. This phone is now not paired with any child phone, and any earlier pairing has ended. Pair again with the QR code.", t, cardTag = "child_pairing_failed"))
+                rootContainer.addView(stateNote(Note.ERROR, if (GuardEngine.childPairingCancelled(this))
+                    "配對已取消。此手機現時沒有與任何子女手機配對，之前的配對亦已結束；請用 QR 碼重新配對。\nPairing cancelled. This phone is now not paired with any child phone, and any earlier pairing has ended. Pair again with the QR code."
+                    else "上次配對未完成：子女手機未在 10 分鐘內確認。此手機現時沒有與任何子女手機配對，之前的配對亦已結束；請用 QR 碼重新配對。\nThe last pairing did not complete: the child phone did not confirm within 10 minutes. This phone is now not paired with any child phone, and any earlier pairing has ended. Pair again with the QR code.", t, cardTag = "child_pairing_failed"))
                 rootContainer.addView(textAction("重新配對 · Pair again") { startParentPairing() })
             }
             GuardEngine.ChildTrust.REMOTE_RESET -> {

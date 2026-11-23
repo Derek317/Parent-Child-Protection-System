@@ -165,6 +165,33 @@ class QrPairingTest {
         assertEquals(GuardEngine.ChildTrust.PAIRING_FAILED, GuardEngine.childTrust(ctx))
     }
 
+    @Test fun theParentsOwnCancelIsTheRollbackAtOnceAndALateVerifiedRecordIsRefused() {
+        parentPhone()
+        val run = parentUpToDigits()
+        assertTrue(run.link.enterDigits((run.child.state as CS.ShowingDigits).digits))
+        val family = run.child.confirm(now + 3_000)!!
+        assertTrue(run.link.accept())
+        val m3 = GuardEngine.decryptPayload(family.token, FamilyEvidence(ctx).use { it.due(family.scope, Long.MAX_VALUE, "parent") }.single().wire)!!
+        assertTrue(GuardEngine.expireUnconfirmedChildPairing(ctx, now + 1_000, force = true))
+        assertNull(GuardEngine.pinnedChildKey(ctx)); assertFalse(GuardEngine.childPairingPending(ctx))
+        assertTrue("M3 is dropped", FamilyEvidence(ctx).use { it.due(family.scope, Long.MAX_VALUE, "parent") }.isEmpty())
+        assertEquals(GuardEngine.ChildTrust.PAIRING_FAILED, GuardEngine.childTrust(ctx)); assertTrue(GuardEngine.childPairingCancelled(ctx))
+        assertFalse("nothing left to roll back", GuardEngine.expireUnconfirmedChildPairing(ctx, now + Pairing.CONFIRM_WINDOW_MS))
+        // The cancelled child got M3 anyway and sends its first verified record: refused.
+        val done = run.child.onComplete(m3, now + 4_000)!!
+        val record = JSONObject().put("type", "alert").put("event_id", java.util.UUID.randomUUID().toString()).put("capture_source", "app_or_visible_screen")
+            .put("reason", "pairing_verified").put("sender", "Pixel 7").put("text", "子女手機已用 QR 碼完成配對。").put("ts_ms", System.currentTimeMillis()).put("time", "x")
+            .put("trusted_csv", "").put("child_self_handle", "")
+        val frame = ChildRecords.wrapForParent(record.toString(), record.getString("event_id"), GuardEngine.relayPublicKey(ctx), done.childKey, { FamilySecurity.signChildBytes(it, done.childKeyAlias) }, true)
+        val line = JSONObject().put("event", "message").put("id", java.util.UUID.randomUUID().toString()).put("message", GuardEngine.encryptPayload(family.token, frame.toString())).toString()
+        assertEquals(RelayConsumption.REJECTED, GuardEngine.processIncomingRelayLine(ctx, line, "parent", null))
+        assertNull(GuardEngine.pinnedChildKey(ctx)); assertFalse(GuardEngine.hasChildHeartbeat(ctx)); assertTrue(GuardEngine.getParentAlerts(ctx).isEmpty())
+        // A new QR pairing clears the cancel mark.
+        val again = parentUpToDigits()
+        assertTrue(again.link.enterDigits((again.child.state as CS.ShowingDigits).digits)); again.child.confirm(now + 3_000); assertTrue(again.link.accept())
+        assertFalse(GuardEngine.childPairingCancelled(ctx)); assertEquals(GuardEngine.ChildTrust.PAIRING, GuardEngine.childTrust(ctx))
+    }
+
     @Test fun childEngineStoresAliasParentKeyTokenAndVerifier() {
         val identity = FamilySecurity.newSigningIdentity()
         val r = QrPairing.pairChild(ctx, identity)
