@@ -338,7 +338,9 @@ object GuardEngine {
     }
 
     // Theme Mode: true = Warm Bright Mode ("Morning Harbor"), false = Warm Dark Mode ("Cozy Lantern")
-    fun isBrightTheme(ctx: Context): Boolean = prefs(ctx).getBoolean("bright_theme", true)
+    /** The user's own choice once made (kept for ever); before that, the phone's dark mode: Clear Sky if dark, Harbour otherwise. */
+    fun isBrightTheme(ctx: Context): Boolean = prefs(ctx).let { if (it.contains("bright_theme")) it.getBoolean("bright_theme", true) else !phoneIsDark(ctx) }
+    fun phoneIsDark(ctx: Context): Boolean = ctx.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
     fun setBrightTheme(ctx: Context, bright: Boolean) = prefs(ctx).edit().putBoolean("bright_theme", bright).apply()
 
     // ================= 1. END-TO-END ENCRYPTION (AES-256-GCM over HTTPS) =================
@@ -2876,8 +2878,8 @@ class MainActivity : Activity() {
     )
     // Light "Harbour" / dark "Clear Sky". accentSeafoam = brand primary, accentPowderSky = secondary (borders only), warningButtonBg = attention.
     private fun currentTheme(): ThemeColors = themeColors(GuardEngine.isBrightTheme(this))
-    /** The saved theme, or Harbour (the default) when the encrypted preferences cannot be read: consent and storage-failure pages. */
-    private fun brightOrDefault(): Boolean = try { GuardEngine.isBrightTheme(this) } catch (_: RuntimeException) { true }
+    /** The saved theme, or the phone's dark mode when none is saved or the encrypted preferences cannot be read: consent and storage-failure pages. */
+    private fun brightOrDefault(): Boolean = try { GuardEngine.isBrightTheme(this) } catch (_: RuntimeException) { !GuardEngine.phoneIsDark(this) }
     private fun themeColors(bright: Boolean): ThemeColors {
         return if (bright) {
             ThemeColors(

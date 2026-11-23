@@ -201,6 +201,27 @@ class Tier2UiTest {
         assertFalse(GuardEngine.getLastChildHeartbeatInfo(ctx).contains("心跳"))
     }
 
+    @Test fun firstRunFollowsThePhoneAndTheUsersChoiceWinsForEver() {
+        try {
+            for (night in listOf(true, false)) {
+                RuntimeEnvironment.setQualifiers(if (night) "+night" else "+notnight")
+                LocalVault.preferences(ctx).edit().remove("bright_theme").commit()
+                assertEquals("never chosen follows the phone", !night, GuardEngine.isBrightTheme(ctx))
+                for (choice in listOf(true, false)) { GuardEngine.setBrightTheme(ctx, choice); assertEquals("night=$night", choice, GuardEngine.isBrightTheme(ctx)) }
+            }
+            // The consent page (and the storage-failure page) use the same rule.
+            RuntimeEnvironment.setQualifiers("+night")
+            LocalVault.preferences(ctx).edit().clear().commit()
+            ctx.getSharedPreferences("ig_guard_consent", android.content.Context.MODE_PRIVATE).edit().clear().commit()
+            val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+            try {
+                val content = (c.get().findViewById<View>(android.R.id.content) as android.view.ViewGroup).getChildAt(0) as android.widget.ScrollView
+                val page = content.getChildAt(0)
+                assertEquals(android.graphics.Color.parseColor("#0B1724"), (page.background as android.graphics.drawable.ColorDrawable).color)
+            } finally { c.pause().stop().destroy() }
+        } finally { RuntimeEnvironment.setQualifiers("+notnight"); GuardEngine.setBrightTheme(ctx, true) }
+    }
+
     @Test fun aLockedParentGetsNoBackLinkPastTheLock() {
         ParentUiAuthFixture.autoApprove = false
         try {
