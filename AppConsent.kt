@@ -99,7 +99,7 @@ object AppConsent {
             setLinkTextColor(Color.parseColor(t.accentSeafoam))
         })
         val accept = ObscuredAwareButton(activity) { Toast.makeText(activity, OBSCURED_TOUCH_MESSAGE, Toast.LENGTH_LONG).show() }.apply {
-            activity.actionLook(this, t.btnPrimaryBg, t.btnPrimaryText, t) // disabled until all three boxes: the shared half-alpha look
+            activity.actionLook(this, t.btnPrimaryBg, t.btnPrimaryText, t) // disabled until all three boxes: the shared disabled look
             text = "同意並繼續 / Agree and continue"; tag = "consent_accept"; isEnabled = false; isAllCaps = false
         }
         val boxes = linkedMapOf<String, CheckBox>()

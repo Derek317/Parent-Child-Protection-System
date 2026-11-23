@@ -5040,11 +5040,11 @@ class MainActivity : Activity() {
         (if (critical) ObscuredAwareButton(this, { pageMotion?.isRunning == true || themeReveal?.isRunning == true }) { warnObscured() } else Button(this)).apply {
         text = title; actionLook(this, hexBg, hexText); setOnClickListener(sessionClick(onClick))
     }
-    /** The action-button look only (no click handling). Disabled = the same fill and text at half alpha, no ripple. */
+    /** The action-button look only (no click handling). Disabled = the same fill at half alpha and the text at 70 % (still readable on the dark fill), no ripple. */
     internal fun actionLook(button: Button, hexBg: String, hexText: String, t: ThemeColors = currentTheme()) = button.apply {
         textSize = 14f; typeface = font(true); isAllCaps = false
         val ink = color(hexText); val disabled = intArrayOf(-android.R.attr.state_enabled)
-        setTextColor(ColorStateList(arrayOf(disabled, intArrayOf()), intArrayOf((ink and 0x00ffffff) or 0x80000000.toInt(), ink)))
+        setTextColor(ColorStateList(arrayOf(disabled, intArrayOf()), intArrayOf((ink and 0x00ffffff) or 0xB3000000.toInt(), ink)))
         val border = if (hexBg != t.btnPrimaryBg) t.accentPowderSky else null
         background = StateListDrawable().apply {
             addState(disabled, background(hexBg, 10, border).apply { alpha = 128 })

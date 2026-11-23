@@ -66,10 +66,10 @@ class InteractionClarityTest {
         try {
             val choice=views(a).single{it.tag=="entry_parent"}
             assertTrue(choice.createAccessibilityNodeInfo().isCheckable)
-            // Disabled look comes from actionButton itself: half-alpha text and fill, no ripple.
+            // Disabled look comes from actionButton itself: half-alpha fill, 70 % text, no ripple.
             val idle=views(a).single{it.tag=="continue_role"} as Button
             assertFalse(idle.isEnabled); assertEquals(1f,idle.alpha,0f)
-            assertEquals(0x80,idle.currentTextColor ushr 24)
+            assertEquals(0xB3,idle.currentTextColor ushr 24)
             assertFalse(idle.background.current is android.graphics.drawable.RippleDrawable)
             choice.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK,null)
             assertTrue(views(a).single{it.tag=="entry_parent"}.createAccessibilityNodeInfo().isChecked)
