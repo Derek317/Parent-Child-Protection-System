@@ -374,9 +374,11 @@ object GuardEngine {
         }
     } catch (_: Exception) { null }
 
-    // ================= 2. RANDOM 30-95 MIN HEARTBEAT RELAY & WATCHDOG =================
+    // ================= 2. RANDOM 30-65 MIN HEARTBEAT RELAY & WATCHDOG =================
     fun scheduleNextRandomHeartbeat(ctx: Context): Long {
-        val randomDelayMs = Random.Default.nextLong(30 * 60_000L, 95 * 60_000L + 1L)
+        // The parent warns after 100 min of silence. Without Notification access only the 15-minute job sends, and Android may run it
+        // up to about 30 min apart: 65 + 30 stays inside 100, where 95 + 30 raised a false "child offline" alert (bug-review B-5).
+        val randomDelayMs = Random.Default.nextLong(30 * 60_000L, 65 * 60_000L + 1L)
         val nextAt = System.currentTimeMillis() + randomDelayMs
         prefs(ctx).edit()
             .putLong("next_heartbeat_at_ms", nextAt)
@@ -430,7 +432,7 @@ object GuardEngine {
 
     fun getLastChildHeartbeatInfo(ctx: Context): String {
         val txt = prefs(ctx).getString("parent_last_child_hb_text", null)
-        return txt?.removeSuffix(CAPTURE_HELD_MARK) ?: "等待子女手機首次回報 (每 30–95 分鐘隨機發送一次心跳)"
+        return txt?.removeSuffix(CAPTURE_HELD_MARK) ?: "等待子女手機首次回報 (每 30–65 分鐘隨機發送一次心跳)"
     }
 
     /** The child's latest report carried the exact marker at its end; anywhere else it counts for nothing. */

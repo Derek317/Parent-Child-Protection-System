@@ -30,6 +30,16 @@ class UploadBackgroundTest : UploadTestBase() {
             assertEquals("held=$held", 1, heartbeats().size)
         }
     }
+    @Test fun theLongestHeartbeatGapPlusTheJobDelayStaysInsideTheParentsLimit() {
+        // Bug-review B-5: the 15-minute job may run up to about 30 minutes apart, so a 95-minute interval could reach the parent's 100 minutes.
+        val jobSpread = 30 * 60_000L
+        var longest = 0L
+        repeat(500) { val before = System.currentTimeMillis(); longest = maxOf(longest, GuardEngine.scheduleNextRandomHeartbeat(ctx) - before) }
+        assertTrue("longest interval ${longest / 60_000} min", longest <= 65 * 60_000L)
+        GuardEngine.setRole(ctx, "parent")
+        prefs.edit().putLong("parent_last_child_hb_ms", System.currentTimeMillis() - 65 * 60_000L - jobSpread).commit()
+        assertFalse("a healthy phone must not look offline", GuardEngine.isChildHeartbeatOverdue(ctx))
+    }
     @Test fun aPeriodicJobIsScheduledForAChildPhoneAndNotForOtherRoles() {
         ArchiveMaintenance.schedule(ctx)
         val scheduler = ctx.getSystemService(JobScheduler::class.java)
