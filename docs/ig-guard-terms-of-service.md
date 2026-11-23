@@ -50,7 +50,7 @@
 
 **擷取暫停。** 如子女曾同意手動上載，其後父母關閉僅分數模式，App 不會自動恢復讀取 Instagram。擷取保持關閉，直至子女在自己的手機上的提示卡允許；父母會看到擷取已暫停。
 
-**匯出指引及連結（手動上載）。** 子女手機的上載卡有一個連結，開啟如何使用 Instagram 自己的「匯出你的資料」工具的步驟，並有一個按鈕以瀏覽器或 Instagram App 開啟該工具的固定網址（https://accountscenter.instagram.com/info_and_permissions/dyi）。網址不含子女或家庭的任何資料。匯出由子女在 Instagram 自己的畫面內完成；App 不會代子女操作 Instagram，亦不會讀取 Instagram 的畫面。檔案選擇器預設開啟「下載」資料夾並列出 zip、JSON 及 HTML 檔案；這只是方便，App 仍會檢查檔案內容。
+**匯出指引及連結（手動上載）。** 子女手機的上載卡有一個連結，開啟如何使用 Instagram 自己的「匯出你的資訊」工具的步驟，並有一個按鈕以瀏覽器或 Instagram App 開啟該工具的固定網址（https://accountscenter.instagram.com/info_and_permissions/dyi）。網址不含子女或家庭的任何資料。匯出由子女在 Instagram 自己的畫面內完成；App 不會代子女操作 Instagram，亦不會讀取 Instagram 的畫面。檔案選擇器預設開啟「下載」資料夾並列出 zip、JSON 及 HTML 檔案；這只是方便，App 仍會檢查檔案內容。
 
 **每週提醒。** 手動上載已同意、分析開啟（未暫停、未撤回）時，如上次成功匯入（或未曾匯入則由同意時起計）已超過7天，子女手機每日最多顯示一次提醒，請子女更新 Instagram 資料。提醒只在子女手機出現，不含任何訊息內容，亦不會傳給父母。為此，子女手機的加密儲存只保留上次成功匯入的時間，並與儲存的聊天文字一同刪除。在 Android 13 或以上，只有在已允許本 App 顯示通知時才會出現。
 
