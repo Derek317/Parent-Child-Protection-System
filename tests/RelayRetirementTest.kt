@@ -54,10 +54,10 @@ class RelayRetirementTest {
             assertFalse("not described as a connection problem",lastMessage.contains("連線"))
         }
     }
-    @Test fun otherFailuresStillMentionTheHttpStatusForSupport(){
+    @Test fun otherFailuresSayPlainlyThatTheRelayDidNotConfirm(){
         MockWebServer().use{server->server.enqueue(MockResponse().setResponseCode(503));server.start()
             assertFalse(retire(server.url("/").toString().trimEnd('/')))
-            assertTrue(lastMessage.contains("503"))
+            assertEquals("中繼未確認刪除；目前配對保留。",lastMessage)
         }
     }
 }
