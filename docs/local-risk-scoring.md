@@ -34,7 +34,7 @@ Must match the research harness exactly, or the published numbers do not apply.
 2. **Tokens.** No BOS added; special tokens parsed.
 3. **One forward pass, no sampling.** Read the next-token logits of token ids 15, 16, 17, 18, 52 (`0 1 2 3 U`) and take a softmax over those five. At load the native code checks those ids decode to exactly those strings and refuses the model otherwise.
 4. **Scores.** alert = p2 + p3, flagged at 0.5 or more. Report score = 100·(p1 + 2·p2 + 3·p3) / (3·(p0 + p1 + p2 + p3)). If `U` is the most likely answer there is no score and the review reason is `insufficient_context`. Ties go to the earlier answer in the order `0 1 2 3 U`.
-5. **Long threads.** The buffered messages are cut into windows of 30 counting back from the newest. Each window is scored. The thread is flagged if any window is flagged; its report score is the highest window score; it is "needs review" only if no window produced a score. A prompt that does not fit the context gives `context_too_long`.
+5. **Long threads.** The buffered messages are cut into windows of 30 counting back from the newest. Each window is scored. The thread is flagged if any window is flagged; its report score is the highest window score; it is "needs review" only if no window produced a score. A prompt that does not fit the context is cut down before it is scored (`RiskFit` in `RiskModel.kt`): the oldest messages are left out one at a time down to 10, then every message but the newest is shortened (a character cap halved each try, finally leaving them out). The instruction, template and answer tokens do not change. Only a newest message that does not fit by itself gives `context_too_long`.
 
 ## When scoring runs
 

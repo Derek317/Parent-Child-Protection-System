@@ -26,6 +26,39 @@ class RiskModelTest {
         assertArrayEquals(fixture.getString("prompt").toByteArray(), prompt.toByteArray())
     }
 
+    /** Fits when the rendered prompt is at most [limit] characters; records every prompt it was given. */
+    private class LengthScorer(val limit: Int) : RiskScorer {
+        val prompts = mutableListOf<String>()
+        override fun score(prompt: String): FloatArray { prompts += prompt; if (prompt.length > limit) throw RiskContextTooLong(); return FloatArray(5) }
+        override fun close() {}
+    }
+    private fun windowOf(prompt: String) = prompt.substringAfterLast("Chat window:\n").substringBefore("\n\nAnswer").lines()
+
+    @Test fun anOverflowingWindowDropsTheOldestThenShortensButNeverCutsTheNewest() {
+        val instruction = instructionBytes.decodeToString()
+        val base = RiskPrompt.render(instruction, emptyList()).length
+        // Fits as is: the prompt is unchanged and scored once.
+        LengthScorer(Int.MAX_VALUE).also { RiskFit.score(it, instruction, fakes(40)); assertEquals(listOf(RiskPrompt.render(instruction, fakes(40))), it.prompts) }
+        // Padding: 30 long messages. Oldest are dropped first, down to MIN_KEPT, then the older ones are shortened.
+        val padded = List(30) { RiskMessage(if (it % 2 == 0) "other" else "child", "第${it}句" + "長".repeat(400)) }
+        val limit = base + 1500
+        val s = LengthScorer(limit)
+        RiskFit.score(s, instruction, padded)
+        val fed = windowOf(s.prompts.last())
+        assertTrue(s.prompts.last().length <= limit)
+        assertEquals(RiskFit.MIN_KEPT, fed.size)
+        assertEquals("the newest message is kept whole", "child: ${padded.last().text}", fed.last())
+        assertTrue("older messages are shortened", fed.dropLast(1).all { it.length < padded[0].text.length })
+        assertTrue("the oldest were dropped", fed.first().startsWith("other: 第20句"))
+        assertEquals("only the messages differ: same instruction, template and answer cue",
+            RiskPrompt.render(instruction, fed.map { RiskMessage(it.substringBefore(": "), it.substringAfter(": ")) }), s.prompts.last())
+        // A single message too long by itself is still context_too_long.
+        try { RiskFit.score(LengthScorer(base + 100), instruction, fakes(3) + RiskMessage("other", "x".repeat(500))); fail("expected context too long") }
+        catch (_: RiskContextTooLong) { }
+        // Shortening never splits a surrogate pair.
+        assertEquals("a", RiskFit.shorten(RiskMessage("other", "a😀b"), 2).text)
+    }
+
     @Test fun collapseUsesPythonWhitespace() {
         val spaces = fixture.getJSONArray("python_whitespace_codepoints")
         for (i in 0 until spaces.length()) {

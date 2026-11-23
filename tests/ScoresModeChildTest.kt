@@ -420,6 +420,16 @@ class ScoresModeChildTest {
         FamilyEvidence(ctx).use { assertEquals("context_too_long", it.riskReportRows(scope, System.currentTimeMillis()).single().reason) }
         assertEquals("context_too_long", reports().last().getJSONArray("conversations").getJSONObject(0).getString("review_reason"))
     }
+    @Test fun aPaddedThreadIsScoredOnTheNewestMessagesThatFit() {
+        activate()
+        capture(*Array(12) { obs(text(it) + " " + "填".repeat(300)) })
+        // The context holds roughly three of these messages: the full window overflows, a cut-down one fits.
+        val fits = RiskPrompt.render("", emptyList()).length + 1200
+        val scorer = FakeScorer(logits = { if (it.length > fits + (RiskBatch.instructionLoader(ctx)?.length ?: 0)) throw RiskContextTooLong() else FakeScorer.HIGH })
+        assertEquals(0, runBatch(scorer).needsReview)
+        FamilyEvidence(ctx).use { db -> val row = db.riskReportRows(scope, System.currentTimeMillis()).single(); assertNotNull(row.score); assertNull(row.reason) }
+        assertTrue(scorer.prompts.last().contains(text(11)))
+    }
     @Test fun aWrongModelFileIsNotLoadedAndTheParentIsToldItMismatches() {
         activate(); capture(obs(text(1)))
         RiskModelStore.file(ctx).writeBytes(tinyBytes.copyOf().also { it[0] = 0 })

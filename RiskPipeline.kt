@@ -938,7 +938,7 @@ internal object RiskBatch {
                     var score: Double? = null
                     var reason: String? = null
                     try {
-                        val result = RiskScoring.fromLogits(scorer.score(RiskPrompt.render(instruction, messages)))
+                        val result = RiskScoring.fromLogits(RiskFit.score(scorer, instruction, messages))
                         score = result.reportScore
                         if (score == null) reason = "insufficient_context"
                     } catch (_: RiskContextTooLong) { reason = "context_too_long"

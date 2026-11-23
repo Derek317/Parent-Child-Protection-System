@@ -56,6 +56,44 @@ internal object RiskPrompt {
         }
 }
 
+/**
+ * What is fed to the model when the window overflows its context. The prompt, the instruction and the answer tokens are
+ * unchanged; only the messages are cut, so a sender cannot pad a thread until it is never scored.
+ */
+internal object RiskFit {
+    /** Oldest messages are dropped down to this many; below it the older messages are shortened instead. */
+    const val MIN_KEPT = 10
+
+    /** The first [cap] characters of the collapsed text, never splitting a surrogate pair. */
+    fun shorten(m: RiskMessage, cap: Int): RiskMessage {
+        val text = RiskPrompt.collapse(m.text)
+        if (text.length <= cap) return m
+        val end = if (cap > 0 && text[cap - 1].isHighSurrogate()) cap - 1 else cap
+        return RiskMessage(m.speaker, text.substring(0, end))
+    }
+
+    /**
+     * Scores the newest window: as is if it fits; else drops the oldest message one at a time down to [MIN_KEPT]; then
+     * shortens every message but the newest (halving a character cap, finally leaving them out). The newest message is
+     * never cut: [RiskContextTooLong] means it does not fit the context by itself. Overflow is found by tokenizing only,
+     * so each failed try is cheap; the scorer runs the model once, on the window that fits.
+     */
+    fun score(scorer: RiskScorer, instruction: String, messages: List<RiskMessage>): FloatArray {
+        fun attempt(w: List<RiskMessage>): FloatArray? =
+            try { scorer.score(RiskPrompt.render(instruction, w)) } catch (_: RiskContextTooLong) { null }
+        var window = messages.takeLast(RiskModelSpec.WINDOW)
+        attempt(window)?.let { return it }
+        while (window.size > MIN_KEPT) { window = window.drop(1); attempt(window)?.let { return it } }
+        val older = window.dropLast(1); val newest = window.takeLast(1)
+        var cap = (older.maxOfOrNull { RiskPrompt.collapse(it.text).length } ?: 0) / 2
+        while (cap > 0) {
+            attempt(older.map { shorten(it, cap) } + newest)?.let { return it }
+            cap /= 2
+        }
+        return attempt(newest) ?: throw RiskContextTooLong()
+    }
+}
+
 internal data class RiskWindowScore(val alert: Double, val flagged: Boolean, val answer: String, val reportScore: Double?)
 
 internal data class RiskThreadScore(val score: Double?, val reviewReason: String?, val flagged: Boolean, val alert: Double)
