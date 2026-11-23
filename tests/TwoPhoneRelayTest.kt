@@ -51,6 +51,9 @@ internal class FakeRelay : Dispatcher() {
     val refusals = mutableListOf<String>()
     /** Test switch: publishes are recorded but never answered or stored (a relay that does not take M3). */
     @Volatile var holdPublishes = false
+    /** Test switch: every DELETE gets this status instead of the room logic; [deletes] counts DELETE requests. */
+    @Volatile var deleteAnswer: Int? = null
+    val deletes = java.util.concurrent.atomic.AtomicInteger()
     val url: String get() = server.url("/").toString()
     @Synchronized fun room(name: String) = rooms.getOrPut(name) { Room() }
 
@@ -64,6 +67,7 @@ internal class FakeRelay : Dispatcher() {
     }
 
     @Synchronized override fun dispatch(request: RecordedRequest): MockResponse {
+        if (request.method == "DELETE") { deletes.incrementAndGet(); deleteAnswer?.let { return MockResponse().setResponseCode(it) } }
         val name = request.path!!.substringAfterLast('/')
         val auth = try { JSONObject(String(Base64.getUrlDecoder().decode(request.getHeader("Authorization")!!.removePrefix("IGGuard ")))) }
             catch (_: Exception) { return refuse("?", 401, "unauthorized") }
@@ -344,7 +348,44 @@ class TwoPhoneRelayTest {
         waitUntil("retired at the next start") { room.retired }
         waitUntil("token forgotten") { rendezvousTokens().isEmpty() }
     }
-    private fun rendezvousTokens() = prefs.getStringSet("pairing_rendezvous_tokens", emptySet()).orEmpty()
+    private fun rendezvousTokens() = prefs.getStringSet("pairing_rendezvous_tokens", emptySet()).orEmpty().map { it.substringAfter(':') }.toSet()
+
+    /** Terminal answers (2xx, 404, 410) forget a rendezvous token; transient ones keep it for the next start. */
+    @Test fun terminalRetirementAnswersForgetTheTokenTransientOnesKeepIt() {
+        GuardEngine.forgetLivePairingsForTest()
+        for (status in listOf(204, 200, 404, 410, 401, 408, 429, 500, 503)) {
+            val token = UUID.randomUUID().toString()
+            prefs.edit().remove("pairing_rendezvous_tokens").commit()
+            GuardEngine.rememberRendezvous(ctx, token)
+            relay.deleteAnswer = status
+            val before = relay.deletes.get()
+            GuardEngine.retireLeftoverRendezvous(ctx)
+            waitUntil("DELETE sent ($status)") { relay.deletes.get() > before }
+            if (status in 200..299 || status == 404 || status == 410) waitUntil("forgotten after $status") { rendezvousTokens().isEmpty() }
+            else { settle(500); assertEquals("kept after $status", setOf(token), rendezvousTokens()) }
+        }
+        // No answer at all (network error): kept.
+        val token = UUID.randomUUID().toString()
+        prefs.edit().remove("pairing_rendezvous_tokens").commit(); GuardEngine.rememberRendezvous(ctx, token)
+        relay.server.shutdown(); GuardEngine.retireLeftoverRendezvous(ctx); settle(2_000)
+        assertEquals("kept after a network error", setOf(token), rendezvousTokens())
+        relay = FakeRelay(); relay.server.start() // for @After
+    }
+
+    @Test fun rememberedRendezvousTokensAreBoundedByAgeAndCount() {
+        val now = System.currentTimeMillis()
+        GuardEngine.rememberRendezvous(ctx, "old", now - GuardEngine.RENDEZVOUS_MAX_AGE_MS - 1)
+        GuardEngine.rememberRendezvous(ctx, "recent", now)
+        assertEquals("older than the relay's idle lifetime: dropped", setOf("recent"), rendezvousTokens())
+        prefs.edit().remove("pairing_rendezvous_tokens").commit()
+        for (i in 1..(GuardEngine.RENDEZVOUS_MAX + 3)) GuardEngine.rememberRendezvous(ctx, "t$i", now + i)
+        assertEquals("capped, the oldest go first", (4..(GuardEngine.RENDEZVOUS_MAX + 3)).map { "t$it" }.toSet(), rendezvousTokens())
+        // An entry that ages past the limit while stored is dropped at the next start without a request.
+        prefs.edit().putStringSet("pairing_rendezvous_tokens", setOf("${now - GuardEngine.RENDEZVOUS_MAX_AGE_MS - 1}:stale")).commit()
+        val before = relay.deletes.get()
+        GuardEngine.retireLeftoverRendezvous(ctx, now); settle(500)
+        assertTrue(rendezvousTokens().isEmpty()); assertEquals(before, relay.deletes.get())
+    }
 
     @Test fun threeWrongDigitsCancelAndPinNothing() {
         val p = Phones(); p.upToDigits()

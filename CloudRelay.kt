@@ -33,10 +33,15 @@ object CloudRelay {
     @Volatile private var parentAlert:((JSONObject)->Unit)?=null
 
     /** Parent-authorized erasure uses the old room proof; it carries no replacement pairing secrets. */
-    fun retireRoom(ctx:Context, endpoint:String = this.endpoint, onComplete:(Boolean,String)->Unit) = retire(ctx,endpoint,null,onComplete)
-    /** The same erasure for a QR pairing's rendezvous room (token S, v1 proof): on completion, cancel and expiry (design 2.5). */
-    internal fun retirePairingRoom(ctx:Context, token:String, endpoint:String = this.endpoint, onComplete:(Boolean,String)->Unit) = retire(ctx,endpoint,token,onComplete)
-    private fun retire(ctx:Context, endpoint:String, token:String?, onComplete:(Boolean,String)->Unit) {
+    fun retireRoom(ctx:Context, endpoint:String = this.endpoint, onComplete:(Boolean,String)->Unit) =
+        retire(ctx,endpoint,null){code,message->onComplete(code in 200..299,message)}
+    /** The same erasure for a QR pairing's rendezvous room (token S, v1 proof): on completion, cancel and expiry (design 2.5).
+     *  [onComplete] gets true once nothing more can be done: 2xx (retired), 404 or 410 (no such room any more). Only a transient
+     *  failure (network, 401, 408, 429, 5xx, a changed session, not allowed right now) gets false, so the token is kept for a retry. */
+    internal fun retirePairingRoom(ctx:Context, token:String, endpoint:String = this.endpoint, onComplete:(Boolean)->Unit) =
+        retire(ctx,endpoint,token){code,_->onComplete(code!=null && (code in 200..299 || code==404 || code==410))}
+    /** [onResult] gets the HTTP status, or null when no answer came (not prepared, session changed, network). */
+    private fun retire(ctx:Context, endpoint:String, token:String?, onResult:(Int?,String)->Unit) {
         val origin:Triple<String,String,Int>;val request:Request
         try {
             check(GuardEngine.isParentMode(ctx) && GuardEngine.transferAllowed(ctx))
@@ -46,20 +51,20 @@ object CloudRelay {
             val socket=FamilyRelay.socketUrl(endpoint,room,BuildConfig.DEBUG)
             val url=socket.replaceFirst("wss://","https://").replaceFirst("ws://","http://")
             request=Request.Builder().url(url).delete().header("Authorization",GuardEngine.relayAuthorization(ctx,token ?: origin.second)).build()
-        } catch(_:Exception){onComplete(false,"未能準備中繼刪除請求；目前配對保留。");return}
+        } catch(_:Exception){onResult(null,"未能準備中繼刪除請求；目前配對保留。");return}
         executor.execute {
-            if(GuardEngine.captureRelaySession(ctx)!=origin){onComplete(false,"配對已變更，刪除請求已停止。");return@execute}
+            if(GuardEngine.captureRelaySession(ctx)!=origin){onResult(null,"配對已變更，刪除請求已停止。");return@execute}
             try {
                 client.newBuilder().readTimeout(12,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
                     val success=response.code in 200..299
-                    onComplete(success,when {
+                    onResult(response.code,when {
                         success -> "中繼已確認刪除及退役舊房間。"
                         // The current relay answers 426 before any state change: it simply cannot delete a room.
                         response.code in setOf(426,404,405,501) -> "目前的中繼不能刪除房間，原有配對已保留。可改選「只建立新配對」。"
                         else -> "中繼未確認刪除；目前配對保留。"
                     })
                 }
-            } catch(_:Exception){onComplete(false,"中繼未確認刪除；請檢查連線後重試。")}
+            } catch(_:Exception){onResult(null,"中繼未確認刪除；請檢查連線後重試。")}
         }
     }
 

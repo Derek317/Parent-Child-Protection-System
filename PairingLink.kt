@@ -130,7 +130,7 @@ internal class ParentPairingLink(
     private fun retire(token: String) {
         if (retired) return
         retired = true
-        try { CloudRelay.retirePairingRoom(ctx, token) { ok, _ -> if (ok) GuardEngine.forgetRendezvous(ctx, token) } } catch (_: Exception) {}
+        try { CloudRelay.retirePairingRoom(ctx, token) { settled -> if (settled) GuardEngine.forgetRendezvous(ctx, token) } } catch (_: Exception) {}
     }
 }
 

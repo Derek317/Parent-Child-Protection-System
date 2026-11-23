@@ -1253,26 +1253,37 @@ object GuardEngine {
      * died mid-pairing). Never the stored alias; the parent identity has another alias pattern. Skipped while a pairing machine of
      * this process is running (both are main-thread only, so none can start meanwhile). Never throws.
      */
-    /** Parent: the token S of each QR shown here whose rendezvous room the relay has not yet confirmed retired. It is that room's
-     *  credential, so it is kept only until then, in the same encrypted preferences as the other pairing state. */
+    /** Parent: the token S of each QR shown here whose rendezvous room the relay has not yet confirmed gone, stored as
+     *  "<time first stored, ms>:<token>" in the same encrypted preferences as the other pairing state. It is that room's credential,
+     *  so it is kept only until then, at most RENDEZVOUS_MAX_AGE_MS (by then the relay has retired the unused room itself) and at
+     *  most RENDEZVOUS_MAX entries (the oldest go first). */
     private const val RENDEZVOUS_TOKENS = "pairing_rendezvous_tokens"
-    fun rememberRendezvous(ctx: Context, token: String) = synchronized(pollLock) {
-        check(prefs(ctx).edit().putStringSet(RENDEZVOUS_TOKENS, prefs(ctx).getStringSet(RENDEZVOUS_TOKENS, emptySet()).orEmpty() + token).commit())
+    /** relay/src/worker.js REGISTRATION_TTL: an idle room is retired by the relay after 90 days. */
+    internal const val RENDEZVOUS_MAX_AGE_MS = 90L * 24 * 60 * 60_000L
+    internal const val RENDEZVOUS_MAX = 8
+    private fun storedRendezvous(ctx: Context, now: Long): List<Pair<Long, String>> =
+        prefs(ctx).getStringSet(RENDEZVOUS_TOKENS, emptySet()).orEmpty().mapNotNull { entry ->
+            val at = entry.substringBefore(':').toLongOrNull() ?: return@mapNotNull null
+            (at to entry.substringAfter(':')).takeIf { now - at < RENDEZVOUS_MAX_AGE_MS && it.second.isNotEmpty() }
+        }.sortedBy { it.first }.takeLast(RENDEZVOUS_MAX)
+    private fun storeRendezvous(ctx: Context, entries: List<Pair<Long, String>>) =
+        check(prefs(ctx).edit().putStringSet(RENDEZVOUS_TOKENS, entries.map { "${it.first}:${it.second}" }.toSet()).commit())
+    fun rememberRendezvous(ctx: Context, token: String, now: Long = System.currentTimeMillis()) = synchronized(pollLock) {
+        storeRendezvous(ctx, (storedRendezvous(ctx, now).filter { it.second != token } + (now to token)).takeLast(RENDEZVOUS_MAX))
     }
-    fun forgetRendezvous(ctx: Context, token: String) = synchronized(pollLock) {
-        check(prefs(ctx).edit().putStringSet(RENDEZVOUS_TOKENS, prefs(ctx).getStringSet(RENDEZVOUS_TOKENS, emptySet()).orEmpty() - token).commit())
+    fun forgetRendezvous(ctx: Context, token: String, now: Long = System.currentTimeMillis()) = synchronized(pollLock) {
+        storeRendezvous(ctx, storedRendezvous(ctx, now).filter { it.second != token })
     }
     /** App start: retire rendezvous rooms a process death left alive (best effort, never throws; skipped while a pairing runs).
      *  A phone that is no longer a parent cannot prove it owns them: their tokens are dropped and the rooms expire at the relay. */
-    fun retireLeftoverRendezvous(ctx: Context) {
+    fun retireLeftoverRendezvous(ctx: Context, now: Long = System.currentTimeMillis()) {
         try {
             val tokens = synchronized(pollLock) {
                 if (pairingInProgress(prefs(ctx).getString(CHILD_KEY_ALIAS, null))) return
-                val stored = prefs(ctx).getStringSet(RENDEZVOUS_TOKENS, emptySet()).orEmpty().toList()
-                if (!isParentMode(ctx)) { if (stored.isNotEmpty()) check(prefs(ctx).edit().remove(RENDEZVOUS_TOKENS).commit()); return }
-                stored
+                if (!isParentMode(ctx)) { if (prefs(ctx).contains(RENDEZVOUS_TOKENS)) check(prefs(ctx).edit().remove(RENDEZVOUS_TOKENS).commit()); return }
+                storedRendezvous(ctx, now).also { storeRendezvous(ctx, it) }.map { it.second } // drops expired and surplus entries
             }
-            for (token in tokens) CloudRelay.retirePairingRoom(ctx, token) { ok, _ -> if (ok) forgetRendezvous(ctx, token) }
+            for (token in tokens) CloudRelay.retirePairingRoom(ctx, token) { settled -> if (settled) forgetRendezvous(ctx, token) }
         } catch (_: Exception) {}
     }
     fun removeOrphanedChildKeys(ctx: Context) {
