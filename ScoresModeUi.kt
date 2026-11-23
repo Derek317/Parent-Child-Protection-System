@@ -334,7 +334,7 @@ internal object ScoresChildCopy {
     const val EXPORT_TOOL_URL = "https://accountscenter.instagram.com/info_and_permissions/dyi"
     const val EXPORT_GUIDE_TITLE = "如何取得 Instagram 資料檔 / How to get your Instagram file"
     val EXPORT_GUIDE_STEPS = listOf(
-        "按下面的按鈕開啟 Instagram 的匯出頁面，選擇你的 Instagram 個人檔案。\nTap the button below to open Instagram's export page, and choose your Instagram profile.",
+        "在上載卡按「開啟 Instagram 匯出頁面」，選擇你的 Instagram 個人檔案。\nOn the upload card, tap \"Open Instagram's export page\", then choose your Instagram profile.",
         "選「匯出至裝置」。\nChoose \"Export to device\".",
         "資料：只選「訊息」。\nInformation: Messages only.",
         "日期範圍：最近一星期（第一次可選最近一個月）。\nDate range: last week (last month the first time).",
@@ -348,7 +348,7 @@ internal object ScoresChildCopy {
     val CLOUD_GOOGLE_DRIVE_URL = cloudUrl("GoogleDrive")
     val CLOUD_DROPBOX_URL = cloudUrl("Dropbox")
     const val CLOUD_TITLE = "可選：每星期自動匯出到你自己的雲端硬碟 / Optional: a weekly export to your own cloud drive"
-    const val CLOUD_NOTICE = "這是 Instagram（Meta）自己的功能，不是 IG Guard 的功能。設定後，你的訊息副本會存放在你自己的雲端硬碟（Google Drive 或 Dropbox），受該服務的條款約束。Instagram 會要求你輸入 Instagram 密碼；IG Guard 不會看到你的密碼。匯入仍然要用上面的「匯入 Instagram 資料」選取檔案。\nThis is Instagram's (Meta's) own feature, not IG Guard's. Once set up, a copy of your messages sits in your own cloud drive (Google Drive or Dropbox), under that provider's terms. Instagram asks for your Instagram password; IG Guard never sees it. Importing still happens through \"Import Instagram export\" above."
+    const val CLOUD_NOTICE = "這是 Instagram（Meta）自己的功能，不是 IG Guard 的功能。設定後，你的訊息副本會存放在你自己的雲端硬碟（Google Drive 或 Dropbox），受該服務的條款約束。Instagram 會要求你輸入 Instagram 密碼；IG Guard 不會看到你的密碼。匯入仍然要用上載卡的「匯入 Instagram 資料」選取檔案。\nThis is Instagram's (Meta's) own feature, not IG Guard's. Once set up, a copy of your messages sits in your own cloud drive (Google Drive or Dropbox), under that provider's terms. Instagram asks for your Instagram password; IG Guard never sees it. Importing still happens through \"Import Instagram export\" on the upload card."
     const val CLOUD_GOOGLE_DRIVE = "每週匯出到 Google Drive / Weekly export to Google Drive"
     const val CLOUD_DROPBOX = "每週匯出到 Dropbox / Weekly export to Dropbox"
     const val CLOUD_CONFIRM_TITLE = "前往 Instagram 設定每週匯出？ / Set up a weekly export on Instagram?"

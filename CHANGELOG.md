@@ -4,7 +4,7 @@
 
 Local build for the final review. Not released; version name and code are unchanged (5.1). Bundled Terms revision `2026-11-23-v7`. The Terms have not been reviewed by a lawyer and are not legal advice. Nothing here is approved by Meta, and the scores still do not reliably detect grooming.
 
-- Upload card on the child's phone: a short bilingual guide to Instagram's own "Export your information" tool and a button that opens its fixed address. The child still does the export inside Instagram's own screens.
+- Upload card on the child's phone: a link to a short bilingual guide (a sheet) to Instagram's own "Export your information" tool and a button that opens its fixed address. The child still does the export inside Instagram's own screens.
 - The file picker for the import opens at Downloads and lists zip, JSON and HTML files. The import still checks the file's content.
 - After a successful import, analysis starts at the next charge without waiting for the phone to be idle. It still runs only while charging.
 - A content-free reminder on the child's phone only, at most once a day, when the last successful import is more than 7 days old (upload agreed, analysis on). Only the time of the last successful import is kept, and it is deleted with the stored chat text.
