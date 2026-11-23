@@ -33,6 +33,18 @@ class PairingGuardTest {
     private fun foreignInvite()=FamilySecurity.Invite(UUID.randomUUID().toString(),FamilySecurity.passwordVerifier("OtherParent928!"),FamilySecurity.newSigningIdentity().publicKey)
     private fun link(i:FamilySecurity.Invite)=Uri.parse("igguard://pair?version=43&token=${i.token}&pw=${FamilySecurity.encode(i.passwordVerifier)}&parent=${i.parentPublicKey}")
 
+    @Test fun childConfirmationShowsTheSameSafetyPicturesAsTheParent() {
+        AppConsent.accept(ctx,AppConsent.acknowledgments)
+        GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
+        val invite=GuardEngine.parsePairingString(GuardEngine.buildPairingInviteText(ctx))!!
+        val parentPictures=GuardEngine.getSafetyEmojis(ctx)
+        prefs.edit().clear().commit()   // the same process now plays the unpaired child phone
+        val c=Robolectric.buildActivity(MainActivity::class.java,Intent(Intent.ACTION_VIEW,link(invite))).setup()
+        try {
+            val sheet=ShadowDialog.getLatestDialog().window!!.decorView
+            assertEquals(parentPictures,sheet.findViewWithTag<android.widget.TextView>("pairing_safety_emojis").text.toString())
+        } finally {c.pause().stop().destroy()}
+    }
     @Test fun parentPhoneRefusesPairingAndKeepsEverySecret() {
         GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
         val token=GuardEngine.getOrCreateFamilyToken(ctx)

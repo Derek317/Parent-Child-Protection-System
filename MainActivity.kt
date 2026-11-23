@@ -1016,8 +1016,10 @@ object GuardEngine {
         return "ig_hk_$hex"
     }
 
-    fun getSafetyEmojis(ctx: Context): String {
-        val token = getOrCreateFamilyToken(ctx)
+    fun getSafetyEmojis(ctx: Context): String = safetyEmojis(getOrCreateFamilyToken(ctx))
+
+    /** The pictures for a stored (trimmed, lower-case) token; the child's confirmation sheet shows them before the token is stored. */
+    fun safetyEmojis(token: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(token.toByteArray(Charsets.UTF_8))
         return (0..3).joinToString(" ") { idx ->
             val b = digest[idx].toInt() and 0xFF
@@ -3145,6 +3147,8 @@ class MainActivity : Activity() {
         showSheet("確認家庭配對") { dialog ->
             addView(label(if (childRepair) "此手機已配對子女保護。更換家庭需要目前的家長主密碼，並會先通知原本的家長手機。請在兩部手機核對安全圖案。"
                 else "只接受由家長傳送的邀請。確認後，此手機會切換為子女模式，並更換目前的家庭配對。請在兩部手機核對安全圖案。", 14f, t.textSecondary, bottomPad = 18))
+            // The text above asks to compare the pictures: show them, from the token as it will be stored (setFamilyToken trims and lower-cases).
+            addView(label(GuardEngine.safetyEmojis(parsed.token.trim().lowercase(Locale.US)), 30f, t.textPrimary, bottomPad = 12).apply { gravity = Gravity.CENTER; tag = "pairing_safety_emojis" })
             if (parsed.parentPublicKey.isNotEmpty()) {
                 addView(label(FamilySecurity.safetyCode(parsed.token, parsed.passwordVerifier, parsed.parentPublicKey), 19f, t.textPrimary, true, bottomPad = 12))
                 addView(label("請由家長在家長手機查看並核對相同安全代碼，再確認配對。", 14f, t.textSecondary, bottomPad = 18))
