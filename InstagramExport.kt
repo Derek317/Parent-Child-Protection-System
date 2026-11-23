@@ -26,7 +26,7 @@ import java.util.zip.ZipInputStream
  * The file is hostile input. It is read as a stream, never written to disk, never rendered or executed, and bounded by [ExportLimits].
  * Message text and names are never logged. Any failure stores nothing from the file.
  */
-internal enum class ImportResult { OK, NOTHING_FOUND, NOT_ALLOWED, TOO_LARGE, TOO_MANY_ENTRIES, UNSAFE_ENTRY, MALFORMED, TEEN_UNKNOWN, TIME_UNREADABLE, IO_ERROR }
+internal enum class ImportResult { OK, NOTHING_FOUND, NOT_ALLOWED, TOO_LARGE, TOO_MANY_ENTRIES, UNSAFE_ENTRY, MALFORMED, TEEN_UNKNOWN, TIME_UNREADABLE, TOO_OLD, IO_ERROR }
 
 /** What an import did. [messages] counts rows newly stored (a repeat import stores none); [groups] counts conversations skipped as groups. */
 internal data class ImportSummary(val result: ImportResult, val conversations: Int = 0, val groups: Int = 0, val messages: Int = 0)
@@ -403,6 +403,8 @@ internal object InstagramImport {
             true } }
             if (!stillAllowed) return ImportSummary(ImportResult.NOT_ALLOWED)
             try { RiskScoringSchedule.sync(app) } catch (_: RuntimeException) {}
+            // One-to-one chats with readable times, none recent: the file is too old, not empty (bug-review B-2).
+            if (conversations == 0 && parsed.conversations.any { c -> c.messages.any { it.ts != null } }) return ImportSummary(ImportResult.TOO_OLD, 0, parsed.groups, stored)
             ImportSummary(ImportResult.OK, conversations, parsed.groups, stored)
         } catch (_: Exception) {
             ImportSummary(ImportResult.IO_ERROR)

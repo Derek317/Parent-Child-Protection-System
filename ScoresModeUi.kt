@@ -332,6 +332,7 @@ internal object ScoresChildCopy {
         ImportResult.MALFORMED -> "不是有效的 Instagram 資料檔 / Not a valid Instagram file" to "檔案損壞，或不是 Instagram 的訊息檔。沒有儲存任何內容。\nThe file is damaged or is not an Instagram message file. Nothing was stored."
         ImportResult.TEEN_UNKNOWN -> "分不出哪一位是你 / Cannot tell which one is you" to "單一 HTML 檔不能判斷哪一位是你。請改選整個 .zip，或選 message_N.json。沒有儲存任何內容。\nA single HTML file cannot tell which person is you. Pick the whole .zip or a message_N.json instead. Nothing was stored."
         ImportResult.TIME_UNREADABLE -> "讀不到訊息的時間 / Cannot read the message times" to "這個檔案的訊息時間格式本 App 讀不懂，所以無法判斷訊息有多新。請再向 Instagram 要求下載資料，格式選「JSON」。沒有儲存任何內容。\nThis app cannot read the time format in this file, so it cannot tell how recent the messages are. Request your data from Instagram again and choose the JSON format. Nothing was stored."
+        ImportResult.TOO_OLD -> "訊息都超過 ${RiskLimits.DAYS} 天 / All messages are older than ${RiskLimits.DAYS} days" to "這個檔案裡的一對一對話都沒有最近 ${RiskLimits.DAYS} 天內的訊息，所以沒有儲存任何訊息。請再向 Instagram 要求下載一份較新的資料。\nNone of the one-to-one chats in this file has a message from the last ${RiskLimits.DAYS} days, so no messages were stored. Request a newer export from Instagram."
         ImportResult.IO_ERROR -> "讀取檔案時出錯 / Could not read the file" to "檔案可能已移動，或儲存裝置中斷了。沒有儲存任何內容，請重試。\nThe file may have moved or the storage was interrupted. Nothing was stored. Try again."
     }
     const val RECONSENT_CARD_TITLE = "請再次決定 / Please decide again"

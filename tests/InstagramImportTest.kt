@@ -184,6 +184,19 @@ class InstagramImportTest {
         val h1 = import(htmlTwice, "message_1.html"); val h2 = import(htmlTwice, "message_1.html")
         assertEquals(2, h1.messages); assertEquals(0, h2.messages); assertEquals(rows + 2, count("risk_store"))
     }
+    @Test fun anExportWhoseChatsAreAllOlderThanTheLimitSaysSoAndStoresNothing() {
+        activate(ScoresMethod.UPLOAD)
+        val old = listOf(M(friend, "ancient", 24 * 15), M(teen, "also ancient", 24 * 16))
+        val r = import(json(old).toByteArray(), "message_1.json")
+        assertEquals(ImportResult.TOO_OLD, r.result); assertEquals(0, r.messages); assertEquals(0, count("risk_store"))
+        val (title, body) = ScoresChildCopy.exportResult(r)
+        assertTrue(title, title.contains("14"))
+        assertFalse("not blamed on the file's content", body.contains("沒有一對一對話") || body.contains("no one-to-one chats"))
+        // A file that really has only groups keeps its own wording.
+        val club = listOf(M("Cy Pal", "hello all", 1), M(friend, "hi", 2), M(teen, "hey", 3))
+        val groups = import(json(club, listOf("Cy Pal", friend, teen)).toByteArray(), "message_1.json")
+        assertEquals(ImportResult.OK, groups.result); assertEquals(0, groups.conversations)
+    }
     @Test fun groupThreadsAreSkippedAndCountedAsWithCapture() {
         activate(ScoresMethod.UPLOAD)
         val club = listOf(M("Cy Pal", "hello all", 1), M(friend, "hi", 2), M(teen, "hey", 3))
