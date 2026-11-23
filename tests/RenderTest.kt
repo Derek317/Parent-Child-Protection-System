@@ -53,6 +53,19 @@ class RenderTest {
         render("permissions","native-child-permissions",390,844)
         render("unlock","native-child-unlock",390,844)
     }
+    @Test fun aRefreshCutShortByPauseDoesNotSilenceLaterRefreshes() {
+        val ctx=RuntimeEnvironment.getApplication()
+        LocalVault.preferences(ctx).edit().clear().commit()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            val receiver=MainActivity::class.java.getDeclaredField("refreshReceiver").apply{isAccessible=true}.get(a) as android.content.BroadcastReceiver
+            val pending=MainActivity::class.java.getDeclaredField("refreshPending").apply{isAccessible=true}
+            receiver.onReceive(a,android.content.Intent(GuardEngine.ACTION_UI_REFRESH))
+            assertTrue(pending.getBoolean(a))
+            c.pause();c.resume()   // Home and back within the 200 ms: onPause drops the runnable that clears the flag
+            assertFalse("later refresh broadcasts would be dropped",pending.getBoolean(a))
+        } finally {c.pause().stop().destroy()}
+    }
     private fun render(section: String, name: String, width: Int, height: Int) {
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         MainActivity::class.java.getDeclaredMethod("navigateTo",String::class.java).apply{isAccessible=true}.invoke(a,section)

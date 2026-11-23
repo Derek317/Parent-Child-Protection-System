@@ -3233,6 +3233,7 @@ class MainActivity : Activity() {
     }
     override fun onPause() {
         super.onPause(); themeReveal?.end(); activityVisible = false; uiHandler.removeCallbacksAndMessages(null)
+        refreshPending = false   // the runnable that clears it was just removed; left set, every later refresh broadcast is dropped
         if (ModelImportJob.listener === importListener) ModelImportJob.listener = null
         if (InstagramImport.listener === exportListener) InstagramImport.listener = null
         parentAccess.lock()
