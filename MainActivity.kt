@@ -2721,14 +2721,15 @@ class MainActivity : Activity() {
     private fun renderParentLock() {
         if(isDestroyed)return
         themeReveal?.end() // the reveal's snapshot of the old parent screen sits on the decor overlay, above this lock
+        val t=currentTheme()
         val box=LinearLayout(this).apply {
             orientation=LinearLayout.VERTICAL;setPadding(dp(24),dp(48),dp(24),dp(24));tag="parent_privacy_lock"
-            isSaveFromParentEnabled=false
+            isSaveFromParentEnabled=false;setBackgroundColor(color(t.bgCanvas))
         }
-        box.addView(TextView(this).apply {text="家長資料已鎖定\nParent data is locked";textSize=24f})
-        box.addView(TextView(this).apply {text="使用手機的生物辨識或螢幕鎖驗證後查看。背景接收仍會繼續；請勿與其他人共用手機解鎖憑證。\nAuthenticate with your device lock to view family records. Background delivery continues.";textSize=16f;setPadding(0,dp(20),0,dp(20))})
-        box.addView(Button(this).apply {text="驗證並開啟 / Authenticate";tag="parent_authenticate";setOnClickListener{requestParentAuthentication()}})
-        box.addView(Button(this).apply {text="設定手機螢幕鎖 / Set device lock";setOnClickListener{
+        box.addView(label("家長資料已鎖定\nParent data is locked",27f,t.textPrimary,true))
+        box.addView(label("使用手機的生物辨識或螢幕鎖驗證後查看。背景接收仍會繼續；請勿與其他人共用手機解鎖憑證。\nAuthenticate with your device lock to view family records. Background delivery continues.",15f,t.textSecondary,topPad=16,bottomPad=24))
+        box.addView(Button(this).apply {text="驗證並開啟 / Authenticate";tag="parent_authenticate";actionLook(this,t.btnPrimaryBg,t.btnPrimaryText,t);setOnClickListener{requestParentAuthentication()}})
+        box.addView(Button(this).apply {text="設定手機螢幕鎖 / Set device lock";actionLook(this,t.btnSecondaryBg,t.btnSecondaryText,t);setOnClickListener{
             try{startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))}catch(_:Exception){Toast.makeText(this@MainActivity,"請在 Android 設定啟用螢幕鎖。",Toast.LENGTH_LONG).show()}
         }})
         setContentView(box)
@@ -2862,7 +2863,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private data class ThemeColors(
+    internal data class ThemeColors(
         val bgCanvas: String, val bgCard: String, val bgHero: String, val bgInput: String,
         val bgChip: String, val borderSubtle: String, val textPrimary: String,
         val textSecondary: String, val textMuted: String, val accentSeafoam: String,
@@ -2872,8 +2873,11 @@ class MainActivity : Activity() {
         val riskLow: String
     )
     // Light "Harbour" / dark "Clear Sky". accentSeafoam = brand primary, accentPowderSky = secondary (borders only), warningButtonBg = attention.
-    private fun currentTheme(): ThemeColors {
-        return if (GuardEngine.isBrightTheme(this)) {
+    private fun currentTheme(): ThemeColors = themeColors(GuardEngine.isBrightTheme(this))
+    /** The saved theme, or Harbour (the default) when the encrypted preferences cannot be read: consent and storage-failure pages. */
+    private fun brightOrDefault(): Boolean = try { GuardEngine.isBrightTheme(this) } catch (_: RuntimeException) { true }
+    private fun themeColors(bright: Boolean): ThemeColors {
+        return if (bright) {
             ThemeColors(
                 bgCanvas = "#F6F8FB", bgCard = "#FFFFFF", bgHero = "#EDF1F4", bgInput = "#FFFFFF",
                 bgChip = "#EDF1F4", borderSubtle = "#DDE0E3", textPrimary = "#0F2238",
@@ -2895,7 +2899,7 @@ class MainActivity : Activity() {
             )
         }
     }
-    private fun font(bold: Boolean = false): Typeface = fonts.getOrPut(bold) {
+    internal fun font(bold: Boolean = false): Typeface = fonts.getOrPut(bold) {
         val id = resources.getIdentifier(if (bold) "manrope_semibold" else "manrope_regular", "font", packageName)
         if (id != 0) resources.getFont(id) else Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
     }
@@ -2921,8 +2925,7 @@ class MainActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
         setOnClickListener(sessionClick(onClick))
     }
-    private fun focusSurface(fill:String,radius:Int,border:String?=null):StateListDrawable {
-        val t=currentTheme()
+    private fun focusSurface(fill:String,radius:Int,border:String?=null,t:ThemeColors=currentTheme()):StateListDrawable {
         return StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_focused),background(fill,radius).apply {
                 setStroke(dp(2),color(if(fill==t.btnPrimaryBg)t.btnPrimaryText else t.accentSeafoam))
@@ -2930,9 +2933,9 @@ class MainActivity : Activity() {
             addState(intArrayOf(),background(fill,radius,border))
         }
     }
-    private fun ripple(fill: String, radius: Int = 10, border: String? = null): RippleDrawable {
-        val t=currentTheme();val feedback=color(if(fill==t.btnPrimaryBg)t.btnPrimaryText else t.accentSeafoam)
-        return RippleDrawable(ColorStateList.valueOf((feedback and 0x00ffffff) or 0x24000000), focusSurface(fill,radius,border), background(t.bgCard, radius)) // mask: only its shape counts
+    private fun ripple(fill: String, radius: Int = 10, border: String? = null, t: ThemeColors = currentTheme()): RippleDrawable {
+        val feedback=color(if(fill==t.btnPrimaryBg)t.btnPrimaryText else t.accentSeafoam)
+        return RippleDrawable(ColorStateList.valueOf((feedback and 0x00ffffff) or 0x24000000), focusSurface(fill,radius,border,t), background(t.bgCard, radius)) // mask: only its shape counts
     }
     /** Starts [animator], or returns null when the system "remove animations" setting is on: the caller then places the final state itself. */
     /** Entrances decelerate; a move between two places on screen passes [moveEasing] (fast-out-slow-in, as the sheets use). */
@@ -2948,11 +2951,10 @@ class MainActivity : Activity() {
             }
         }
     }
-    private fun applyTheme() {
-        val bright = GuardEngine.isBrightTheme(this)
+    private fun applyTheme(bright: Boolean = GuardEngine.isBrightTheme(this)) {
         val id = resources.getIdentifier(if (bright) "GuardThemeLight" else "GuardThemeDark", "style", packageName)
         if (id != 0) setTheme(id)
-        val t = currentTheme()
+        val t = themeColors(bright)
         window.statusBarColor = color(t.bgCanvas)
         window.navigationBarColor = color(t.bgCard)
         window.decorView.systemUiVisibility = if (bright) View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0
@@ -4842,19 +4844,20 @@ class MainActivity : Activity() {
         CloudRelay.disconnect()
         stopService(Intent(this, ParentAlertService::class.java))
         GuardEngine.syncChildComponents(this)
-        setContentView(AppConsent.page(this) { recreate() })
+        val bright = brightOrDefault(); applyTheme(bright)
+        setContentView(AppConsent.page(this, themeColors(bright)) { recreate() })
     }
     private fun showStorageFailure() {
         storageReady = false
         activityVisible = false
         uiHandler.removeCallbacksAndMessages(null)
         dismissUiDialogs()
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(32), dp(48), dp(32), dp(32)) }
-        content.addView(TextView(this).apply {
-            text = "無法開啟加密儲存空間\n\n現有資料已保留。請先解鎖手機再重試。如持續失敗，請保留 App 資料並聯絡支援；請勿清除資料或重新配對。"
-            textSize = 18f
-        })
-        content.addView(Button(this).apply { text = "重試"; setOnClickListener { recreate() } })
+        // The encrypted preferences may be what failed: read the theme defensively and use no helper that reads it again.
+        val bright = brightOrDefault(); applyTheme(bright); val t = themeColors(bright)
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(48), dp(24), dp(24)); setBackgroundColor(color(t.bgCanvas)) }
+        content.addView(label("無法開啟加密儲存空間", 21f, t.textPrimary, true, bottomPad = 16))
+        content.addView(label("現有資料已保留。請先解鎖手機再重試。如持續失敗，請保留 App 資料並聯絡支援；請勿清除資料或重新配對。", 16f, t.textPrimary, bottomPad = 24))
+        content.addView(Button(this).apply { text = "重試"; actionLook(this, t.btnPrimaryBg, t.btnPrimaryText, t); setOnClickListener { recreate() } })
         setContentView(content)
     }
     private val uiDialogs = mutableSetOf<Dialog>()
@@ -4961,7 +4964,7 @@ class MainActivity : Activity() {
         line.addView(words, LinearLayout.LayoutParams(0, -2, 1f)); line.addView(icon("caret-right", t.textMuted, 18))
         outer.addView(line); divider(outer, t); return outer
     }
-    private fun label(text: String, sizeSp: Float, hexColor: String, bold: Boolean = false, topPad: Int = 0, bottomPad: Int = 0): TextView = TextView(this).apply {
+    internal fun label(text: String, sizeSp: Float, hexColor: String, bold: Boolean = false, topPad: Int = 0, bottomPad: Int = 0): TextView = TextView(this).apply {
         this.text = text; textSize = sizeSp; typeface = font(bold); setTextColor(color(hexColor))
         includeFontPadding = false; setLineSpacing(dp(3).toFloat(), 1.05f)
         setPadding(0, dp(topPad), 0, dp(bottomPad))
@@ -4986,14 +4989,14 @@ class MainActivity : Activity() {
         text = title; actionLook(this, hexBg, hexText); setOnClickListener(sessionClick(onClick))
     }
     /** The action-button look only (no click handling). Disabled = the same fill and text at half alpha, no ripple. */
-    private fun actionLook(button: Button, hexBg: String, hexText: String, t: ThemeColors = currentTheme()) = button.apply {
+    internal fun actionLook(button: Button, hexBg: String, hexText: String, t: ThemeColors = currentTheme()) = button.apply {
         textSize = 14f; typeface = font(true); isAllCaps = false
         val ink = color(hexText); val disabled = intArrayOf(-android.R.attr.state_enabled)
         setTextColor(ColorStateList(arrayOf(disabled, intArrayOf()), intArrayOf((ink and 0x00ffffff) or 0x80000000.toInt(), ink)))
         val border = if (hexBg != t.btnPrimaryBg) t.accentPowderSky else null
         background = StateListDrawable().apply {
             addState(disabled, background(hexBg, 10, border).apply { alpha = 128 })
-            addState(intArrayOf(), ripple(hexBg, 10, border))
+            addState(intArrayOf(), ripple(hexBg, 10, border, t))
         }
         minimumHeight = dp(52); setPadding(dp(14), dp(12), dp(14), dp(12))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(4), 0, dp(8)) }
