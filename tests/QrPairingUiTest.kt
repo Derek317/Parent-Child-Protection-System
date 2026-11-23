@@ -112,7 +112,7 @@ class QrPairingUiTest {
                 assertTrue(acceptTexts.none { it.contains("密碼") || it.contains("password", ignoreCase = true) })
                 assertTrue(link.accept())
                 fun texts() = all(dialog.window!!.decorView).filterIsInstance<TextView>().map { it.text.toString() }
-                assertTrue(texts().any { it.contains("須再次解鎖才可查看家庭") && it.contains("asks you to unlock again to view the family") })
+                assertTrue("no lock warning after Accept", texts().none { it.contains("解鎖") || it.contains("unlock", ignoreCase = true) })
                 save(dialog, "qr-parent-finishing-${suffix(bright)}")
                 // The state that ends the pending pairing ends the sheet: the first verified record (light run) or a rollback (dark run).
                 if (bright) prefs.edit().remove("child_pairing_pending_ms").commit()
@@ -121,7 +121,7 @@ class QrPairingUiTest {
                 val endTag = if (bright) "pairing_finished" else "pairing_rolled_back"
                 assertNotNull(all(dialog.window!!.decorView).firstOrNull { it.tag == endTag })
                 assertTrue(texts().any { it.contains(if (bright) "配對完成" else "配對未完成，已取消") })
-                assertTrue(texts().any { it.contains("須再次解鎖才可查看家庭") })
+                assertTrue(texts().none { it.contains("解鎖") || it.contains("unlock", ignoreCase = true) })
                 assertTrue(all(dialog.window!!.decorView).filterIsInstance<Button>().any { it.text == "關閉 · Close" })
                 save(dialog, "qr-parent-$endTag-${suffix(bright)}")
                 // Cancelled states on fresh links.
@@ -326,6 +326,49 @@ class QrPairingUiTest {
                 File("build/test-screenshots/qr-parent-banner-$tag-${suffix(bright)}.png").apply { parentFile?.mkdirs() }.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             } finally { c.pause().stop().destroy() }
         }
+    }
+
+    /** Owner's decision: Accept, approved by a fresh device authentication, keeps the parent unlocked; nothing else does. */
+    @Test fun acceptAfterFreshAuthKeepsTheParentUnlockedButOtherSessionChangesStillLock() {
+        GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        fun unlocked() = MainActivity::class.java.getDeclaredMethod("parentUnlocked").apply { isAccessible = true }.invoke(a) as Boolean
+        fun complete(ok: Boolean) { MainActivity::class.java.getDeclaredMethod("completeParentAuthentication", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(a, ok); idle() }
+        fun locked() = all(a.window.decorView).any { it.tag == "parent_privacy_lock" }
+        try {
+            shadowOf(ctx.getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager).setIsDeviceSecure(true)
+            assertTrue(unlocked())
+            call(a, "showParentPairingSheet")
+            val dialog = sheet(a)
+            val body = all(dialog.window!!.decorView).first { it.tag == "pairing_stopped" }.parent as LinearLayout
+            val rooms = FakeRooms(); var link: ParentPairingLink? = null
+            link = ParentPairingLink(a, { link?.let { call(a, "fillParentPairing", body, dialog, it, theme(a)) } }, rooms.opener)
+            field(a, "parentPairing").set(a, link); link.begin(); rooms.rooms[0].ready()
+            val child = ChildPairing({ FamilySecurity.createChildSigningKey(ctx) }, { FamilySecurity.deleteChildSigningKey(ctx, it) }, QrPairing.palette)
+            rooms.rooms[0].deliver(child.start(link.qrText!!, "Pixel 7", System.currentTimeMillis())!!.hello)
+            assertTrue(child.onReply(rooms.rooms[0].records().single(), System.currentTimeMillis()))
+            assertTrue(link.enterDigits((child.state as CS.ShowingDigits).digits))
+            val accept ={ all(dialog.window!!.decorView).filterIsInstance<Button>().single { it.tag == "pairing_accept" } }
+            val before = GuardEngine.captureRelaySession(ctx)
+            // (c) A failed or cancelled authentication runs nothing and grants nothing for a new session.
+            accept().performClick(); idle(); complete(false)
+            assertNull(GuardEngine.pinnedChildKey(ctx)); assertEquals(before, GuardEngine.captureRelaySession(ctx))
+            // (a) Accept with a successful fresh authentication: the session changes and the parent stays unlocked.
+            accept().performClick(); idle(); complete(true)
+            assertNotNull(GuardEngine.pinnedChildKey(ctx)); assertNotEquals(before, GuardEngine.captureRelaySession(ctx))
+            assertTrue("unlocked after Accept", unlocked())
+            dialog.dismiss(); call(a, "navigateTo", "overview"); idle()
+            assertFalse(locked()); assertNotNull((field(a, "screenShell").get(a) as View).findViewWithTag<View>("child_pairing_pending"))
+            // (b) Any other session change still locks: a rotation, and the 10-minute rollback.
+            GuardEngine.setFamilyToken(ctx, java.util.UUID.randomUUID().toString(), preserveFamilyHistory = true)
+            assertFalse("a rotation locks", unlocked())
+            call(a, "renderUi", false); assertTrue(locked())
+            MainActivity::class.java.getDeclaredField("parentAccess").apply { isAccessible = true }.get(a).let { (it as ParentAccessSession).authenticated(GuardEngine.captureRelaySession(ctx)) }
+            assertTrue(unlocked())
+            assertTrue(GuardEngine.expireUnconfirmedChildPairing(ctx, System.currentTimeMillis() + Pairing.CONFIRM_WINDOW_MS))
+            assertFalse("the rollback locks", unlocked())
+            call(a, "renderUi", false); assertTrue(locked())
+        } finally { c.pause().stop().destroy() }
     }
 
     @Test fun aPendingPairingCanBeCancelledAndPairedAgain() {
