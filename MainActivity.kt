@@ -4265,11 +4265,19 @@ class MainActivity : Activity() {
             card.addView(label(body, 13f, t.textSecondary, bottomPad = 6))
             card.addView(actionButton(ScoresChildCopy.OK_DISMISS, t.btnSecondaryBg, t.btnSecondaryText) { InstagramImport.dismiss(); renderUi() }.apply { tag = "scores_export_dismiss" })
         }
+        card.addView(label(ScoresChildCopy.EXPORT_GUIDE_TITLE, 14f, t.textPrimary, true, topPad = 8, bottomPad = 6).apply { tag = "scores_export_guide" })
+        for ((i, step) in ScoresChildCopy.EXPORT_GUIDE_STEPS.withIndex()) card.addView(label("${i + 1}. $step", 13f, t.textSecondary, bottomPad = 6))
+        card.addView(label(ScoresChildCopy.EXPORT_GUIDE_NOTE, 13f, t.textSecondary, bottomPad = 6))
+        card.addView(actionButton(ScoresChildCopy.EXPORT_OPEN, t.btnSecondaryBg, t.btnSecondaryText) { openExportLink(ScoresChildCopy.EXPORT_TOOL_URL) }.apply { tag = "scores_export_open" })
         card.addView(row("plus", ScoresChildCopy.IMPORT_EXPORT_ROW, ScoresChildCopy.IMPORT_EXPORT_DESC, t, fill = t.bgCard) { pickExportFile() }.apply { getChildAt(0).tag = "scores_export_row" })
     }
     private fun pickExportFile() {
         try { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), exportPickRequest) }
         catch (_: Exception) { Toast.makeText(this, ScoresChildCopy.EXPORT_PICKER_MISSING, Toast.LENGTH_LONG).show() }
+    }
+    private fun openExportLink(url: String) {
+        try { startActivity(InstagramExportLink.intent(url)) }
+        catch (_: ActivityNotFoundException) { Toast.makeText(this, ScoresChildCopy.EXPORT_LINK_MISSING, Toast.LENGTH_LONG).show() }
     }
     private fun startExportImport(uri: Uri) {
         if (!InstagramImport.allowed(this)) { InstagramImport.last = ImportSummary(ImportResult.NOT_ALLOWED); renderUi(); return }

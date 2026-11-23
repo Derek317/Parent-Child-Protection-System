@@ -318,6 +318,20 @@ internal object ScoresChildCopy {
     const val UPLOAD_ON_NOTE = "本 App 不讀取 Instagram 的通知或畫面。你現在可以到 Android 設定關閉「通知存取」和「無障礙」；本 App 不能代你關閉。\nThis app reads nothing from Instagram notifications or screens. You may now switch off Notification access and Accessibility in Android settings; the app cannot do it for you."
     const val IMPORT_EXPORT_ROW = "匯入 Instagram 資料 / Import Instagram export"
     const val IMPORT_EXPORT_DESC = "選取 Instagram「下載你的資料」得到的 .zip，或其中一個 message_N.html / message_N.json。檔案只會被讀取，不會被複製。\nPick the .zip from Instagram's \"Download your information\", or one message_N.html / message_N.json from it. The file is only read, never copied."
+    /** Instagram's own export tool (Accounts Centre). A fixed https string: nothing about the child or the family goes into it. */
+    const val EXPORT_TOOL_URL = "https://accountscenter.instagram.com/info_and_permissions/dyi"
+    const val EXPORT_GUIDE_TITLE = "如何取得 Instagram 資料檔 / How to get your Instagram file"
+    val EXPORT_GUIDE_STEPS = listOf(
+        "按下面的按鈕開啟 Instagram 的匯出頁面，選擇你的 Instagram 個人檔案。\nTap the button below to open Instagram's export page, and choose your Instagram profile.",
+        "選「匯出至裝置」。\nChoose \"Export to device\".",
+        "資料：只選「訊息」。\nInformation: Messages only.",
+        "日期範圍：最近一星期（第一次可選最近一個月）。\nDate range: last week (last month the first time).",
+        "格式：JSON；媒體品質：低。然後開始匯出。\nFormat: JSON; media quality: Low. Then start the export.",
+        "Instagram 通知檔案已準備好後，下載檔案，再回到這裡按「匯入 Instagram 資料」。\nWhen Instagram says the file is ready, download it, then come back here and tap \"Import Instagram export\"."
+    )
+    const val EXPORT_GUIDE_NOTE = "Instagram 準備檔案可能需時數分鐘至數小時，有時更長；準備好後有四天時間下載。Instagram 的按鈕名稱可能略有不同。\nInstagram may take minutes to hours, sometimes longer, to prepare the file, and gives you four days to download it. Instagram's button names may differ slightly."
+    const val EXPORT_OPEN = "開啟 Instagram 匯出頁面 / Open Instagram's export page"
+    const val EXPORT_LINK_MISSING = "找不到可以開啟這個連結的 App。\nNo app on this phone can open the link."
     const val EXPORT_RUNNING = "正在讀取檔案…\nReading the file…"
     const val EXPORT_PICKER_MISSING = "找不到檔案選擇器。\nNo file picker is available."
     /** Title and body for the outcome of an import; every failure says that nothing was stored. */
@@ -558,6 +572,14 @@ internal object BundledModel {
         val app = ctx.applicationContext
         if (ModelImportJob.running || RiskModelStore.removedByParent(app) || RiskModelStore.autoBlocked(app)) return false
         return ModelImportJob.startBundled(app)
+    }
+}
+
+/** Opens one of the fixed Instagram export links in the browser or the Instagram app. Only https; nothing is added to the link. */
+internal object InstagramExportLink {
+    fun intent(url: String): Intent {
+        require(url.startsWith("https://"))
+        return Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
     }
 }
 
