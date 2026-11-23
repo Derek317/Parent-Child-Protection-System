@@ -331,6 +331,16 @@ internal object ScoresChildCopy {
     )
     const val EXPORT_GUIDE_NOTE = "Instagram 準備檔案可能需時數分鐘至數小時，有時更長；準備好後有四天時間下載。Instagram 的按鈕名稱可能略有不同。\nInstagram may take minutes to hours, sometimes longer, to prepare the file, and gives you four days to download it. Instagram's button names may differ slightly."
     const val EXPORT_OPEN = "開啟 Instagram 匯出頁面 / Open Instagram's export page"
+    // Optional repeating export (Meta's own feature, Meta's documented link parameters). The provider names are the two Meta's guide documents.
+    private fun cloudUrl(service: String) = "$EXPORT_TOOL_URL?source=external&account_type=1&import_service=$service&sections[0]=IG_MESSAGES&format=JSON&date_range=LAST_WEEK&schedule_frequency=ONCE_A_WEEK_FOR_ONE_YEAR&locale_override=en_US"
+    val CLOUD_GOOGLE_DRIVE_URL = cloudUrl("GoogleDrive")
+    val CLOUD_DROPBOX_URL = cloudUrl("Dropbox")
+    const val CLOUD_TITLE = "可選：每星期自動匯出到你自己的雲端硬碟 / Optional: a weekly export to your own cloud drive"
+    const val CLOUD_NOTICE = "這是 Instagram（Meta）自己的功能，不是 IG Guard 的功能。設定後，你的訊息副本會存放在你自己的雲端硬碟（Google Drive 或 Dropbox），受該服務的條款約束。Instagram 會要求你輸入 Instagram 密碼；IG Guard 不會看到你的密碼。匯入仍然要用上面的「匯入 Instagram 資料」選取檔案。\nThis is Instagram's (Meta's) own feature, not IG Guard's. Once set up, a copy of your messages sits in your own cloud drive (Google Drive or Dropbox), under that provider's terms. Instagram asks for your Instagram password; IG Guard never sees it. Importing still happens through \"Import Instagram export\" above."
+    const val CLOUD_GOOGLE_DRIVE = "每週匯出到 Google Drive / Weekly export to Google Drive"
+    const val CLOUD_DROPBOX = "每週匯出到 Dropbox / Weekly export to Dropbox"
+    const val CLOUD_CONFIRM_TITLE = "前往 Instagram 設定每週匯出？ / Set up a weekly export on Instagram?"
+    const val CLOUD_CONFIRM = "前往 Instagram / Go to Instagram"
     const val EXPORT_LINK_MISSING = "找不到可以開啟這個連結的 App。\nNo app on this phone can open the link."
     /**
      * The picker opens at Downloads and lists zip, JSON and HTML. A convenience only: the import still sniffs the content and refuses

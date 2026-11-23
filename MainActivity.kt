@@ -4270,6 +4270,14 @@ class MainActivity : Activity() {
         card.addView(label(ScoresChildCopy.EXPORT_GUIDE_NOTE, 13f, t.textSecondary, bottomPad = 6))
         card.addView(actionButton(ScoresChildCopy.EXPORT_OPEN, t.btnSecondaryBg, t.btnSecondaryText) { openExportLink(ScoresChildCopy.EXPORT_TOOL_URL) }.apply { tag = "scores_export_open" })
         card.addView(row("plus", ScoresChildCopy.IMPORT_EXPORT_ROW, ScoresChildCopy.IMPORT_EXPORT_DESC, t, fill = t.bgCard) { pickExportFile() }.apply { getChildAt(0).tag = "scores_export_row" })
+        // Optional, below the guide and the import: Meta's own repeating export. The notice is shown again before the browser opens.
+        card.addView(label(ScoresChildCopy.CLOUD_TITLE, 14f, t.textPrimary, true, topPad = 12, bottomPad = 6).apply { tag = "scores_cloud_title" })
+        card.addView(label(ScoresChildCopy.CLOUD_NOTICE, 13f, t.textSecondary, bottomPad = 6))
+        for ((title, url, tag) in listOf(Triple(ScoresChildCopy.CLOUD_GOOGLE_DRIVE, ScoresChildCopy.CLOUD_GOOGLE_DRIVE_URL, "scores_cloud_drive"), Triple(ScoresChildCopy.CLOUD_DROPBOX, ScoresChildCopy.CLOUD_DROPBOX_URL, "scores_cloud_dropbox")))
+            card.addView(textAction(title) {
+                alert().setTitle(ScoresChildCopy.CLOUD_CONFIRM_TITLE).setMessage(ScoresChildCopy.CLOUD_NOTICE)
+                    .setNegativeButton(ScoresChildCopy.CANCEL, null).setPositiveButton(ScoresChildCopy.CLOUD_CONFIRM) { _, _ -> openExportLink(url) }.show()
+            }.apply { this.tag = tag })
     }
     private fun pickExportFile() {
         try { startActivityForResult(ScoresChildCopy.exportPicker(), exportPickRequest) }
