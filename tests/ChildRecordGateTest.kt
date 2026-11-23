@@ -166,6 +166,32 @@ class ChildRecordGateTest {
         assertEquals("banner gone", GuardEngine.ChildTrust.VERIFIED, GuardEngine.childTrust(ctx))
     }
 
+    /** A refused multi-part record leaves none of its parts stored; a forged set cannot cost a genuine record with the same id. */
+    @Test fun aRefusedMultiPartRecordLeavesNoPartsAndCannotDropAGenuineOne() {
+        val id = UUID.randomUUID().toString()
+        fun big(text: String) = heartbeat().put("event_id", id).put("reason", "test_alert").put("text", text)
+        fun parts(frame: JSONObject) = AlertFrames.split(frame)
+        val forged = parts(big("x".repeat(3000)))                   // unsigned: Tamper once complete
+        assertTrue(forged.size > 1)
+        for (p in forged.dropLast(1)) assertEquals(RelayConsumption.CONSUMED, deliver(p))
+        assertTrue(FamilyEvidence(ctx).use { it.incompleteCount(scope) } > 0)
+        assertEquals(RelayConsumption.REJECTED, deliver(forged.last()))
+        assertEquals("no part of the refused record stays", 0, FamilyEvidence(ctx).use { it.incompleteCount(scope) })
+        assertEquals(1, notices()); assertEquals(0, stored())
+        // The genuine record with the same id is still taken afterwards.
+        val genuine = parts(signed(big("y".repeat(3000))))
+        for (p in genuine) deliver(p)
+        assertEquals(1, stored()); assertEquals(0, FamilyEvidence(ctx).use { it.incompleteCount(scope) })
+        // And a forged set arriving while a genuine one is in progress is refused part by part: it never completes, deletes nothing.
+        val id2 = UUID.randomUUID().toString()
+        fun big2(text: String) = heartbeat().put("event_id", id2).put("reason", "test_alert").put("text", text)
+        val real = parts(signed(big2("z".repeat(3000)))); val fake = parts(big2("w".repeat(3000)))
+        deliver(real.first())
+        for (p in fake) deliver(p)
+        for (p in real.drop(1)) deliver(p)
+        assertEquals(2, stored())
+    }
+
     private fun relayTakesEverythingQueued() { for (frame in FamilyEvidence(ctx).use { it.due(scope, Long.MAX_VALUE, "parent") }) GuardEngine.recordRelayAcceptance(ctx, scope, frame) }
 
     /** Remote reset of a pinned child: once the relay holds it, K is unpinned and nothing later "from" that child is taken. */

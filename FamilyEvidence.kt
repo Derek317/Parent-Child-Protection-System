@@ -870,6 +870,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
+    /** The stored parts of [id], once their completed record was refused. The id is not marked seen. */
+    fun discardFragments(scope: String, id: String) { writableDatabase.delete("fragments","scope=? AND id=?",arrayOf(scope,id)) }
     fun incompleteCount(scope: String): Int = readableDatabase.rawQuery("SELECT COUNT(DISTINCT id) FROM fragments WHERE scope=?",arrayOf(scope)).use{it.moveToFirst();it.getInt(0)}
     fun hasFragment(scope:String,id:String,part:Int,digest:String):Boolean = readableDatabase.rawQuery("SELECT 1 FROM fragments WHERE scope=? AND id=? AND part=? AND digest=?",arrayOf(scope,id,part.toString(),digest)).use{it.moveToFirst()}
 

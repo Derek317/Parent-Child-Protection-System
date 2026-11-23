@@ -1971,7 +1971,12 @@ object GuardEngine {
         val pinned = if (role == "parent") pinnedChildKey(ctx) else null
         val gate = if (role == "parent") ChildRecords.gate(decrypted, pinned, if (pinned == null) "" else parentIdentity(ctx).publicKey, now, prefs(ctx).getString(CHILD_RECORD_STATE, null)) else null
         when (gate) {
-            is ChildRecords.GateResult.Tamper -> { noteChildRecordTamper(ctx, onNewAlertForParent, now); return RelayConsumption.REJECTED }
+            is ChildRecords.GateResult.Tamper -> {
+                // Nothing of a refused record stays: its stored parts are deleted too. They all belong to this completed set (one
+                // digest and count per id), so no part of another record is touched; the id is not marked seen.
+                if (decoded.optString("type") == "alert_fragment") FamilyEvidence(ctx).use { it.discardFragments(getChannelTopicForToken(token), decoded.optString("event_id")) }
+                noteChildRecordTamper(ctx, onNewAlertForParent, now); return RelayConsumption.REJECTED
+            }
             is ChildRecords.GateResult.QuietDrop -> { check(prefs(ctx).edit().putInt(QUIET_DROPS, childQuietDrops(ctx) + 1).commit()); return RelayConsumption.REJECTED }
             ChildRecords.GateResult.Replay -> {
                 // The signature and the wrapper id were verified before the replay check, so this id is the record's own.
