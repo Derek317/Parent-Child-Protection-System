@@ -285,7 +285,7 @@ object GuardEngine {
     private const val CHILD_REMOTE_RESET = "child_remote_reset"
     /** Parent: the last rollback was the parent's own cancel, not the 10-minute expiry (PAIRING_FAILED is set either way). */
     private const val PAIRING_CANCELLED = "child_pairing_cancelled"
-    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, REMOTE_RESET_EVENT, CHILD_REMOTE_RESET, PAIRING_CANCELLED)
+    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, REMOTE_RESET_EVENT, CHILD_REMOTE_RESET, PAIRING_CANCELLED) + DeliveryHealth.PARENT_KEYS
 
     internal val EMOJI_PALETTE = arrayOf(
         "🐼", "🦁", "🐬", "🦊", "🐨", "🐯", "🦄", "🐝",
@@ -1318,7 +1318,7 @@ object GuardEngine {
             if (!eventId.startsWith("control:")) return null
             setFamilyToken(ctx, result.token, preserveFamilyHistory = true, qrOnly = true)
             val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json")
-            for (stale in listOf(PAIRING_FAILED, PAIRING_CANCELLED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted")) editor.remove(stale)
+            for (stale in listOf(PAIRING_FAILED, PAIRING_CANCELLED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted") + DeliveryHealth.PARENT_KEYS) editor.remove(stale)
             check(editor.commit())
             relayGeneration++; CloudRelay.disconnect()
             val session = captureRelaySession(ctx)
@@ -1342,7 +1342,7 @@ object GuardEngine {
         val since = prefs(ctx).getLong(PAIRING_PENDING_MS, 0L)
         if (since == 0L || !force && now - since < Pairing.CONFIRM_WINDOW_MS) return false
         FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx), "parent") }
-        check(prefs(ctx).edit().remove(PINNED_CHILD_KEY).remove(PAIRING_PENDING_MS).remove(CHILD_RECORD_STATE).putBoolean(PAIRING_FAILED, true)
+        check(prefs(ctx).edit().remove(PINNED_CHILD_KEY).remove(PAIRING_PENDING_MS).remove(CHILD_RECORD_STATE).also { e -> DeliveryHealth.PARENT_KEYS.forEach { e.remove(it) } }.putBoolean(PAIRING_FAILED, true)
             .putBoolean(PAIRING_CANCELLED, force).commit())
         addCheckpointLog(ctx, "CP3-PAIR", if (force) "家長已取消未完成的配對" else "子女手機未在 10 分鐘內確認；配對已取消")
         relayGeneration++; CloudRelay.disconnect()
@@ -1904,7 +1904,7 @@ object GuardEngine {
      */
     private fun markChildRemotelyReset(ctx:Context) {
         val editor=prefs(ctx).edit().putBoolean(CHILD_REMOTE_RESET,true)
-        for(key in listOf(PINNED_CHILD_KEY,PAIRING_PENDING_MS,CHILD_RECORD_STATE,REMOTE_RESET_EVENT,"parent_last_child_hb_ms","parent_last_child_hb_text","parent_hb_missing_alerted"))editor.remove(key)
+        for(key in listOf(PINNED_CHILD_KEY,PAIRING_PENDING_MS,CHILD_RECORD_STATE,REMOTE_RESET_EVENT,"parent_last_child_hb_ms","parent_last_child_hb_text","parent_hb_missing_alerted")+DeliveryHealth.PARENT_KEYS)editor.remove(key)
         check(editor.commit())
         addCheckpointLog(ctx,"CP3-RESET","子女手機已遠端重設；已停止信任其金鑰，須用 QR 碼重新配對")
     }
@@ -2161,7 +2161,7 @@ object GuardEngine {
                         recordChildHeartbeatOnParent(ctx, inner.optString("text"), msgTs)
                     }
                     // Records-not-delivered warning: only from a VERIFIED heartbeat (never Legacy), whose fields are inside the signed text.
-                    if (verified != null && reason in setOf("heartbeat_ok", "tamper_attempt")) noteDeliveryHealth(ctx, inner, onNewAlertForParent, System.currentTimeMillis())
+                    if (verified != null && reason in setOf("heartbeat_ok", "tamper_attempt")) noteDeliveryHealth(ctx, inner, onNewAlertForParent, deliveryClock())
                     val pending = try { JSONObject(prefs(ctx).getString("pending_rotation_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
                     if (token == pending.optString("new_token")) prefs(ctx).edit().remove("pending_rotation_json").apply()
                     addCheckpointLog(ctx, "CP4-RECV", "已解密 $reason")
@@ -2197,6 +2197,8 @@ object GuardEngine {
     /** Parent: since when the family relay connection has been continuously ready (0: not ready). In memory on purpose: a new
      *  process starts disconnected, so app start clears it; set on `ready`, cleared on every close or failure (CloudRelay). */
     @Volatile internal var parentRelayReadySince = 0L
+    /** Test hook: the parent's clock for the delivery warning (several hours are simulated in tests). */
+    @Volatile internal var deliveryClock: () -> Long = System::currentTimeMillis
     internal fun parentRelayReady(ready: Boolean, now: Long = System.currentTimeMillis()) {
         if (!ready) parentRelayReadySince = 0L else if (parentRelayReadySince == 0L) parentRelayReadySince = now
     }
@@ -2204,10 +2206,15 @@ object GuardEngine {
      *  an hour (or expired) without a receipt, and only after 15 minutes of continuous relay connection here (receipts could flow). */
     private fun noteDeliveryHealth(ctx: Context, record: JSONObject, onNewAlertForParent: ((JSONObject) -> Unit)?, now: Long) {
         val report = DeliveryHealth.parse(record) ?: return
-        if (report.clear) { check(prefs(ctx).edit().remove(DeliveryHealth.NOTICE_MS).commit()); return }
+        if (report.clear) { check(prefs(ctx).edit().remove(DeliveryHealth.NOTICE_MS).remove(DeliveryHealth.FIRST_BAD_MS).commit()); return }
         if (!report.bad) return
+        val firstBad = prefs(ctx).getLong(DeliveryHealth.FIRST_BAD_MS, 0L)
+        if (firstBad == 0L) check(prefs(ctx).edit().putLong(DeliveryHealth.FIRST_BAD_MS, now).commit())
         val since = parentRelayReadySince
-        if (since == 0L || now - since < DeliveryHealth.READY_FOR_MS) return
+        val connected = since != 0L && now - since >= DeliveryHealth.READY_FOR_MS
+        // A further bad heartbeat 3 hours into the run raises even if this phone's connection keeps dropping (relay-controlled).
+        val longRun = firstBad != 0L && now - firstBad >= DeliveryHealth.LONG_BAD_MS
+        if (!connected && !longRun) return
         if (!ChildRecords.tamperNoticeDue(prefs(ctx).getLong(DeliveryHealth.NOTICE_MS, 0L), now)) return
         check(prefs(ctx).edit().putLong(DeliveryHealth.NOTICE_MS, now).commit())
         val notice = JSONObject().put("type", "alert").put("event_id", "delivery:" + UUID.randomUUID()).put("reason", "tamper_attempt")

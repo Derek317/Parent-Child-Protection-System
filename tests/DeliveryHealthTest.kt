@@ -23,7 +23,7 @@ class DeliveryHealthTest {
     @Before fun reset() {
         prefs.edit().clear().commit(); ctx.deleteDatabase("family_evidence.db")
         TestKeyStore.privateKeys.clear(); TestKeyStore.certificates.clear()
-        GuardEngine.parentRelayReadySince = 0L
+        GuardEngine.parentRelayReadySince = 0L; GuardEngine.deliveryClock = System::currentTimeMillis
     }
 
     // ---------------- child ----------------
@@ -173,6 +173,34 @@ class DeliveryHealthTest {
         connectedFor(16); deliver(signed(hb("09", "0300", "1"))); assertEquals(1, notices())
         GuardEngine.parentRelayReady(false); assertEquals(0L, GuardEngine.parentRelayReadySince)
         GuardEngine.parentRelayReady(true, 1_000L); GuardEngine.parentRelayReady(true, 2_000L); assertEquals("continuous: the first ready counts", 1_000L, GuardEngine.parentRelayReadySince)
+    }
+
+    /** A relay that drops this phone's socket every 14 minutes cannot hold the notice back: it comes 3 hours into the bad run. */
+    @Test fun aConnectionResetEvery14MinutesDelaysTheNoticeToTheThreeHourBoundOnly() {
+        parentWithPinnedChild()
+        val start = System.currentTimeMillis(); var t = start
+        GuardEngine.deliveryClock = { t }
+        val raisedAt = mutableListOf<Long>()
+        while (t <= start + 4 * 60 * 60_000L) {
+            GuardEngine.parentRelayReadySince = t - (t - start) % (14 * 60_000L)          // reset every 14 minutes
+            val before = notices()
+            assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb("04", "0200", "0"))))
+            if (notices() > before) raisedAt += t
+            t += 45 * 60_000L
+        }
+        assertEquals("exactly one notice in 4 hours", 1, raisedAt.size)
+        assertTrue("only after the 3-hour bound", raisedAt.single() - start >= DeliveryHealth.LONG_BAD_MS)
+        // A clear report ends the run: the next bad run starts its own 3 hours.
+        deliver(signed(hb("00", "0000", "0"))); assertFalse(prefs.contains(DeliveryHealth.FIRST_BAD_MS))
+    }
+
+    @Test fun theNoticeStateGoesWithTheRoleOrTheFamily() {
+        parentWithPinnedChild()
+        fun dirty() = prefs.edit().apply { DeliveryHealth.PARENT_KEYS.forEach { k -> putLong(k, 1L) } }.commit()
+        dirty(); GuardEngine.setFamilyToken(ctx, UUID.randomUUID().toString())                       // a new family
+        assertTrue(DeliveryHealth.PARENT_KEYS.none { prefs.contains(it) })
+        dirty(); assertTrue(GuardEngine.leaveParentRole(ctx))                                           // leaving the role
+        assertTrue(DeliveryHealth.PARENT_KEYS.none { prefs.contains(it) })
     }
 
     @Test fun legacyHeartbeatsCarryingTheFieldsRaiseNothing() {

@@ -13,8 +13,11 @@ object DeliveryHealth {
     // Child (encrypted preferences): ids of heartbeat events (not counted), and when a counted record last expired unreceipted.
     const val HEARTBEAT_IDS = "child_heartbeat_event_ids"
     const val EXPIRED_AT_MS = "child_receipt_expired_ms"
-    // Parent: the notice's own once-per-hour timer.
+    // Parent: the notice's own once-per-hour timer, and when the current run of bad verified heartbeats began.
     const val NOTICE_MS = "child_undelivered_notice_ms"
+    const val FIRST_BAD_MS = "child_undelivered_first_bad_ms"
+    /** The parent's notice state: dropped with the pin (new pairing, rollback, remote reset) and with the family or the role. */
+    val PARENT_KEYS = listOf(NOTICE_MS, FIRST_BAD_MS)
 
     const val NOTICE_SENDER = "送達檢查"
     const val NOTICE_TEXT = "有子女手機的回報超過 1 小時仍未送達此手機。請檢查兩部手機的網絡；如持續出現，請當面查看子女手機。 / Reports from the child phone have not reached this phone for over an hour. Check both phones' network; if it continues, check the child phone in person."
@@ -22,6 +25,9 @@ object DeliveryHealth {
     /** Receipts must have had a chance to flow: the parent has been continuously relay-connected at least this long. */
     const val READY_FOR_MS = 15 * 60_000L
     const val OLDEST_LIMIT_MIN = 60
+    /** A bad run this long raises the notice even without 15 continuous minutes of connection here: a relay that keeps dropping
+     *  this phone's socket cannot hold the notice back for ever. */
+    const val LONG_BAD_MS = 3 * 60 * 60_000L
 
     /** The three heartbeat fields, always present and fixed width (2, 4 and 1 characters). */
     fun fields(waiting: Int, oldestEnqueuedAt: Long?, expired: Boolean, now: Long): JSONObject {
