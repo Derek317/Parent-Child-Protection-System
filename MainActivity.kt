@@ -3514,7 +3514,7 @@ class MainActivity : Activity() {
             })
         rootContainer.addView(Space(this), LinearLayout.LayoutParams(1, 0, 1f))
         rootContainer.addView(actionButton("繼續", t.btnPrimaryBg, t.btnPrimaryText) { continueEntryRole() }.apply {
-            isEnabled = selectedEntryRole.isNotEmpty(); alpha = if (isEnabled) 1f else .5f; tag = "continue_role"
+            isEnabled = selectedEntryRole.isNotEmpty(); tag = "continue_role"
         })
         rootContainer.addView(label("配對後，子女手機切換身份需要家長驗證。", 12f, t.textMuted, topPad = 10).apply { gravity = Gravity.CENTER })
     }
@@ -4983,9 +4983,19 @@ class MainActivity : Activity() {
     }
     private fun actionButton(title: String, hexBg: String, hexText: String, critical: Boolean = false, onClick: () -> Unit): Button =
         (if (critical) ObscuredAwareButton(this, { pageMotion?.isRunning == true || themeReveal?.isRunning == true }) { warnObscured() } else Button(this)).apply {
-        text = title; textSize = 14f; typeface = font(true); isAllCaps = false
-        setTextColor(color(hexText)); background = ripple(hexBg, 10, if (hexBg != currentTheme().btnPrimaryBg) currentTheme().accentPowderSky else null)
-        minimumHeight = dp(52); setPadding(dp(14), dp(12), dp(14), dp(12)); setOnClickListener(sessionClick(onClick))
+        text = title; actionLook(this, hexBg, hexText); setOnClickListener(sessionClick(onClick))
+    }
+    /** The action-button look only (no click handling). Disabled = the same fill and text at half alpha, no ripple. */
+    private fun actionLook(button: Button, hexBg: String, hexText: String, t: ThemeColors = currentTheme()) = button.apply {
+        textSize = 14f; typeface = font(true); isAllCaps = false
+        val ink = color(hexText); val disabled = intArrayOf(-android.R.attr.state_enabled)
+        setTextColor(ColorStateList(arrayOf(disabled, intArrayOf()), intArrayOf((ink and 0x00ffffff) or 0x80000000.toInt(), ink)))
+        val border = if (hexBg != t.btnPrimaryBg) t.accentPowderSky else null
+        background = StateListDrawable().apply {
+            addState(disabled, background(hexBg, 10, border).apply { alpha = 128 })
+            addState(intArrayOf(), ripple(hexBg, 10, border))
+        }
+        minimumHeight = dp(52); setPadding(dp(14), dp(12), dp(14), dp(12))
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(4), 0, dp(8)) }
     }
     private fun textAction(title: String, onClick: () -> Unit): Button = Button(this).apply {
