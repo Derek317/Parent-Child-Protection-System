@@ -44,6 +44,8 @@ object SensitiveClipboard {
     }
 }
 
+/** Shown where a password is asked while a QR-join password check is still running (GuardEngine.passwordCheckRunning). */
+const val PASSWORD_CHECK_BUSY = "核對中… 請稍候再試 · Checking… please try again shortly"
 const val OBSCURED_TOUCH_MESSAGE = "另一個 App 正在這個畫面上方顯示內容，為安全起見已忽略此次點按。請先關閉濾藍光、懸浮視窗或螢幕調色 App，再試一次。"
 
 /**

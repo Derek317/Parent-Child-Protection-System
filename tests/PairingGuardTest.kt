@@ -28,6 +28,7 @@ class PairingGuardTest {
     @Before fun reset() {
         prefs.edit().clear().commit();ctx.deleteDatabase("family_evidence.db")
         ParentUiAuthFixture.autoApprove=true
+        GuardEngine.passwordCheckRunning.set(false)
     }
     private fun all(v:View):List<View> = listOf(v)+if(v is ViewGroup)(0 until v.childCount).flatMap{all(v.getChildAt(it))}else emptyList()
     private fun foreignInvite()=FamilySecurity.Invite(UUID.randomUUID().toString(),FamilySecurity.passwordVerifier("OtherParent928!"),FamilySecurity.newSigningIdentity().publicKey)
@@ -245,6 +246,68 @@ class PairingGuardTest {
             assertEquals("請重新輸入",box.error?.toString());assertTrue(box.isEnabled)
             assertEquals("加入此家庭 · Join this family",join.text.toString())
             assertNull("nothing started",MainActivity::class.java.getDeclaredField("childPairing").apply{isAccessible=true}.get(a))
+        } finally {c.pause().stop().destroy()}
+    }
+    private fun joinSheet(a:MainActivity,qr:String):Pair<android.widget.EditText,Button>{
+        MainActivity::class.java.getDeclaredMethod("showChildPairingSheet").apply{isAccessible=true}.invoke(a)
+        MainActivity::class.java.getDeclaredMethod("onQrScanned",String::class.java).apply{isAccessible=true}.invoke(a,qr)
+        val views=all(ShadowDialog.getLatestDialog().window!!.decorView)
+        return views.filterIsInstance<android.widget.EditText>().first{it.tag=="repair_password"} to views.filterIsInstance<Button>().first{it.tag=="join_family"}
+    }
+    private fun shows(root:View,text:String)=all(root).filterIsInstance<android.widget.TextView>().any{it.text.toString()==text}
+    /** Rotation or leaving and returning makes a new activity: it cannot start a second check while the first one runs. */
+    @Test fun aSecondActivityCannotStartAJoinCheckWhileOneRuns() {
+        pairedChild()
+        val parent=FamilySecurity.newSigningIdentity()
+        val qr=QrPairing.bareParent(parent).start(parent.publicKey,System.currentTimeMillis()).qrText
+        val first=Robolectric.buildActivity(MainActivity::class.java).setup()
+        val (box1,join1)=joinSheet(first.get(),qr)
+        box1.setText("WrongPassword928!");join1.performClick()
+        first.pause().stop().destroy() // the check's result is still pending on the main looper
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val (box,join)=joinSheet(c.get(),qr)
+            box.setText("WrongPassword928!");join.performClick()
+            assertTrue("refused, and says why",shows(ShadowDialog.getLatestDialog().window!!.decorView,PASSWORD_CHECK_BUSY));assertTrue(join.isEnabled)
+            settle{!GuardEngine.passwordCheckRunning.get()} // the destroyed activity's callback still runs and clears the guard
+            assertEquals("one attempt, recorded once",1,prefs.getInt("pw_failed_count",0))
+            join.performClick();settle{join.isEnabled && !GuardEngine.passwordCheckRunning.get()}
+            assertEquals("after the check, the next press is an attempt again",2,prefs.getInt("pw_failed_count",0))
+        } finally {c.pause().stop().destroy()}
+    }
+    /** The unlock page and the role-switch sheet check on the main thread: they refuse while a join check runs, so attempts stay in order. */
+    @Test fun unlockPageAndRoleSheetMakeNoAttemptWhileAJoinCheckRuns() {
+        pairedChild()
+        val parent=FamilySecurity.newSigningIdentity()
+        val qr=QrPairing.bareParent(parent).start(parent.publicKey,System.currentTimeMillis()).qrText
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        fun call(name:String,vararg args:Any?){MainActivity::class.java.declaredMethods.first{it.name==name && it.parameterCount==args.size}.apply{isAccessible=true}.invoke(a,*args)}
+        fun unlock(text:String){
+            call("navigateTo","unlock")
+            all(a.window.decorView).filterIsInstance<android.widget.EditText>().first().setText(text)
+            all(a.window.decorView).filterIsInstance<Button>().first{it.text.toString()=="驗證並暫時解鎖"}.performClick()
+        }
+        fun roleSheet(text:String):View{
+            call("navigateTo","role");call("selectEntryRole","parent");call("continueEntryRole")
+            val sheet=ShadowDialog.getLatestDialog().window!!.decorView
+            all(sheet).filterIsInstance<android.widget.EditText>().first{it.tag=="role_password"}.setText(text)
+            all(sheet).filterIsInstance<Button>().first{it.text.toString()=="驗證並繼續"}.performClick()
+            return sheet
+        }
+        try {
+            val (box,join)=joinSheet(a,qr)
+            box.setText("WrongPassword928!");join.performClick() // pending: the main looper is paused
+            unlock("ParentPrivate928!")
+            assertFalse("the unlock page made no attempt",GuardEngine.isTemporarilyUnlocked(ctx));assertTrue(shows(a.window.decorView,PASSWORD_CHECK_BUSY))
+            val sheet=roleSheet("ParentPrivate928!")
+            assertTrue("the role sheet says why",shows(sheet,PASSWORD_CHECK_BUSY));assertEquals("child",GuardEngine.getRole(ctx))
+            assertEquals("no attempt counted by either",0,prefs.getInt("pw_failed_count",0))
+            settle{!GuardEngine.passwordCheckRunning.get()}
+            assertEquals("only the join attempt",1,prefs.getInt("pw_failed_count",0))
+            ShadowDialog.getShownDialogs().forEach{it.dismiss()}
+            assertTrue("the role sheet checks again",shows(roleSheet("WrongPassword928!"),"家長主密碼不正確。"));assertEquals(2,prefs.getInt("pw_failed_count",0))
+            ShadowDialog.getShownDialogs().forEach{it.dismiss()}
+            unlock("ParentPrivate928!");assertTrue("the unlock page works again",GuardEngine.isTemporarilyUnlocked(ctx))
         } finally {c.pause().stop().destroy()}
     }
     // ---- F9(b): one rate-limited alert, however often another app fires the link ----

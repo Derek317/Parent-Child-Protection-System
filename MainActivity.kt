@@ -183,6 +183,8 @@ object GuardEngine {
     // State transactions only. Never hold this lock during network I/O.
     private val pollLock = Any()
     private val deliveryInFlight = AtomicBoolean(false)
+    /** A QR-join password check runs off the main thread; set and cleared on it, so the UI-thread checks refuse meanwhile and every attempt stays in order. */
+    internal val passwordCheckRunning = AtomicBoolean(false)
     private data class DeliveryCallback(val origin:Triple<String,String,Int>,val complete:(Boolean,String)->Unit)
     private val deliveryCallbacks = java.util.concurrent.ConcurrentHashMap<Pair<String,String>, DeliveryCallback>()
     private var relayGeneration = 0
@@ -3647,6 +3649,7 @@ class MainActivity : Activity() {
                 error.setTextColor(color(t.warmCoral)) // errors; the progress line below switches to the status colour
                 val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
                 if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒，或由家長手機遠端救援。"; return@actionButton }
+                if (GuardEngine.passwordCheckRunning.get()) { error.text = PASSWORD_CHECK_BUSY; return@actionButton }
                 val ok = GuardEngine.verifyParentPassword(this@MainActivity, password.text.toString())
                 GuardEngine.recordPasswordAttempt(this@MainActivity, ok)
                 if (!ok) { error.text = "家長主密碼不正確。"; password.error = "請重新輸入"; return@actionButton }
@@ -4185,8 +4188,6 @@ class MainActivity : Activity() {
     private var cameraBroken = false
     /** A paired child's parent password, checked at the join press and held only until the pairing is stored. */
     private var childJoinPassword: String? = null
-    /** That password's check is running off the main thread: one at a time, so the lockout cannot be raced by reopening the sheet. */
-    private var childJoinChecking = false
     private var childPairingStored: Boolean? = null
     /** C1-C6 on one sheet: scan, join consent, digits, waiting for the parent, done. FLAG_SECURE comes from showSheet. */
     private fun showChildPairingSheet() {
@@ -4299,18 +4300,18 @@ class MainActivity : Activity() {
                 body.addView(actionButton("加入此家庭 · Join this family", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
                     val qr = scannedQr ?: return@actionButton
                     if (!repair) { startChildPairing(qr); return@actionButton }
-                    if (childJoinChecking) return@actionButton
                     val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this)
                     if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒。"; return@actionButton }
+                    if (!GuardEngine.passwordCheckRunning.compareAndSet(false, true)) { error.text = PASSWORD_CHECK_BUSY; return@actionButton }
                     val entered = password?.text?.toString().orEmpty()
                     val join = body.findViewWithTag<Button>("join_family"); val shown = body.tag
                     fun checking(on: Boolean) { join.isEnabled = !on; password?.isEnabled = !on; join.text = if (on) "核對中… · Checking…" else "加入此家庭 · Join this family" }
-                    checking(true); childJoinChecking = true
+                    checking(true)
                     // PBKDF2 takes seconds on older phones: off the main thread, so taps meanwhile hit this screen (Join disabled), not the next one.
                     thread {
                         val ok = entered.isNotBlank() && GuardEngine.verifyParentPassword(this, entered)
                         runOnUiThread {
-                            childJoinChecking = false
+                            GuardEngine.passwordCheckRunning.set(false)
                             GuardEngine.recordPasswordAttempt(this, ok) // every attempt counts, even if the sheet was closed meanwhile
                             if (isDestroyed || childSheetBody !== body || body.tag !== shown) return@runOnUiThread
                             if (!ok) { checking(false); error.text = "家長主密碼不正確。"; password?.error = "請重新輸入"; return@runOnUiThread }
@@ -5352,6 +5353,7 @@ class MainActivity : Activity() {
         rootContainer.addView(actionButton("驗證並暫時解鎖", t.btnPrimaryBg, t.btnPrimaryText) {
             val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this)
             if (remaining > 0) { error.text = "請等 $remaining 秒後再試。"; return@actionButton }
+            if (GuardEngine.passwordCheckRunning.get()) { error.text = PASSWORD_CHECK_BUSY; return@actionButton }
             val entered = input.text.toString().trim()
             when {
                 GuardEngine.redeem15MinUnlockCode(this, entered) -> {
