@@ -713,11 +713,12 @@ object GuardEngine {
     }
     fun checkPasswordLockoutRemainingSec(ctx: Context): Long = (lockoutRemainingMs(ctx) + 999L) / 1000L
 
-    fun recordPasswordAttempt(ctx: Context, success: Boolean) {
+    // UI thread and applyPairing's thread both count: pollLock, not @Synchronized (the 5th failure's alert takes pollLock; code elsewhere holds pollLock then the monitor).
+    fun recordPasswordAttempt(ctx: Context, success: Boolean): Unit = synchronized(pollLock) {
         if (success) {
             prefs(ctx).edit().putInt("pw_failed_count", 0).apply()
             clearLockout(ctx)
-            return
+            return@synchronized
         }
         val count = prefs(ctx).getInt("pw_failed_count", 0) + 1
         if (count >= 5) {
