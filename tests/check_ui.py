@@ -70,7 +70,7 @@ class Checks(unittest.TestCase):
   self.assertEqual(1,text.count('## 5.0 '))
   self.assertEqual(1,text.count('## 5.1 '))
   self.assertEqual(1,text.count('## 5.2 '))
-  self.assertEqual(1,text.count('## R1 '))
+  self.assertEqual(1,text.count('## 6.0 '))
   self.assertNotIn('## Unreleased',text)
  def test_monitoring_is_declared(self):
   workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/build-apk.yml').read_text()

@@ -1,8 +1,8 @@
 # Changelog
 
-## R1 (tag 6.0) — documented 24 November 2026 (Hong Kong), not yet released
+## 6.0 — documented 24 November 2026 (Hong Kong), not yet released
 
-Version R1 replaces chat invitations with QR pairing and gives the child phone its own signing key. Full notes, including what was tested on real phones and what was not: [R1 release notes](docs/releases/6.0.md). Version code: to be confirmed (set by the release workflow). Terms revision `2026-11-24-v8`: new section 2D (both languages), and the Terms, privacy policy, deletion guide and data-flow note describe the changes below. The Terms have not been reviewed by a lawyer and are not legal advice. Nothing here is approved by Meta, and this change does not make the app free of vulnerabilities.
+Version 6.0 replaces chat invitations with QR pairing and gives the child phone its own signing key. Full notes, including what was tested on real phones and what was not: [6.0 release notes](docs/releases/6.0.md). Version code: to be confirmed (set by the release workflow). Terms revision `2026-11-24-v8`: new section 2D (both languages), and the Terms, privacy policy, deletion guide and data-flow note describe the changes below. The Terms have not been reviewed by a lawyer and are not legal advice. Nothing here is approved by Meta, and this change does not make the app free of vulnerabilities.
 
 - Pairing is by a one-time QR code shown on the parent phone and scanned in person by the child phone: new each time, valid 3 minutes, single use. It holds a one-time secret and the parent phone's public key and no long-term secret. The two phones then agree a new family secret between themselves; it is never shown, typed or sent through a chat app. The child phone shows 6 digits, the parent types them (3 tries) and accepts, confirming with the parent phone's own screen lock or biometric, and the child confirms on its own phone. Four pictures are shown on both phones as a visual aid. If two phones answer the same QR code, pairing stops.
 - Chat invitations (the pairing text or link) are no longer offered for new pairings, and a child phone refuses them.
