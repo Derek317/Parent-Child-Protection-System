@@ -224,11 +224,12 @@ class DeliveryHealthTest {
     }
 
     /** A signed scores report as a QR-paired child queues it (control record, receipt requested); [model] "other" is refused by the parser. */
-    private fun scoresReport(sentAt: Long, model: String = "valid"): Pair<String, JSONObject> {
+    private fun scoresReport(sentAt: Long, model: String = "valid", rows: Int = 0): Pair<String, JSONObject> {
         val id = UUID.randomUUID().toString()
         val state = JSONObject().put("policy_id", JSONObject.NULL).put("model", model).put("consent", "none").put("active", false)
             .put("paused", false).put("paused_at_ms", JSONObject.NULL).put("last_run_ms", JSONObject.NULL).put("scored_count", 0).put("unknown_threads", 0)
-        val record = JSONObject().put("type", "scores_mode_report").put("sent_at_ms", sentAt).put("state", state).put("conversations", org.json.JSONArray())
+        val conversations = org.json.JSONArray().apply { repeat(rows) { put(JSONObject().put("account_label", "account$it").put("score", 10.0).put("review_reason", JSONObject.NULL).put("scored_at_ms", sentAt)) } }
+        val record = JSONObject().put("type", "scores_mode_report").put("sent_at_ms", sentAt).put("state", state).put("conversations", conversations)
             .put("scope", scope).put("command_id", id)
         return "control:$id" to ChildRecords.wrapForParent(record.toString(), "control:$id", GuardEngine.relayPublicKey(ctx), kid.publicKey, { FamilySecurity.signBytes(it, kid.privateKey) }, true)
     }
@@ -246,6 +247,32 @@ class DeliveryHealthTest {
         val (refused, bad) = scoresReport(System.currentTimeMillis() - 1_000L, model = "other")
         assertEquals(RelayConsumption.CONSUMED, deliver(bad))
         assertFalse("a refused report gets no receipt", parentReceipts().containsKey(refused))
+    }
+
+    /** The 30-second receipt throttle, moved back for [event] only: a resend comes after the child's retry backoff (30 s or more). */
+    @Suppress("UNCHECKED_CAST")
+    private fun receiptThrottlePassed(event: String) {
+        val recent = GuardEngine::class.java.getDeclaredField("recentAlerts").apply { isAccessible = true }.get(GuardEngine) as LinkedHashMap<String, Long>
+        synchronized(GuardEngine) { recent.computeIfPresent("receipt:$scope:$event") { _, at -> at - 31_000L } }
+    }
+    private fun dropParentReceipts() = FamilyEvidence(ctx).use { db -> db.due(scope, Long.MAX_VALUE, "parent").filter { it.kind == "receipt" }.forEach { db.acknowledge(scope, it.id) } }
+
+    /** A lost receipt: the child sends an already stored report again, whole or in parts, and the parent receipts it again. */
+    @Test fun theParentReceiptsAStoredScoresReportAgainWhenItIsResent() {
+        parentWithPinnedChild()
+        val (single, frame) = scoresReport(System.currentTimeMillis() - 1_000L)
+        assertEquals(RelayConsumption.CONSUMED, deliver(frame)); assertEquals(mapOf(single to "stored"), parentReceipts())
+        dropParentReceipts(); receiptThrottlePassed(single)
+        assertEquals(RelayConsumption.CONSUMED, deliver(frame))
+        assertEquals("single frame, already stored: receipted again", mapOf(single to "stored"), parentReceipts())
+
+        val (parted, whole) = scoresReport(System.currentTimeMillis() - 1_000L, rows = 60)
+        val parts = AlertFrames.split(whole); assertTrue(parts.size > 1)
+        for (part in parts) assertEquals(RelayConsumption.CONSUMED, deliver(part))
+        assertEquals("stored", parentReceipts()[parted])
+        dropParentReceipts(); receiptThrottlePassed(parted)
+        assertEquals(RelayConsumption.CONSUMED, deliver(parts.first()))
+        assertEquals("a part of an already stored report: receipted again", mapOf(parted to "stored"), parentReceipts())
     }
 
     @Test fun legacyHeartbeatsCarryingTheFieldsRaiseNothing() {
