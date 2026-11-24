@@ -216,6 +216,12 @@ jobs:
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
+                  // Test-only: Robolectric's Android jars, and nothing else, come from Google's Maven Central mirror
+                  // (Maven Central rate-limits GitHub's runners). app/build.gradle checks their SHA-512 in the test step.
+                  exclusiveContent {
+                      forRepository { maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' } }
+                      filter { includeModule('org.robolectric', 'android-all-instrumented') }
+                  }
                   google()
                   mavenCentral()
               }
@@ -414,13 +420,30 @@ jobs:
           mkdir -p app/src/test/resources
           printf 'application=app.family.igguard.VaultTestApplication\n' > app/src/test/resources/robolectric.properties
           cat >> app/build.gradle <<'EOF'
-          // Robolectric's Android jars (API 26, 28 and 34, which the tests ask for, and 35, which Robolectric loads for the app's resources) come through Gradle like every other
-          // dependency. Robolectric's own downloader has no retry and failed on GitHub's runners. One configuration per jar:
-          // in a shared one Gradle would keep only the highest version.
-          def robolectricJars = ['8.0.0_r4-robolectric-r1-i7', '9-robolectric-4913185-2-i7', '14-robolectric-10818077-i7', '15-robolectric-12650502-i7'].collect { v ->
+          // Robolectric's Android jars (API 26, 28 and 34, which the tests ask for, and 35, which Robolectric loads for the app's
+          // resources) are resolved by Gradle and Robolectric runs offline. Its own downloader fetched them from Maven Central
+          // during the tests, which answered GitHub's runners with 429 Too Many Requests; settings.gradle takes this one module
+          // from Google's Maven Central mirror instead. Each jar must match the SHA-512 pinned here (the values Maven Central publishes).
+          def robolectricSha512 = [
+              '8.0.0_r4-robolectric-r1-i7': 'c55e2053f3ae35d617ce02b0ecd311c1f72fcd671eaff873fb203e106b2dc444b870677b71be546a062045fc0a473926bb1668bd43f9051176826aab3f732aab',
+              '9-robolectric-4913185-2-i7': '24687b9ea919eb20f5e27e47274f2aa711e98eb332d4769d34044a3b4952a71393831d0a3f61ba726dc8fe220673a76138c11a0716f304999e5b029146fe88eb',
+              '14-robolectric-10818077-i7': '7cdc0b1306e7865f1acd25a363073149654caee5b8e278c5ae37ff4724185724eff39f0b0111800b521e640bb28698d9d2e655134a801569a0f07470e7b5f455',
+              '15-robolectric-12650502-i7': '87bdd0341838f5f630e1ff412ab29cb2f06e0f8cb7751f14679d11b4ee6084873001f8f6a8581ae6e139fa7c9a654b632412827430f984ebecc3c2588674f7e7',
+          ]
+          def robolectricJars = robolectricSha512.keySet().collect { v ->
               configurations.detachedConfiguration(dependencies.create("org.robolectric:android-all-instrumented:$v")).tap { transitive = false }
           }
-          tasks.register('copyRobolectricJars', Copy) { from robolectricJars; into layout.buildDirectory.dir('robolectric-jars') }
+          tasks.register('copyRobolectricJars', Copy) {
+              from robolectricJars; into layout.buildDirectory.dir('robolectric-jars')
+              doLast {
+                  robolectricSha512.each { v, want ->
+                      def jar = new File(destinationDir, "android-all-instrumented-${v}.jar")
+                      def digest = java.security.MessageDigest.getInstance('SHA-512')
+                      jar.eachByte(1 << 20) { buffer, read -> digest.update(buffer, 0, read) }
+                      if (digest.digest().encodeHex().toString() != want) throw new GradleException("SHA-512 mismatch for ${jar.name}")
+                  }
+              }
+          }
           android { testOptions {
               unitTests.includeAndroidResources = true
               unitTests.all {
