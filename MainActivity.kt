@@ -4185,6 +4185,8 @@ class MainActivity : Activity() {
     private var cameraBroken = false
     /** A paired child's parent password, checked at the join press and held only until the pairing is stored. */
     private var childJoinPassword: String? = null
+    /** That password's check is running off the main thread: one at a time, so the lockout cannot be raced by reopening the sheet. */
+    private var childJoinChecking = false
     private var childPairingStored: Boolean? = null
     /** C1-C6 on one sheet: scan, join consent, digits, waiting for the parent, done. FLAG_SECURE comes from showSheet. */
     private fun showChildPairingSheet() {
@@ -4296,16 +4298,26 @@ class MainActivity : Activity() {
                 val error = label("", 13f, t.warmCoral); body.addView(error)
                 body.addView(actionButton("加入此家庭 · Join this family", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
                     val qr = scannedQr ?: return@actionButton
-                    if (repair) {
-                        val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this)
-                        if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒。"; return@actionButton }
-                        val entered = password?.text?.toString().orEmpty()
+                    if (!repair) { startChildPairing(qr); return@actionButton }
+                    if (childJoinChecking) return@actionButton
+                    val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this)
+                    if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒。"; return@actionButton }
+                    val entered = password?.text?.toString().orEmpty()
+                    val join = body.findViewWithTag<Button>("join_family"); val shown = body.tag
+                    fun checking(on: Boolean) { join.isEnabled = !on; password?.isEnabled = !on; join.text = if (on) "核對中… · Checking…" else "加入此家庭 · Join this family" }
+                    checking(true); childJoinChecking = true
+                    // PBKDF2 takes seconds on older phones: off the main thread, so taps meanwhile hit this screen (Join disabled), not the next one.
+                    thread {
                         val ok = entered.isNotBlank() && GuardEngine.verifyParentPassword(this, entered)
-                        GuardEngine.recordPasswordAttempt(this, ok)
-                        if (!ok) { error.text = "家長主密碼不正確。"; password?.error = "請重新輸入"; return@actionButton }
-                        childJoinPassword = entered
+                        runOnUiThread {
+                            childJoinChecking = false
+                            GuardEngine.recordPasswordAttempt(this, ok) // every attempt counts, even if the sheet was closed meanwhile
+                            if (isDestroyed || childSheetBody !== body || body.tag !== shown) return@runOnUiThread
+                            if (!ok) { checking(false); error.text = "家長主密碼不正確。"; password?.error = "請重新輸入"; return@runOnUiThread }
+                            childJoinPassword = entered
+                            startChildPairing(qr)
+                        }
                     }
-                    startChildPairing(qr)
                 }.apply { tag = "join_family" })
                 closeButton()
             }

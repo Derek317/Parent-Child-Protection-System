@@ -208,12 +208,43 @@ class PairingGuardTest {
             val link=MainActivity::class.java.getDeclaredField("childPairing").apply{isAccessible=true}
             fun childKeys()=TestKeyStore.privateKeys.keys.count{it.startsWith("ig_guard.child_signing")}
             val keysBefore=childKeys()
-            box.setText("WrongPassword928!");join.performClick()
+            box.setText("WrongPassword928!");join.performClick();settle{join.isEnabled}
             assertNull("a wrong password starts nothing",link.get(a))
             assertEquals("no child key is made",keysBefore,childKeys())
-            box.setText("ParentPrivate928!");join.performClick()
+            box.setText("ParentPrivate928!");join.performClick();settle{link.get(a)!=null}
             assertNotNull("the right password starts the pairing",link.get(a))
             assertEquals("nothing is stored before the parent confirms",token,GuardEngine.getOrCreateFamilyToken(ctx))
+        } finally {c.pause().stop().destroy()}
+    }
+    /** The password check runs off the main thread (PBKDF2 took ~2 s on an LG G7); its result is handled on it. */
+    private fun settle(done:()->Boolean){
+        val end=System.currentTimeMillis()+20_000
+        while(true){org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();if(done()||System.currentTimeMillis()>end)break;Thread.sleep(5)}
+        assertTrue("the password check finished",done())
+    }
+    /** A second press while the check is pending does nothing; a wrong password is counted once and the controls come back. */
+    @Test fun qrJoinPressWhileThePasswordIsCheckedIsIgnored() {
+        pairedChild()
+        val parent=FamilySecurity.newSigningIdentity()
+        val qr=QrPairing.bareParent(parent).start(parent.publicKey,System.currentTimeMillis()).qrText
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            MainActivity::class.java.getDeclaredMethod("showChildPairingSheet").apply{isAccessible=true}.invoke(a)
+            MainActivity::class.java.getDeclaredMethod("onQrScanned",String::class.java).apply{isAccessible=true}.invoke(a,qr)
+            val views=all(ShadowDialog.getLatestDialog().window!!.decorView)
+            val box=views.filterIsInstance<android.widget.EditText>().first{it.tag=="repair_password"}
+            val join=views.filterIsInstance<Button>().first{it.tag=="join_family"}
+            box.setText("WrongPassword928!");join.performClick()
+            // The main looper is paused: the result cannot be handled before the next idle, so this is the pending state.
+            assertFalse("Join is disabled while checking",join.isEnabled);assertFalse("the password box too",box.isEnabled)
+            assertEquals("核對中… · Checking…",join.text.toString())
+            join.performClick() // performClick bypasses isEnabled, as a tap on a disabled button would not
+            settle{join.isEnabled}
+            assertEquals("one attempt, recorded once",1,prefs.getInt("pw_failed_count",0))
+            assertTrue("the same error",views.filterIsInstance<android.widget.TextView>().any{it.text.toString()=="家長主密碼不正確。"})
+            assertEquals("請重新輸入",box.error?.toString());assertTrue(box.isEnabled)
+            assertEquals("加入此家庭 · Join this family",join.text.toString())
+            assertNull("nothing started",MainActivity::class.java.getDeclaredField("childPairing").apply{isAccessible=true}.get(a))
         } finally {c.pause().stop().destroy()}
     }
     // ---- F9(b): one rate-limited alert, however often another app fires the link ----
