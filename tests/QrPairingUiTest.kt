@@ -206,6 +206,60 @@ class QrPairingUiTest {
         }
     }
 
+    /**
+     * A new phone's first pairing (child_setup): storing it changes the session, so the next render closes the sheet (the session-change
+     * protection). The child must still land on a real child page with its navigation, not on the setup screen. The relay is faked;
+     * the result handler is startChildPairing's own, and the UI-refresh broadcast sent while storing is delivered.
+     */
+    @Suppress("UNCHECKED_CAST")
+    @Test fun aFirstChildPairingLandsOnTheChildPagesNotOnTheSetupScreen() {
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            call(a, "navigateTo", "child_setup"); call(a, "showChildPairingSheet"); val dialog = sheet(a)
+            // A refused QR makes startChildPairing's link without a key or a relay room: it gives us the production result handler.
+            call(a, "startChildPairing", "not-a-qr")
+            val onResult = ChildPairingLink::class.java.getDeclaredField("onResult").apply { isAccessible = true }.get(field(a, "childPairing").get(a)) as (ChildPairing.Result) -> Unit
+            val parent = FamilySecurity.newSigningIdentity(); val bare = QrPairing.bareParent(parent)
+            val start = bare.start(parent.publicKey, System.currentTimeMillis())
+            val rooms = FakeRooms(); var link: ChildPairingLink? = null
+            link = ChildPairingLink(a, { if (field(a, "childPairing").get(a) === link) call(a, "fillChildPairing") }, onResult, rooms.opener)
+            field(a, "childPairing").set(a, link)
+            assertTrue(link.join(start.qrText)); rooms.rooms[0].ready()
+            rooms.rooms[0].deliver(bare.onHello(rooms.rooms[0].records().single(), System.currentTimeMillis())!!)
+            assertTrue(bare.digitsEntered((link.machine.state as CS.ShowingDigits).digits)); assertTrue(link.confirm()); idle()
+            rooms.rooms[1].deliver(bare.accept(FamilySecurity.passwordVerifier(QrPairing.PASSWORD), System.currentTimeMillis())!!.complete)
+            val end = System.currentTimeMillis() + 20_000 // storing runs on a background thread
+            while (field(a, "childPairingStored").get(a) == null && System.currentTimeMillis() < end) { idle(); Thread.sleep(5) }
+            assertEquals(true, field(a, "childPairingStored").get(a))
+            // On the phone the relay client sends this when its delivery loop ends (GuardEngine, after the pairing_verified notice).
+            ctx.sendBroadcast(android.content.Intent(GuardEngine.ACTION_UI_REFRESH).setPackage(ctx.packageName))
+            shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(1)) // the refresh receiver's 200 ms debounce
+            assertEquals("child", GuardEngine.getRole(ctx))
+            assertFalse("the session change closed the sheet", dialog.isShowing)
+            val section = field(a, "section").get(a) as String
+            assertFalse("a paired child is not on a setup screen: $section", section.endsWith("_setup"))
+            assertEquals("the bottom navigation is shown", View.VISIBLE, (field(a, "bottomNav").get(a) as View).visibility)
+            assertNotNull("the status line is shown", (field(a, "statusText").get(a) as View).parent)
+            assertTrue("no way back to the role choice", all(a.window.decorView).none { it.contentDescription == "返回身份選擇" })
+            assertEquals("role services synced", PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                a.packageManager.getComponentEnabledSetting(android.content.ComponentName(a, IgNotificationListener::class.java)))
+            assertEquals("the child is told", "已完成家庭配對。", org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+        } finally { c.pause().stop().destroy() }
+    }
+
+    /** A pairing stored while the setup screen was not rendering (e.g. the activity was recreated): the restored "child_setup" is not kept. */
+    @Test fun aPairedChildRestoredOnTheSetupSectionGetsTheChildPages() {
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            call(a, "navigateTo", "child_setup"); idle()
+            QrPairing.pairChild(ctx); assertEquals("child", GuardEngine.getRole(ctx))
+            c.recreate(); idle(); val b = c.get()
+            assertEquals("permissions", field(b, "section").get(b))
+            assertEquals(View.VISIBLE, (field(b, "bottomNav").get(b) as View).visibility)
+            assertTrue(all(b.window.decorView).none { it.contentDescription == "返回身份選擇" })
+        } finally { c.pause().stop().destroy() }
+    }
+
     /** The first "Allow" on the camera prompt must start the scanner without reopening the sheet; "Deny" shows the denied state. */
     @Test fun theScannerStartsAsSoonAsTheCameraIsAllowed() {
         for (allow in listOf(true, false)) {

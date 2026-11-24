@@ -3687,6 +3687,7 @@ class MainActivity : Activity() {
             else if (section !in setOf("role", "permissions", "overview") && !section.endsWith("_setup")) section = "overview"
             inputDrafts.clear(); renderedRole = role
         }
+        if (role != "unconfigured" && section.endsWith("_setup")) section = if (role == "child") "permissions" else "overview" // never setup chrome on a paired phone
         val focus = currentFocus as? EditText
         val focusHint = focus?.hint?.toString(); val selection = focus?.selectionStart ?: -1
         val sameSection = lastRenderedSection == section
@@ -4358,7 +4359,8 @@ class MainActivity : Activity() {
             // Storing may wait up to 6 s for the old family's notice (a paired child): off the main thread.
             thread {
                 val ok = GuardEngine.completeChildPairing(applicationContext, result, password, noticeWaitMs = 6_000L)
-                runOnUiThread { childPairingStored = ok; fillChildPairing() }
+                // A first pairing (no password: not a re-pair) changes role and session, and that render closes this sheet: finish here, not on its Continue.
+                runOnUiThread { childPairingStored = ok; fillChildPairing(); if (ok && password == null && !isDestroyed) finishPairing() }
             }
         })
         childPairing = link
