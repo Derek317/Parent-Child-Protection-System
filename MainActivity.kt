@@ -456,7 +456,7 @@ object GuardEngine {
             val stillQueued = known.filter { db.hasQueuedEvent(scope, it) }.toSet()
             check(prefs(ctx).edit().putStringSet(DeliveryHealth.HEARTBEAT_IDS, stillQueued + heartbeatId).commit())
             val (waiting, oldest) = db.receiptWaiting(scope, stillQueued + heartbeatId)
-            DeliveryHealth.fields(waiting, oldest, prefs(ctx).getLong(DeliveryHealth.EXPIRED_AT_MS, 0L) > 0L, now, RiskReporter.newestReportSentAt(ctx, scope))
+            DeliveryHealth.fields(waiting, oldest, prefs(ctx).getLong(DeliveryHealth.EXPIRED_AT_MS, 0L) > 0L, now)
         }
     }
     /** Child, on a parent receipt for [eventId]: a counted record queued after the last unreceipted expiry clears the sticky bit. */
@@ -1824,13 +1824,15 @@ object GuardEngine {
             payload.put("scope",topic).put("command_id",commandId)
             val envelope=if(parentCommand)FamilySecurity.signCommand(payload,parentIdentity(ctx).privateKey) else payload
             val eventId="control:$commandId"
+            // A QR-paired child's scores report waits for the parent's receipt (DeliveryHealth counts it; RiskReporter.confirmed).
+            val waits=type=="scores_mode_report" && childQrPaired(ctx)
             // A child's control record after a QR pairing travels as a signed record instead of the relay_control envelope.
-            val wrapped=(if(parentCommand)null else signedForParent(ctx,payload.toString(),eventId,null))
+            val wrapped=(if(parentCommand)null else signedForParent(ctx,payload.toString(),eventId,if(waits)true else null))
                 ?: JSONObject().put("type","alert").put("event_id",eventId).put("relay_control",true).put("envelope",envelope)
             val frames=AlertFrames.split(wrapped).mapIndexed{index,frame->"$eventId:$index" to encryptPayload(token,frame.toString())}
             synchronized(pollLock) {
                 check(captureRelaySession(ctx)==origin)
-                FamilyEvidence(ctx).use{it.enqueueBatch(topic,frames,role=origin.first,kind=if(type=="alert_receipt")"receipt" else "control")}
+                FamilyEvidence(ctx).use{it.enqueueBatch(topic,frames,waitForReceipt=waits,role=origin.first,kind=if(type=="alert_receipt")"receipt" else "control")}
                 if(onComplete!=null)deliveryCallbacks[topic to eventId]=DeliveryCallback(origin){success,message->
                     val same=captureRelaySession(ctx)==origin
                     completeAlertCallback(onComplete,same && success,if(same)message else "家庭配對已變更，原傳送已停止")
@@ -2081,16 +2083,17 @@ object GuardEngine {
                 val report=ScoresReportCodec.parse(inner,topic,received)
                 if(report!=null) {
                     val reached=FamilyEvidence(ctx).use{it.storeScoresReport(topic,report,received)}
-                    // The newest child send time stored here, compared with the one a verified heartbeat names (DeliveryHealth).
-                    if(reached>=0 && report.sentAt>prefs(ctx).getLong(DeliveryHealth.REPORT_APPLIED_MS,0L))check(prefs(ctx).edit().putLong(DeliveryHealth.REPORT_APPLIED_MS,report.sentAt).commit())
                     // Generic notice only: no account label, no score, no text.
                     if(reached>=0)repostUnappliedScoresPolicy(ctx,report.state)
                     if(reached>0)onNewAlertForParent?.invoke(JSONObject().put("type","alert").put("reason","scores_threshold").put("event_id","scores:"+UUID.randomUUID()).put("sender","").put("text","").put("ts_ms",received))
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
+                // A verified report stored here, now or before, is receipted; one refused by the parser never is (sendDeliveryReceipt checks).
+                if(verified!=null)sendDeliveryReceipt(ctx,controlId,decrypted.optBoolean("receipt_requested"))
             }
             "alert_receipt" -> {
                 if(role=="child")noteReceiptForDeliveryHealth(ctx,getChannelTopic(ctx),inner.getString("event_id"))
+                if(role=="child" && inner.optString("outcome")=="stored")RiskReporter.confirmed(ctx,getChannelTopic(ctx),inner.getString("event_id"))
                 FamilyEvidence(ctx).use{it.acknowledgeEvent(getChannelTopic(ctx),inner.getString("event_id"))}
                 cpLastHttpStatus = if(inner.optString("outcome")=="discarded") "家長已刪除此記錄 · 停止重試" else "家長手機已確認接收 · 不代表已閱讀"
                 ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
@@ -2209,7 +2212,7 @@ object GuardEngine {
     /** Parent, on a verified heartbeat: one content-free notice at most once an hour while the child reports records that wait over
      *  an hour (or expired) without a receipt, and only after 15 minutes of continuous relay connection here (receipts could flow). */
     private fun noteDeliveryHealth(ctx: Context, record: JSONObject, onNewAlertForParent: ((JSONObject) -> Unit)?, now: Long) {
-        val report = DeliveryHealth.parse(record, record.optLong("ts_ms", 0L), prefs(ctx).getLong(DeliveryHealth.REPORT_APPLIED_MS, 0L)) ?: return
+        val report = DeliveryHealth.parse(record) ?: return
         // Only a heartbeat sent after the last one acted on counts: a delayed or replayed older one neither clears nor raises.
         val sentAt = record.optLong("ts_ms", 0L)
         if (sentAt <= prefs(ctx).getLong(DeliveryHealth.LAST_SENT_MS, 0L)) return
@@ -2243,8 +2246,10 @@ object GuardEngine {
     private fun sendDeliveryReceipt(ctx: Context,eventId: String,requested: Boolean) {
         if(!requested || !isParentMode(ctx) || !eventId.matches(Regex("[A-Za-z0-9:_-]{1,160}")))return
         val token=getOrCreateFamilyToken(ctx);val topic=getChannelTopicForToken(token)
+        // A control id (a scores report) is receipted only once stored here; a report refused by the parser never is.
+        if(eventId.startsWith("control:") && !FamilyEvidence(ctx).use{it.scoresReportStored(topic,eventId.removePrefix("control:"))})return
         if(!shouldSendAlert("receipt:$topic:$eventId",30_000L))return
-        val outcome = FamilyEvidence(ctx).use{if(it.find(topic,eventId)==null) "discarded" else "stored"}
+        val outcome = FamilyEvidence(ctx).use{if(it.find(topic,eventId)==null && !eventId.startsWith("control:")) "discarded" else "stored"}
         val receipt=JSONObject().put("type","alert_receipt").put("outcome",outcome).put("event_id",eventId).put("ts_ms",System.currentTimeMillis())
         postEncryptedToChannel(ctx,topic,token,receipt.toString(),null)
     }

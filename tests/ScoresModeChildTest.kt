@@ -547,6 +547,43 @@ class ScoresModeChildTest {
         assertNoPrivateText()
         for (j in reports()) { assertFalse(j.toString().contains("send nudes")); assertFalse(j.toString().contains("author")) }
     }
+    /** QR-paired child: a scores report waits for the parent's receipt (counted, expiring into the sticky bit) and only that receipt marks its rows sent. */
+    @Test fun aQrPairedChildMarksRowsSentOnlyOnTheReceiptForTheReportThatCarriedThem() {
+        GuardEngine.setRole(ctx, "unconfigured"); authority = FamilySecurity.newSigningIdentity(); QrPairing.pairChild(ctx, authority)
+        val policy = UUID.randomUUID().toString()
+        prefs.edit().putString("capture_policy_id", policy).putString("capture_local_ack_id", policy).commit()
+        activate()
+        capture(obs("a ${secret}", conversation = "alpha"), obs("b ${secret}", conversation = "beta")); runBatch()
+        fun signed() = outbox().filter { it.has("child_signed") }.map { it to JSONObject(it.getString("child_signed")) }.filter { it.second.optString("type") == "scores_mode_report" }
+        fun labels(r: JSONObject) = r.getJSONArray("conversations").let { a -> (0 until a.length()).map { a.getJSONObject(it).getString("account_label") }.toSet() }
+        fun latest() = signed().map { it.second }.filter { labels(it).isNotEmpty() }.maxByOrNull { it.getLong("sent_at_ms") }!!
+        fun due() = FamilyEvidence(ctx).use { db -> db.riskReportRows(scope, System.currentTimeMillis()).filter { it.changed }.map { it.label }.toSet() }
+        fun waitsForReceipt(event: String) = FamilyEvidence(ctx).use { db -> db.readableDatabase.rawQuery("SELECT MIN(receipt) FROM outbox WHERE event_id=?", arrayOf(event)).use { it.moveToFirst() && !it.isNull(0) && it.getInt(0) == 1 } }
+        fun receipt(event: String) = assertEquals(RelayConsumption.CONSUMED, receiveSigned(JSONObject().put("type", "alert_receipt").put("scope", scope)
+            .put("command_id", UUID.randomUUID().toString()).put("ts_ms", System.currentTimeMillis()).put("event_id", event).put("outcome", "stored")))
+
+        val (wrapper, first) = signed().single { labels(it.second).isNotEmpty() }
+        val firstEvent = "control:" + first.getString("command_id")
+        assertEquals(setOf("alpha", "beta"), labels(first))
+        assertTrue("the parent is asked for a receipt", wrapper.getBoolean("receipt_requested"))
+        assertTrue("it waits for the receipt, so the heartbeat counts it", waitsForReceipt(firstEvent))
+        assertEquals("queued is not sent", setOf("alpha", "beta"), due())
+        receipt(firstEvent)
+        assertEquals("the receipt marks the rows it carried", emptySet<String>(), due())
+
+        Thread.sleep(5); capture(obs("c ${secret}", conversation = "alpha")); runBatch()
+        val second = latest()
+        assertEquals("only the changed row goes out again", setOf("alpha"), labels(second))
+        receipt(firstEvent)
+        assertEquals("a replayed older receipt does not mark the newer change", setOf("alpha"), due())
+
+        // Never receipted: it expires into the sticky bit, and its row goes out again.
+        val secondEvent = "control:" + second.getString("command_id")
+        FamilyEvidence(ctx).use { db -> db.writableDatabase.execSQL("UPDATE outbox_lifetimes SET expires=? WHERE id=?", arrayOf(System.currentTimeMillis() - 1, secondEvent)); db.pruneExpired(scope) }
+        assertTrue(prefs.getLong(DeliveryHealth.EXPIRED_AT_MS, 0L) > 0L)
+        assertTrue(RiskReporter.send(ctx))
+        assertEquals(setOf("alpha"), labels(latest()))
+    }
     @Test fun onlyChangedRowsAreResentAndRecordsHoldAtMost200Rows() {
         activate()
         val many = (1..210).map { obs("m$it ${secret}", conversation = "friend$it") }

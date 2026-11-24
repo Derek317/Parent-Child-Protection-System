@@ -778,6 +778,8 @@ internal object RiskReporter {
     const val FULL_RESEND_MS = 24L * 3_600_000L
     private const val IDS = "scores_report_ids"
     private const val LAST_REPORT = "scores_last_report_ms"
+    /** QR-paired child: report id -> the (thread, signature) rows it carried, until the parent's receipt for it (or a purge). */
+    private const val AWAITING = "scores_report_awaiting"
     private fun prefs(ctx: Context) = LocalVault.preferences(ctx)
 
     fun stateJson(ctx: Context, unknownThreads: Int): JSONObject {
@@ -799,14 +801,22 @@ internal object RiskReporter {
         Merged(RiskReportRow("", latest.label.take(RiskLimits.MAX_LABEL), best, if (best != null) null else latest.reason, latest.scoredAt), group, group.any { it.changed })
     }.sortedBy { it.row.scoredAt }
 
-    /** Entries "scope|id|sent_at_ms" (older entries have no send time: 0). */
-    private fun trackedWithTime(ctx: Context): List<Triple<String, String, Long>> = try {
+    /** Entries "scope|id" (older entries also carry a send time, ignored). */
+    private fun tracked(ctx: Context): List<Pair<String, String>> = try {
         val array = JSONArray(prefs(ctx).getString(IDS, "[]") ?: "[]")
-        (0 until array.length()).map { val p = array.getString(it).split('|'); Triple(p[0], p.getOrElse(1) { "" }, p.getOrNull(2)?.toLongOrNull() ?: 0L) }
+        (0 until array.length()).map { val p = array.getString(it).split('|'); p[0] to p.getOrElse(1) { "" } }
     } catch (_: Exception) { emptyList() }
-    private fun tracked(ctx: Context): List<Pair<String, String>> = trackedWithTime(ctx).map { it.first to it.second }
-    /** Send time of the newest scores report this phone queued for [scope] and has not purged (0: none). For the heartbeat. */
-    fun newestReportSentAt(ctx: Context, scope: String): Long = trackedWithTime(ctx).filter { it.first == scope }.maxOfOrNull { it.third } ?: 0L
+    private fun awaiting(ctx: Context): JSONObject = try { JSONObject(prefs(ctx).getString(AWAITING, "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+
+    /**
+     * QR-paired child, on the parent's verified `alert_receipt` for [eventId]: marks sent exactly the rows that report carried, with
+     * the signatures they had then (a row changed since stays due). The entry is used once, so a replayed receipt changes nothing.
+     */
+    fun confirmed(ctx: Context, scope: String, eventId: String) {
+        val all = awaiting(ctx); val rows = all.remove(eventId.removePrefix("control:")) as? JSONArray ?: return
+        FamilyEvidence(ctx).use { db -> db.markRiskSent(scope, (0 until rows.length()).map { rows.getJSONArray(it).let { r -> r.getString(0) to r.getString(1) } }) }
+        prefs(ctx).edit().putString(AWAITING, all.toString()).commit()
+    }
 
     /** Event ids of the scores reports this phone queued for [scope] (they may already be delivered). */
     fun queuedEventIds(ctx: Context, scope: String): List<String> = tracked(ctx).filter { it.first == scope }.map { "control:${it.second}" }
@@ -820,12 +830,12 @@ internal object RiskReporter {
             for ((entryScope, id) in entries) if (db.hasQueuedEvent(entryScope, "control:$id")) { db.acknowledgeEvent(entryScope, "control:$id"); found = true }
         }
         if (within != null) purge(within) else FamilyEvidence(ctx).use { purge(it) }
-        prefs(ctx).edit().remove(IDS).commit()
+        prefs(ctx).edit().remove(IDS).remove(AWAITING).commit()
         return found
     }
 
-    private fun track(ctx: Context, scope: String, id: String, sentAt: Long) {
-        val kept = trackedWithTime(ctx).takeLast(63).map { "${it.first}|${it.second}|${it.third}" } + "$scope|$id|$sentAt"
+    private fun track(ctx: Context, scope: String, id: String) {
+        val kept = tracked(ctx).takeLast(63).map { "${it.first}|${it.second}" } + "$scope|$id"
         prefs(ctx).edit().putString(IDS, JSONArray(kept).toString()).commit()
     }
 
@@ -833,7 +843,8 @@ internal object RiskReporter {
      * Sends the state plus every conversation row that changed since it was last sent (200 per record). Rows go out only
      * while consent is `accepted`; otherwise the record is state-only. The whole build-and-queue runs under the session
      * lock, so rows cannot be queued after a withdrawal. A newer report replaces any older one still queued (the parent
-     * orders state by send time); rows are resent in full only after such an undelivered report was purged. True if all records were queued.
+     * orders state by send time); rows are resent in full only after such an undelivered report was purged. A QR-paired child marks
+     * rows sent only on the parent's receipt for the report that carried them ([confirmed]); until then they go out again. True if all records were queued.
      */
     fun send(ctx: Context, now: Long = System.currentTimeMillis()): Boolean = GuardEngine.withSessionLock {
         val app = ctx.applicationContext
@@ -853,8 +864,10 @@ internal object RiskReporter {
                     .put("score", m.row.score ?: JSONObject.NULL).put("review_reason", m.row.reason ?: JSONObject.NULL).put("scored_at_ms", m.row.scoredAt))
                 val payload = JSONObject().put("type", "scores_mode_report").put("sent_at_ms", now).put("state", stateJson(app, unknown)).put("conversations", conversations)
                 val id = GuardEngine.queueScoresReport(app, payload) ?: return@withSessionLock false
-                track(app, scope, id, now)
-                db.markRiskSent(scope, chunk.flatMap { it.members })
+                track(app, scope, id)
+                val sent = chunk.flatMap { it.members }.map { it.thread to it.signature() }
+                if (!GuardEngine.childQrPaired(app)) db.markRiskSent(scope, sent)
+                else if (sent.isNotEmpty()) prefs(app).edit().putString(AWAITING, awaiting(app).put(id, JSONArray(sent.map { JSONArray(listOf(it.first, it.second)) })).toString()).commit()
             }
         }
         prefs(app).edit().putLong(LAST_REPORT, now).commit()

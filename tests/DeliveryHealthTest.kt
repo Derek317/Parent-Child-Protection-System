@@ -132,10 +132,10 @@ class DeliveryHealthTest {
     }
     private var sendClock = System.currentTimeMillis() - 60_000L
     /** Each heartbeat a little later than the last, as a child sends them (the parent acts only on newer send times). */
-    private fun hb(waiting: Any, oldest: Any, expired: Any, ts: Long = ++sendClock, report: Any = "0000000000000") = JSONObject().put("type", "alert").put("event_id", UUID.randomUUID().toString())
+    private fun hb(waiting: Any, oldest: Any, expired: Any, ts: Long = ++sendClock) = JSONObject().put("type", "alert").put("event_id", UUID.randomUUID().toString())
         .put("capture_source", "app_or_visible_screen").put("reason", "heartbeat_ok").put("sender", "子女手機定時回報").put("text", "裝置 運作中")
         .put("ts_ms", ts).put("time", "x").put("trusted_csv", "").put("child_self_handle", "")
-        .put("waiting", waiting).put("oldest_min", oldest).put("expired", expired).put("report_ms", report)
+        .put("waiting", waiting).put("oldest_min", oldest).put("expired", expired)
     private fun signed(r: JSONObject) = ChildRecords.wrapForParent(r.toString(), r.getString("event_id"), GuardEngine.relayPublicKey(ctx), kid.publicKey, { FamilySecurity.signBytes(it, kid.privateKey) }, true)
     private fun deliver(frame: JSONObject) = GuardEngine.processIncomingRelayLine(ctx, JSONObject().put("event", "message").put("id", UUID.randomUUID().toString())
         .put("message", GuardEngine.encryptPayload(token, frame.toString())).toString(), "parent", null)
@@ -160,11 +160,10 @@ class DeliveryHealthTest {
 
     @Test fun strictParsingIgnoresMalformedFieldsButTheHeartbeatStillCounts() {
         parentWithPinnedChild(); connectedFor(20)
-        val old = "%013d".format(System.currentTimeMillis() - 5 * 60 * 60_000L)
-        for ((w, o, e, r) in listOf(listOf<Any>("3", "0060", "0", "0000000000000"), listOf<Any>("03", "60", "0", "0000000000000"), listOf<Any>("03", "0060", "2", "0000000000000"),
-                listOf<Any>(3, 60, 0, "0000000000000"), listOf<Any>("0a", "0060", "1", "0000000000000"), listOf<Any>("00", "0000", "0", old.drop(1)), listOf<Any>("00", "0000", "0", 1L))) {
+        for ((w, o, e) in listOf(listOf<Any>("3", "0060", "0"), listOf<Any>("03", "60", "0"), listOf<Any>("03", "0060", "2"),
+                listOf<Any>(3, 60, 0), listOf<Any>("0a", "0060", "1"))) {
             prefs.edit().remove("parent_last_child_hb_ms").commit()
-            assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb(w, o, e, report = r))))
+            assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb(w, o, e))))
             assertTrue("the heartbeat still counts", GuardEngine.hasChildHeartbeat(ctx))
         }
         assertEquals(0, notices())
@@ -224,50 +223,29 @@ class DeliveryHealthTest {
         assertFalse(prefs.contains(DeliveryHealth.FIRST_BAD_MS))
     }
 
-    /** A signed scores report as the child queues it (control record): only the send time matters here. */
-    private fun scoresReport(sentAt: Long): JSONObject {
+    /** A signed scores report as a QR-paired child queues it (control record, receipt requested); [model] "other" is refused by the parser. */
+    private fun scoresReport(sentAt: Long, model: String = "valid"): Pair<String, JSONObject> {
         val id = UUID.randomUUID().toString()
-        val state = JSONObject().put("policy_id", JSONObject.NULL).put("model", "valid").put("consent", "none").put("active", false)
+        val state = JSONObject().put("policy_id", JSONObject.NULL).put("model", model).put("consent", "none").put("active", false)
             .put("paused", false).put("paused_at_ms", JSONObject.NULL).put("last_run_ms", JSONObject.NULL).put("scored_count", 0).put("unknown_threads", 0)
         val record = JSONObject().put("type", "scores_mode_report").put("sent_at_ms", sentAt).put("state", state).put("conversations", org.json.JSONArray())
             .put("scope", scope).put("command_id", id)
-        return ChildRecords.wrapForParent(record.toString(), "control:$id", GuardEngine.relayPublicKey(ctx), kid.publicKey, { FamilySecurity.signBytes(it, kid.privateKey) }, null)
+        return "control:$id" to ChildRecords.wrapForParent(record.toString(), "control:$id", GuardEngine.relayPublicKey(ctx), kid.publicKey, { FamilySecurity.signBytes(it, kid.privateKey) }, true)
     }
+    /** The receipts this parent has queued: event id -> outcome. */
+    private fun parentReceipts(): Map<String, String> = FamilyEvidence(ctx).use { it.due(scope, Long.MAX_VALUE, "parent") }.filter { it.kind == "receipt" }
+        .map { JSONObject(GuardEngine.decryptPayload(token, it.wire)!!.getJSONObject("envelope").getString("payload")) }
+        .associate { it.getString("event_id") to it.getString("outcome") }
 
-    /** Scores reports: a heartbeat naming a report over 60 minutes older than itself that this phone never stored counts as bad. */
-    @Test fun aScoresReportTheParentNeverStoredRaisesTheNotice() {
-        parentWithPinnedChild(); connectedFor(20)
-        val now = System.currentTimeMillis()
-        fun named(at: Long) = "%013d".format(at)
-        deliver(signed(hb("00", "0000", "0", ts = now - 10_000L, report = named(0))))
-        assertEquals("no report named: quiet", 0, notices())
-        deliver(signed(hb("00", "0000", "0", ts = now - 9_000L, report = named(now - 30 * 60_000L))))
-        assertEquals("younger than 60 minutes: quiet", 0, notices())
-        // A report sent 2 hours ago that did reach this phone: quiet.
-        val applied = now - 2 * 60 * 60_000L
-        assertEquals(RelayConsumption.CONSUMED, deliver(scoresReport(applied)))
-        deliver(signed(hb("00", "0000", "0", ts = now - 8_000L, report = named(applied))))
-        assertEquals("stored here: quiet", 0, notices())
-        // A newer report, 70 minutes old, never arrived: the notice.
-        deliver(signed(hb("00", "0000", "0", ts = now - 7_000L, report = named(now - 70 * 60_000L))))
-        assertEquals("missing report: notice", 1, notices())
-        // Once it arrives, the next heartbeat clears the condition.
-        assertEquals(RelayConsumption.CONSUMED, deliver(scoresReport(now - 70 * 60_000L)))
-        deliver(signed(hb("00", "0000", "0", ts = now - 6_000L, report = named(now - 70 * 60_000L))))
-        assertFalse(prefs.contains(DeliveryHealth.NOTICE_MS)); assertFalse(prefs.contains(DeliveryHealth.FIRST_BAD_MS))
-    }
-
-    @Test fun theChildNamesItsNewestQueuedScoresReport() {
-        QrPairing.pairChild(ctx)
-        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx, force = true)
-        assertEquals("0000000000000", lastHeartbeat().getString("report_ms"))
-        val sent = System.currentTimeMillis() - 1_000L
-        assertTrue(RiskReporter.send(ctx, sent))
-        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx, force = true)
-        assertEquals("%013d".format(sent), lastHeartbeat().getString("report_ms"))
-        RiskReporter.purgeQueued(ctx, scope)
-        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx, force = true)
-        assertEquals("a purged report is no longer named", "0000000000000", lastHeartbeat().getString("report_ms"))
+    /** Scores reports: the parent receipts a verified report it stored, and never one its parser refused. */
+    @Test fun theParentReceiptsAStoredScoresReportAndNotARefusedOne() {
+        parentWithPinnedChild()
+        val (stored, good) = scoresReport(System.currentTimeMillis() - 1_000L)
+        assertEquals(RelayConsumption.CONSUMED, deliver(good))
+        assertEquals(mapOf(stored to "stored"), parentReceipts())
+        val (refused, bad) = scoresReport(System.currentTimeMillis() - 1_000L, model = "other")
+        assertEquals(RelayConsumption.CONSUMED, deliver(bad))
+        assertFalse("a refused report gets no receipt", parentReceipts().containsKey(refused))
     }
 
     @Test fun legacyHeartbeatsCarryingTheFieldsRaiseNothing() {

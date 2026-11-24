@@ -629,9 +629,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     }
     /** Child: forgets what was sent, so the next report carries every row again. */
     internal fun resetRiskSent(scope:String) { writableDatabase.execSQL("UPDATE risk_threads SET sent_sig='' WHERE scope=?",arrayOf(scope)) }
-    internal fun markRiskSent(scope:String,rows:List<RiskReportRow>) {
+    /** Child: [rows] are (thread, signature as sent); a row changed since keeps a different signature, so it stays due. */
+    internal fun markRiskSent(scope:String,rows:List<Pair<String,String>>) {
         val db=writableDatabase;db.beginTransaction()
-        try{for(r in rows)db.execSQL("UPDATE risk_threads SET sent_sig=? WHERE scope=? AND thread_index=?",arrayOf(r.signature(),scope,r.thread));db.setTransactionSuccessful()}finally{db.endTransaction()}
+        try{for((thread,sig) in rows)db.execSQL("UPDATE risk_threads SET sent_sig=? WHERE scope=? AND thread_index=?",arrayOf(sig,scope,thread));db.setTransactionSuccessful()}finally{db.endTransaction()}
     }
     /** Child: removes every stored message, result and unknown-thread marker in every scope. */
     fun wipeRisk() {
@@ -682,6 +683,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.setTransactionSuccessful();return reached
         }finally{db.endTransaction()}
     }
+    /** Parent: true if the scores report [commandId] was stored here (its id is kept in risk_replay). */
+    fun scoresReportStored(scope:String,commandId:String):Boolean = readableDatabase.rawQuery("SELECT 1 FROM risk_replay WHERE scope=? AND command_id=?",arrayOf(scope,commandId)).use{it.moveToFirst()}
     /** Parent: conversation scores for [scope], newest first, hiding rows older than the retention setting. */
     fun riskScores(scope:String,now:Long=System.currentTimeMillis()):List<RiskScoreRow> = readableDatabase.rawQuery(
         "SELECT label_index,label,result,scored_at FROM risk_scores WHERE scope=? AND scored_at>? ORDER BY scored_at DESC,label_index",arrayOf(scope,(now-retentionDays(scope)*DAY).toString())).use { c ->
