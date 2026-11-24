@@ -456,7 +456,8 @@ object GuardEngine {
             val stillQueued = known.filter { db.hasQueuedEvent(scope, it) }.toSet()
             check(prefs(ctx).edit().putStringSet(DeliveryHealth.HEARTBEAT_IDS, stillQueued + heartbeatId).commit())
             val (waiting, oldest) = db.receiptWaiting(scope, stillQueued + heartbeatId)
-            DeliveryHealth.fields(waiting, oldest, prefs(ctx).getLong(DeliveryHealth.EXPIRED_AT_MS, 0L) > 0L, now)
+            val since = listOfNotNull(oldest, RiskReporter.unconfirmedSince(ctx, scope, db)).minOrNull()
+            DeliveryHealth.fields(waiting, since, prefs(ctx).getLong(DeliveryHealth.EXPIRED_AT_MS, 0L) > 0L, now)
         }
     }
     /** Child, on a parent receipt for [eventId]: a counted record queued after the last unreceipted expiry clears the sticky bit. */

@@ -584,6 +584,27 @@ class ScoresModeChildTest {
         assertTrue(RiskReporter.send(ctx))
         assertEquals(setOf("alpha"), labels(latest()))
     }
+    /** QR-paired child: replacing a never-receipted scores report does not restart the heartbeat's age; the receipt for the replacement clears it. */
+    @Test fun aReplacedUnreceiptedScoresReportKeepsTheHeartbeatAgeRunning() {
+        GuardEngine.setRole(ctx, "unconfigured"); authority = FamilySecurity.newSigningIdentity(); QrPairing.pairChild(ctx, authority)
+        val policy = UUID.randomUUID().toString()
+        prefs.edit().putString("capture_policy_id", policy).putString("capture_local_ack_id", policy).commit()
+        activate(); capture(obs("a ${secret}", conversation = "alpha")); runBatch()
+        fun allEvents() = FamilyEvidence(ctx).use { db -> db.due(scope, Long.MAX_VALUE).map { it.id.substringBeforeLast(':') }.distinct() }
+        FamilyEvidence(ctx).use { db -> allEvents().forEach { db.acknowledgeEvent(scope, it) } }     // a clean start: nothing waits
+        val now = System.currentTimeMillis()
+        assertTrue(RiskReporter.send(ctx, now - 62 * 60_000L))                                         // A: never receipted
+        assertTrue(RiskReporter.send(ctx, now))                                                         // B replaces A
+        val b = outbox().filter { it.has("child_signed") }.map { JSONObject(it.getString("child_signed")) }.single { it.optString("type") == "scores_mode_report" }
+        val bEvent = "control:" + b.getString("command_id")
+        assertEquals(listOf(bEvent), allEvents())
+        fun fields() = GuardEngine.deliveryHealthFields(ctx, UUID.randomUUID().toString(), System.currentTimeMillis())
+        assertTrue("the age runs from A, not from B", fields().getString("oldest_min").toInt() >= 60)
+        assertEquals(RelayConsumption.CONSUMED, receiveSigned(JSONObject().put("type", "alert_receipt").put("scope", scope)
+            .put("command_id", UUID.randomUUID().toString()).put("ts_ms", System.currentTimeMillis()).put("event_id", bEvent).put("outcome", "stored")))
+        val clear = fields()
+        assertEquals(listOf("00", "0000", "0"), listOf(clear.getString("waiting"), clear.getString("oldest_min"), clear.getString("expired")))
+    }
     @Test fun onlyChangedRowsAreResentAndRecordsHoldAtMost200Rows() {
         activate()
         val many = (1..210).map { obs("m$it ${secret}", conversation = "friend$it") }

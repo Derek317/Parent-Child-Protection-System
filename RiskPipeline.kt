@@ -780,6 +780,8 @@ internal object RiskReporter {
     private const val LAST_REPORT = "scores_last_report_ms"
     /** QR-paired child: report id -> the (thread, signature) rows it carried, until the parent's receipt for it (or a purge). */
     private const val AWAITING = "scores_report_awaiting"
+    /** QR-paired child: when the first scores report went out after a send that found none still waiting. */
+    private const val UNCONFIRMED = "scores_unconfirmed_since_ms"
     private fun prefs(ctx: Context) = LocalVault.preferences(ctx)
 
     fun stateJson(ctx: Context, unknownThreads: Int): JSONObject {
@@ -820,6 +822,9 @@ internal object RiskReporter {
 
     /** Event ids of the scores reports this phone queued for [scope] (they may already be delivered). */
     fun queuedEventIds(ctx: Context, scope: String): List<String> = tracked(ctx).filter { it.first == scope }.map { "control:${it.second}" }
+    private fun anyWaiting(ctx: Context, scope: String, db: FamilyEvidence) = queuedEventIds(ctx, scope).any { db.hasQueuedEvent(scope, it) }
+    /** For the heartbeat: since when this family's scores reports have waited without a break, or null while none waits. */
+    fun unconfirmedSince(ctx: Context, scope: String, db: FamilyEvidence): Long? = prefs(ctx).getLong(UNCONFIRMED, 0L).takeIf { it > 0L && anyWaiting(ctx, scope, db) }
 
     /** Deletes scores reports that are still waiting in the outbox. True if any was found. */
     fun purgeQueued(ctx: Context, scope: String, within: FamilyEvidence? = null): Boolean {
@@ -851,6 +856,8 @@ internal object RiskReporter {
         if (!GuardEngine.transferAllowed(app) || !GuardEngine.isChildMode(app)) return@withSessionLock false
         val scope = GuardEngine.getChannelTopic(app)
         FamilyEvidence(app).use { db ->
+            // A replacement does not restart the age the heartbeat reports: it runs from the first report sent while none waited.
+            if (GuardEngine.childQrPaired(app) && !anyWaiting(app, scope, db)) prefs(app).edit().putLong(UNCONFIRMED, now).commit()
             // An older queued report is replaced only by one that carries rows again. With no rows to carry (after a wipe, or
             // without consent) it stays queued, so the scores it holds still reach the parent.
             val replacing = RiskLocal.consentState(app) == "accepted" && db.riskReportRows(scope, now).isNotEmpty()
