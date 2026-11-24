@@ -40,10 +40,20 @@ cp "$repo_dir"/tests/*.kt app/src/test/java/app/family/igguard/
 mkdir -p app/src/test/resources
 printf 'application=app.family.igguard.VaultTestApplication\n' > app/src/test/resources/robolectric.properties
 cat >> app/build.gradle <<'GRADLE'
+// Robolectric's Android jars (API 26, 28 and 34, which the tests ask for, and 35, which Robolectric loads for the app's resources) come through Gradle like every other
+// dependency. Robolectric's own downloader has no retry and failed on GitHub's runners. One configuration per jar:
+// in a shared one Gradle would keep only the highest version.
+def robolectricJars = ['8.0.0_r4-robolectric-r1-i7', '9-robolectric-4913185-2-i7', '14-robolectric-10818077-i7', '15-robolectric-12650502-i7'].collect { v ->
+    configurations.detachedConfiguration(dependencies.create("org.robolectric:android-all-instrumented:$v")).tap { transitive = false }
+}
+tasks.register('copyRobolectricJars', Copy) { from robolectricJars; into layout.buildDirectory.dir('robolectric-jars') }
 android { testOptions {
     unitTests.includeAndroidResources = true
     unitTests.all {
         maxHeapSize = '1g'
+        dependsOn 'copyRobolectricJars'
+        systemProperty 'robolectric.offline', 'true'
+        systemProperty 'robolectric.dependency.dir', layout.buildDirectory.dir('robolectric-jars').get().asFile.absolutePath
         ['https.proxyHost','https.proxyPort','http.proxyHost','http.proxyPort'].each { key ->
             if (System.getProperty(key)) systemProperty key, System.getProperty(key)
         }
