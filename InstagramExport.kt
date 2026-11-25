@@ -306,6 +306,11 @@ internal object InstagramExport {
     // ---------------- assembling ----------------
     private fun key(name: String) = name.trim().removePrefix("@").lowercase(Locale.ROOT)
 
+    private val THREAD_NUMBER = Regex("^(.*)_(\\d+)$")
+    /** The folder's last segment without its "_" and thread number. */
+    private fun folderName(folder: String) = folder.substringAfterLast('/').let { THREAD_NUMBER.matchEntire(it)?.groupValues?.get(1) ?: it }
+    private fun letters(s: String) = s.lowercase(Locale.ROOT).filter { it in 'a'..'z' || it in '0'..'9' }
+
     private class Conversation(val folder: String, val people: LinkedHashMap<String, String>, val listed: List<String>, val json: Boolean, val ordered: List<RawMessage>, val old: Boolean)
 
     private fun assemble(files: Map<String, List<RawFile>>, childName: String?, limits: ExportLimits): ParsedExport {
@@ -327,9 +332,17 @@ internal object InstagramExport {
             val top = counts.values.maxOrNull() ?: return null
             return if (top < 2) null else counts.filterValues { it == top }.keys.singleOrNull()
         }
-        // A stored name found in the file is the teen. It may be a handle that is not the export's display name: then the file decides.
+        // Instagram names a conversation's folder after the other person (or the group), then "_" and the thread number. In a two-person
+        // thread the one whose name matches the folder is the other person, so the remaining one is the teen. Letters and digits only:
+        // a name the folder cannot show (Chinese, say) matches nothing. Threads that disagree are no answer.
+        val byFolder = conversations.mapNotNull { c ->
+            val name = letters(folderName(c.folder))
+            val other = if (name.isEmpty() || c.people.size != 2) null else c.people.keys.singleOrNull { letters(it) == name }
+            other?.let { o -> c.people.keys.first { it != o } }
+        }.distinct().singleOrNull()
+        // Else a stored name found in the file is the teen. It may be a handle that is not the export's display name: then the file decides.
         val child = childName?.let(::key)?.takeIf { n -> n.isNotEmpty() && conversations.any { n in it.people } }
-        val global = child ?: mostShared(conversations.filter { it.people.size >= 2 }) ?: mostShared(conversations)
+        val global = byFolder ?: child ?: mostShared(conversations.filter { it.people.size >= 2 }) ?: mostShared(conversations)
         val groupKeys = ArrayList<String>()
         val result = ArrayList<ExportConversation>()
         for (c in conversations) {

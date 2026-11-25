@@ -67,6 +67,41 @@ class ExportTeenRuleTest {
         // As many chats with each friend as with the teen: nothing tells who the teen is, so nothing is guessed.
         assertEquals(ImportResult.TEEN_UNKNOWN, parse(zip(bea, cal, club), "export.zip").result)
     }
+    @Test fun theFolderNamedAfterTheOtherPersonTellsTheTeen() {
+        // One chat where both wrote, and a group the teen never wrote in where the friend is busier than the teen.
+        val chat = "inbox/annlee_1234567890/message_1.html" to html(Triple("Ann Lee", "you there?", 1), Triple(teen, "yes", 2), Triple("Ann Lee", "call me", 3))
+        val club = "inbox/weekendcrew_222/message_1.html" to html(Triple("Ann Lee", "who is in", 4), Triple("Ben Ho", "me", 5), Triple("Cy Pal", "me too", 6))
+        val p = parse(zip(chat, club), "export.zip")
+        assertEquals(ImportResult.OK, p.result); assertEquals(1, p.groups)
+        val c = p.conversations.single()
+        assertEquals("Ann Lee", c.label)
+        assertEquals(listOf(false to "call me", true to "yes", false to "you there?"), c.messages.map { it.outgoing to it.text })
+    }
+    @Test fun aNameTheFolderCannotShowTakesTheTeenFromAnotherThread() {
+        val bea = "inbox/beafriend_1/message_1.html" to html(Triple("Bea Friend", "hello", 1), Triple(teen, "hi Bea", 2))
+        val chen = "inbox/chenxiaoming_2/message_1.html" to html(Triple("陳小明", "你好", 3), Triple(teen, "hi", 4))
+        val club = "inbox/club_3/message_1.html" to html(Triple("Bea Friend", "party at 8", 5), Triple("陳小明", "好", 6))
+        val p = parse(zip(chen, club, bea), "export.zip")
+        assertEquals(ImportResult.OK, p.result); assertEquals(1, p.groups)
+        assertEquals(setOf("Bea Friend", "陳小明"), p.conversations.map { it.label }.toSet())
+        assertEquals(listOf(true to "hi", false to "你好"), p.conversations.single { it.label == "陳小明" }.messages.map { it.outgoing to it.text })
+    }
+    @Test fun withNoFolderMatchingTheOldRulesStillDecide() {
+        // Every other person has a name the folder cannot show: the teen is the one in the most threads.
+        val a = "inbox/chenxiaoming_1/message_1.html" to html(Triple("陳小明", "你好", 1), Triple(teen, "hi", 2))
+        val b = "inbox/lihua_2/message_1.html" to html(Triple("李華", "早晨", 3), Triple(teen, "morning", 4))
+        val p = parse(zip(a, b), "export.zip")
+        assertEquals(ImportResult.OK, p.result); assertEquals(setOf("陳小明", "李華"), p.conversations.map { it.label }.toSet())
+        assertTrue(p.conversations.all { c -> c.messages.single { it.outgoing }.text in setOf("hi", "morning") })
+        // Folders that disagree are no answer either.
+        val ann = "inbox/annlee_1/message_1.html" to html(Triple("Ann Lee", "hello", 1), Triple(teen, "hi", 2))
+        val odd = "inbox/alexteen_2/message_1.html" to html(Triple("Ann Lee", "hey", 3), Triple(teen, "yo", 4))
+        assertEquals(ImportResult.TEEN_UNKNOWN, parse(zip(ann, odd), "export.zip").result)
+        // A lone file has no folder: unchanged.
+        val lone = html(Triple("Ann Lee", "hello", 1), Triple(teen, "hi", 2)).toByteArray()
+        assertEquals(ImportResult.TEEN_UNKNOWN, parse(lone, "message_1.html").result)
+        assertEquals("Ann Lee", parse(lone, "message_1.html", child = teen).conversations.single().label)
+    }
     @Test fun withTwoConversationsOnlyOneOfWhichHasTwoPeopleTheTeenIsStillUnknownInHtml() {
         val export = zip("inbox/bea_1/message_1.html" to html(Triple("Bea Friend", "hello", 1), Triple(teen, "hi", 2)),
             "inbox/stranger_3/message_1.html" to html(Triple("Some Stranger", "hey you", 5)))
