@@ -981,7 +981,7 @@ class ScoresModeChildTest {
         TestKeyStore.failReads = false
         assertEquals(1, count("risk_store"))
         assertTrue(prefs.getBoolean("scores_wipe_pending", false))
-        ArchiveMaintenance.pruneAll(ctx)   // the mode is still accepted and on: only the flag asks for the wipe
+        pruneAsOnAndroid()   // the mode is still accepted and on: only the flag asks for the wipe
         assertEquals(0, count("risk_store")); assertFalse(prefs.getBoolean("scores_wipe_pending", false))
     }
     @Test fun everyWipeTriggerEmptiesTheStore() {
@@ -998,11 +998,21 @@ class ScoresModeChildTest {
         assertTrue("rotation keeps the family's mode and consent", RiskLocal.policyEnabled(ctx)); assertEquals("accepted", RiskLocal.consentState(ctx))
         reset(); fill(); FamilyEvidence(ctx).use { it.rotate(scope, "other-scope") { w -> w } }; empty("evidence rotate")
     }
+    /** The daily prune as a phone runs it. Android gives every SQLite connection a 2.5 s busy timeout, so a prune that meets a
+     *  delivery worker still writing (a capture starts one) waits; Robolectric's SQLite fails at once instead. This waits the same
+     *  2.5 s, and the job itself would retry a prune that still failed (ArchiveMaintenanceJob reschedules on an exception). */
+    private fun pruneAsOnAndroid() {
+        val until = System.currentTimeMillis() + 2_500L
+        while (true) try { ArchiveMaintenance.pruneAll(ctx); return } catch (e: android.database.sqlite.SQLiteDatabaseLockedException) {
+            if (System.currentTimeMillis() >= until) throw e
+            Thread.sleep(50)
+        }
+    }
     @Test fun dailyMaintenanceWipesAStoreThatNoLongerHasAMode() {
         activate(); capture(obs(text(1)))
-        ArchiveMaintenance.pruneAll(ctx); assertEquals(1, count("risk_store"))
+        pruneAsOnAndroid(); assertEquals(1, count("risk_store"))
         prefs.edit().putBoolean("scores_policy_enabled", false).commit()
-        ArchiveMaintenance.pruneAll(ctx); assertEquals(0, count("risk_store"))
+        pruneAsOnAndroid(); assertEquals(0, count("risk_store"))
     }
 
     // ---------- schedule ----------
@@ -1045,7 +1055,7 @@ class ScoresModeChildTest {
     @Test fun theModelValidReportSurvivesMaintenanceAndAStateReportGoesOutDaily() {
         assertTrue(installModel())
         assertEquals("valid", reports().last().getJSONObject("state").getString("model"))
-        ArchiveMaintenance.pruneAll(ctx)
+        pruneAsOnAndroid()
         assertEquals("the queued model-valid report is still there", "valid", reports().last().getJSONObject("state").getString("model"))
         val later = System.currentTimeMillis() + 30 * 3_600_000L
         RiskLocal.dailyReport(ctx, later)   // mode is off
@@ -1055,7 +1065,7 @@ class ScoresModeChildTest {
     }
     @Test fun theConsentNoneReportAfterANewPolicySurvivesMaintenance() {
         assertTrue(installModel()); enablePolicy()
-        ArchiveMaintenance.pruneAll(ctx)
+        pruneAsOnAndroid()
         val state = reports().last().getJSONObject("state")
         assertEquals(RiskLocal.policyId(ctx), state.getString("policy_id")); assertEquals("none", state.getString("consent")); assertFalse(state.getBoolean("active"))
     }
