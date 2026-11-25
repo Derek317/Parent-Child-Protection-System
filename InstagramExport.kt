@@ -45,7 +45,7 @@ internal data class ExportLimits(
     val maxTextChars: Int = 4_000
 )
 
-internal class ExportMessage(val outgoing: Boolean, val text: String, /** Milliseconds, or null when the file gave no usable time. */ val ts: Long?, /** The time as the file wrote it: only to find rows stored by 6.0.1 and earlier. */ val timeKey: String)
+internal class ExportMessage(val outgoing: Boolean, val text: String, /** Milliseconds, or null when the file gave no usable time. */ val ts: Long?, /** The time as the file wrote it: only to find rows stored by 6.0 and earlier. */ val timeKey: String)
 /** A one-to-one conversation. [messages] are oldest first. [old]: messages older than the window were dropped while reading. */
 internal class ExportConversation(val label: String, val key: String, val messages: List<ExportMessage>, val old: Boolean = false)
 /** [groupKeys] name each skipped group conversation (stable across imports, so a repeat does not count it twice). */
@@ -440,7 +440,7 @@ internal object InstagramImport {
                         conversations++
                         // The id is the time read to the minute, so JSON, HTML and any language give one id (undated messages were dropped above).
                         val ids = ids(c.key, recent) { Math.floorDiv(it.ts!!, 60_000L).toString() }
-                        // 6.0.1 and earlier keyed the id by the time as the file wrote it, and the thread by the name: such a row is replaced, not kept beside the new one.
+                        // 6.0 and earlier keyed the id by the time as the file wrote it, and the thread by the name: such a row is replaced, not kept beside the new one.
                         val legacyKey = c.label.trim().removePrefix("@").lowercase(Locale.ROOT)
                         val before = ids(legacyKey, recent) { it.timeKey }
                         val replaced = before.map { sql.delete("risk_store", "scope=? AND id=?", arrayOf(scope, it)) > 0 }

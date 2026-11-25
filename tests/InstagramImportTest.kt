@@ -281,7 +281,7 @@ class InstagramImportTest {
         val bytes = zip("inbox/sam_111/message_1.json" to json(listOf(M("Sam", "from the first sam", 1), M(teen, "hi first", 2)), listOf("Sam", teen), fixed).toByteArray(),
             "inbox/sam_222/message_1.json" to json(listOf(M("Sam", "from the second sam", 3), M(teen, "hi second", 4)), listOf("Sam", teen), fixed).toByteArray())
         storeAs601(bytes, "export.zip")
-        assertEquals("6.0.1 kept them as one thread", 1, runBatch().scored)
+        assertEquals("6.0 kept them as one thread", 1, runBatch().scored)
         val r = import(bytes)
         assertEquals(ImportResult.OK, r.result); assertEquals(0, r.messages); assertEquals(4, count("risk_store"))
         assertEquals(2, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
@@ -292,7 +292,7 @@ class InstagramImportTest {
     }
     /** The child's report rows: (label, score rounded). */
     private fun rows() = FamilyEvidence(ctx).use { it.riskReportRows(scope, System.currentTimeMillis()) }.map { it.label to it.score?.let { s -> Math.round(s).toDouble() } }
-    /** What 6.0.1 stored for an import: the thread keyed by the other person's name, the id by the time exactly as the file wrote it. */
+    /** What 6.0 stored for an import: the thread keyed by the other person's name, the id by the time exactly as the file wrote it. */
     private fun storeAs601(bytes: ByteArray, name: String) {
         val parsed = InstagramExport.parse(ByteArrayInputStream(bytes), name, teen, ExportLimits())
         val now = System.currentTimeMillis()
@@ -315,7 +315,7 @@ class InstagramImportTest {
         val fixed = System.currentTimeMillis()
         val newer = listOf(M(friend, "one more thing", 0)) + chat
         val expected = listOf("child: hi Bea", "other: did you finish the maths?", "child: ok, bring the notes", "other: see you tomorrow", "other: one more thing")
-        // A zip after a 6.0.1 import of the same chat (plus an older message the new export does not hold) that was already scored.
+        // A zip after a 6.0 import of the same chat (plus an older message the new export does not hold) that was already scored.
         val older = M(friend, "an older note", 30)
         storeAs601(json(chat + older, now = fixed).toByteArray(), "message_1.json")
         assertEquals(1, runBatch().scored); assertEquals(listOf(friend to 100.0), rows())
@@ -335,7 +335,7 @@ class InstagramImportTest {
         // The same export again changes nothing.
         assertEquals(0, import(export).messages); assertEquals(6, count("risk_store")); assertEquals(1, count("risk_results"))
         assertEquals("nothing else is due", 0, runBatch().scored); assertEquals(listOf(friend to 100.0), rows())
-        // A lone HTML file after a 6.0.1 import of the same file, not yet scored.
+        // A lone HTML file after a 6.0 import of the same file, not yet scored.
         FamilyEvidence(ctx).use { it.wipeRisk() }
         storeAs601(html(chat, fixed).toByteArray(), "message_1.html")
         val h = import(html(newer, fixed).toByteArray(), "message_1.html")

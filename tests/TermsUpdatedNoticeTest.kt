@@ -52,7 +52,7 @@ class TermsUpdatedNoticeTest {
         val second=Robolectric.buildActivity(MainActivity::class.java).setup()
         try { assertFalse("shown only once",dialogTexts().any{it.contains("條款已更新")||it.contains("使用條款已更新")}) } finally {second.pause().stop().destroy()}
     }
-    /** The real 6.0.2 upgrade: a receipt for 6.0/6.0.1's revision gets the notice once and is never asked to consent again. */
+    /** The real 6.0.2 upgrade: a receipt for 6.0's revision gets the notice once and is never asked to consent again. */
     @Test fun v8ReceiptShowsTheNoticeOnceWithoutNewConsent() {
         acceptOlderRevision("2026-11-24-v8")
         assertNotEquals("2026-11-24-v8",AppConsent.VERSION)
