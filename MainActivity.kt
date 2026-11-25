@@ -2165,6 +2165,9 @@ object GuardEngine {
                 if (newToken.isNotEmpty()) {
                     setFamilyToken(ctx, newToken, preserveFamilyHistory = true)
                     storeChildVerifier(ctx, newPin)
+                    // The waiting records moved to the new room (FamilyEvidence.rotate): send them now, not at the next trigger.
+                    // Only starts the delivery thread; its relay I/O runs outside pollLock (held here, re-entrant).
+                    retryPendingAlerts(ctx)
                     addCheckpointLog(ctx, "CP4-KEY", "已自動更新為新的家長家庭金鑰")
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }

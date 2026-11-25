@@ -154,4 +154,24 @@ class CommandLifetimeTest {
         assertEquals("child clock 3 minutes behind", RelayConsumption.REJECTED, deliver(record(reset(-3 * 60_000L))))
         assertEquals(current, token); assertEquals("child", role)
     }
+
+    // ---------------- the child's queued records after a rotation ----------------
+    /** The child's waiting records move to the new token's room with the rotation and must be sent at once, not at the next trigger. */
+    @Test fun theChildSendsItsMovedRecordsRightAfterTheRotation() {
+        val workers = java.util.concurrent.LinkedBlockingQueue<Long>()
+        GuardEngine.beforeDeliveryWorkerEndsForTest = { workers.add(System.currentTimeMillis()) }
+        try {
+            QrPairing.pairChild(ctx, parent)
+            GuardEngine.sendAlertFromChild(ctx, "test_alert", "測試", "test", bypassDedupe = true)
+            while (workers.poll(2, java.util.concurrent.TimeUnit.SECONDS) != null) { }   // the pairing's own deliveries have ended
+            val oldScope = GuardEngine.getChannelTopic(ctx)
+            assertTrue("records wait (no relay in tests)", FamilyEvidence(ctx).use { it.pendingCount(oldScope) } > 0)
+            val next = UUID.randomUUID().toString()
+            assertEquals(RelayConsumption.CONSUMED, deliver(record(rotation(60_000L, next))))
+            val newScope = GuardEngine.getChannelTopicForToken(next)
+            assertEquals(0, FamilyEvidence(ctx).use { it.pendingCount(oldScope) })
+            assertTrue("moved to the new room", FamilyEvidence(ctx).use { it.pendingCount(newScope) } > 0)
+            assertNotNull("a delivery ran for the moved records without another trigger", workers.poll(10, java.util.concurrent.TimeUnit.SECONDS))
+        } finally { GuardEngine.beforeDeliveryWorkerEndsForTest = null }
+    }
 }
