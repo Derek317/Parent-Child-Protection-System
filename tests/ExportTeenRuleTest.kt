@@ -36,15 +36,18 @@ class ExportTeenRuleTest {
     }
     private fun parse(bytes: ByteArray, name: String, child: String? = null) = InstagramExport.parse(ByteArrayInputStream(bytes), name, child, ExportLimits())
 
-    @Test fun aThreadTheTeenNeverAnsweredDoesNotEmptyTheCommonParticipant() {
+    @Test fun aThreadTheTeenNeverAnsweredIsAOneToOneChatOfIncomingMessages() {
         val export = zip(
             "inbox/bea_1/message_1.html" to html(Triple("Bea Friend", "hello", 1), Triple(teen, "hi Bea", 2)),
             "inbox/cal_2/message_1.html" to html(Triple("Cal Pal", "ready?", 3), Triple(teen, "yes", 4)),
-            "inbox/stranger_3/message_1.html" to html(Triple("Some Stranger", "hey you", 5)))   // the teen never answered: one person only
+            "inbox/stranger_3/message_1.html" to html(Triple("Some Stranger", "hey you", 5), Triple("Some Stranger", "answer me", 4)))   // the teen never answered: one person only
         val p = parse(export, "export.zip")
-        assertEquals(ImportResult.OK, p.result)
-        assertEquals(setOf("Bea Friend", "Cal Pal"), p.conversations.map { it.label }.toSet())
-        assertTrue(p.conversations.all { c -> c.messages.any { it.outgoing } }); assertEquals(1, p.groups)
+        assertEquals(ImportResult.OK, p.result); assertEquals(0, p.groups)
+        assertEquals(setOf("Bea Friend", "Cal Pal", "Some Stranger"), p.conversations.map { it.label }.toSet())
+        assertEquals(listOf(false to "hey you", false to "answer me"), p.conversations.single { it.label == "Some Stranger" }.messages.map { it.outgoing to it.text })
+        assertTrue(p.conversations.filter { it.label != "Some Stranger" }.all { c -> c.messages.any { it.outgoing } })
+        // Without the teen known from the file, a lone sender may be the teen: it stays aside, as before.
+        assertEquals(1, parse(html(Triple("Some Stranger", "hey you", 5)).toByteArray(), "message_1.html", child = "alex.handle_99").groups)
     }
     @Test fun aGroupTheTeenNeverWroteInIsSkippedAndDoesNotHideTheTeen() {
         val bea = "inbox/bea_1/message_1.html" to html(Triple("Bea Friend", "hello", 1), Triple(teen, "hi Bea", 2))

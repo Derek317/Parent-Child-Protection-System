@@ -327,8 +327,10 @@ internal object InstagramExport {
                 c.people.size == 2 && global == null -> throw Failure(ImportResult.TEEN_UNKNOWN)
                 else -> null   // with the teen known, a thread without them is one they never wrote in
             }
-            if (c.people.size != 2 || teen == null) { groupKeys.add("group:" + c.people.keys.sorted().joinToString("|")); continue }
-            val other = c.people.keys.first { it != teen }
+            // One other person: a one-to-one chat, all incoming if the teen never answered. A lone sender with the teen unknown may be the teen.
+            val others = c.people.keys.filter { it != teen }
+            if (others.size != 1 || (teen == null && global == null)) { groupKeys.add("group:" + c.people.keys.sorted().joinToString("|")); continue }
+            val other = others.single()
             val label = c.people.getValue(other)
             val messages = c.ordered.map { ExportMessage(key(it.sender) == teen, it.text, it.ts, it.timeKey) }
             result.add(ExportConversation(label, key(label), messages))
