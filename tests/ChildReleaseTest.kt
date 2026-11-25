@@ -192,11 +192,34 @@ class ChildReleaseTest {
     // ---- third review: "not sent" must be true ----
     @Test fun aResetThatWasNotAcceptedIsNotLeftQueuedToUnprotectTheChildLater() {
         val topic=GuardEngine.getChannelTopic(ctx)
-        val outcome=GuardEngine.releaseChildBeforeLeaving(ctx,200)   // relay unreachable in tests
+        // As the UI calls it (background thread). The relay is unreachable in tests, so the publish fails within the wait.
+        var outcome:GuardEngine.ReleaseOutcome?=null
+        kotlin.concurrent.thread{outcome=GuardEngine.releaseChildBeforeLeaving(ctx,10_000)}.join()
         assertEquals(GuardEngine.ReleaseOutcome.NOT_SENT,outcome)
         assertEquals("nothing may remain queued for a reset reported as not sent",0,FamilyEvidence(ctx).use{it.pendingCount(topic)})
         GuardEngine.retryPendingAlerts(ctx,true)   // a later reconnect has nothing to deliver
         assertTrue(pendingWires(topic).isEmpty())
         assertEquals(0,FamilyEvidence(ctx).use{it.pendingCount(topic)})
+    }
+    /** A publish can take up to 16 s: when the wait ends first, the frame may already be with the relay. */
+    @Test fun aResetStillInFlightAtTheTimeoutIsReportedSentNotConfirmedAndStaysQueued() {
+        val topic=GuardEngine.getChannelTopic(ctx)
+        val publishing=java.util.concurrent.CountDownLatch(1)
+        GuardEngine.beforeDeliveryWorkerEndsForTest={publishing.await(20,java.util.concurrent.TimeUnit.SECONDS)}   // the publish is still running
+        try {
+            var outcome:GuardEngine.ReleaseOutcome?=null
+            kotlin.concurrent.thread{outcome=GuardEngine.releaseChildBeforeLeaving(ctx,300)}.join()
+            assertEquals("never \"not sent\" while the reset may be on its way","SENT_UNCONFIRMED",outcome!!.name)
+            assertTrue("the reset stays queued, so \"sent, not confirmed\" stays true",FamilyEvidence(ctx).use{it.pendingCount(topic)}>0)
+        } finally {publishing.countDown();GuardEngine.beforeDeliveryWorkerEndsForTest=null}
+    }
+    @Test fun anUnconfirmedResetSaysTheChildMayBeReleasedInBothLanguages() {
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            openLeaveSheetWith(GuardEngine.ReleaseOutcome.valueOf("SENT_UNCONFIRMED"),a)
+            assertTrue(texts().any{it.contains("可能已送出")&&it.contains("may have been sent")})
+            assertFalse(texts().any{it.contains("未能送出")})
+            assertNull("no plain Cancel: the child may already be released",button("取消"))
+        } finally {c.pause().stop().destroy()}
     }
 }

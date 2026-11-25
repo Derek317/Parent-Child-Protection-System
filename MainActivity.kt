@@ -947,7 +947,8 @@ object GuardEngine {
      */
     /** Outbox scope and event id of the most recent signed reset, so a reset reported as not sent can really be withdrawn. */
     @Volatile private var lastResetEvent: Pair<String, String>? = null
-    enum class ReleaseOutcome { SENT, SENT_UNSURE, NOT_SENT }
+    /** SENT_UNCONFIRMED: no answer within the wait; the reset stays queued and may already be with the relay. */
+    enum class ReleaseOutcome { SENT, SENT_UNSURE, SENT_UNCONFIRMED, NOT_SENT }
     /** Test hook replacing the relay round trip of [releaseChildBeforeLeaving]. */
     @Volatile internal var releaseOverride: ((Context, Long) -> ReleaseOutcome)? = null
     /** During a pending key rotation the reset is posted to the new token only; a child still on the old token will not get it. */
@@ -979,6 +980,9 @@ object GuardEngine {
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
             try { done.await(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
+        // No answer yet: the frame may already be on the socket (a publish takes up to 16 s). Never "not sent", and the reset stays
+        // queued so "sent, not confirmed" holds whichever way the publish ends.
+        if (done.count > 0L) return ReleaseOutcome.SENT_UNCONFIRMED
         val outcome = classifyRelease(ctx, accepted)
         if (outcome == ReleaseOutcome.NOT_SENT) {
             // "Not sent" must be true: the signed reset would otherwise keep retrying and could unprotect the child later.
@@ -5537,6 +5541,7 @@ class MainActivity : Activity() {
                         when (outcome) {
                             GuardEngine.ReleaseOutcome.SENT -> finished("解除指令已送到中繼站；子女手機開啟並連線後會變成未設定狀態。這不代表子女手機已確認；若它沒有解除，請在子女手機輸入上面的主密碼。若你留在家長身份，之後須用邀請重新配對子女手機。", true)
                             GuardEngine.ReleaseOutcome.SENT_UNSURE -> finished("解除指令已送出，但此手機正在更新金鑰，子女手機可能沒有收到。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。若子女手機收到了，它會變成未設定狀態，須用邀請重新配對。", true)
+                            GuardEngine.ReleaseOutcome.SENT_UNCONFIRMED -> finished("解除指令可能已送出，但未獲中繼站確認：子女手機之後連線時可能會變成未設定狀態，也可能仍受保護。請記下上面的主密碼；若子女手機沒有解除，請在子女手機輸入它。 / The release may have been sent, but the relay did not confirm it: the child phone may become unconfigured when it next connects, or may still be protected. Note the master password above; if the child phone is not released, enter it on the child phone.", true)
                             GuardEngine.ReleaseOutcome.NOT_SENT -> finished("解除指令未能送出，子女手機仍受保護。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。", false)
                         }
                     }
