@@ -48,4 +48,22 @@ class FamilySecurityTest {
         val unlock=command("unlock_code").put("code","234ABC").put("exp",now+15*60_000)
         assertNotNull(FamilySecurity.readCommand(FamilySecurity.signCommand(unlock,parent.privateKey),parent.publicKey,"family-channel-a",now))
     }
+    private val day=86_400_000L
+    /** A key rotation lives as long as the parent's outbox (3 days) and then the relay (7 days) can hand it to an offline child. */
+    @Test fun aKeyRotationLivesAsLongAsTheOutboxAndTheRelayHoldIt() {
+        val parent=FamilySecurity.newSigningIdentity()
+        fun read(c:JSONObject)=FamilySecurity.readCommand(FamilySecurity.signCommand(c,parent.privateKey),parent.publicKey,"family-channel-a",now)
+        fun rotation(age:Long)=command("key_rotated").put("new_token",UUID.randomUUID().toString())
+            .put("new_pin",FamilySecurity.passwordVerifier("ParentPassword928!")).put("ts_ms",now-age)
+        assertNotNull("10 days old",read(rotation(10*day)))
+        assertNull("older",read(rotation(10*day+1)))
+        assertNotNull("ordinary commands keep 24 hours",read(command().put("ts_ms",now-day)))
+        assertNull(read(command().put("ts_ms",now-day-1)))
+    }
+    /** The 10 days above are the relay's packet TTL plus the parent outbox's PENDING_TTL: a change to either must be seen here. */
+    @Test fun theTenDaysAreTheRelayTtlPlusTheOutboxTtl() {
+        val root=java.io.File(requireNotNull(System.getProperty("igguard.protocol.vector")){"igguard.protocol.vector is not set"}).parentFile.resolve("../..").canonicalFile
+        assertTrue("relay TTL is 7 days",Regex("const TTL = 7 \\* 24 \\* 60 \\* 60 \\* 1000;").containsMatchIn(root.resolve("relay/src/worker.js").readText()))
+        assertTrue("outbox PENDING_TTL is 3 days",Regex("PENDING_TTL=3\\*DAY").containsMatchIn(root.resolve("FamilyEvidence.kt").readText()))
+    }
 }

@@ -2073,14 +2073,17 @@ object GuardEngine {
         if (verified == null && msgType in FamilySecurity.controlTypes) {
             val state = try { JSONObject(prefs(ctx).getString("control_state_json", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
             val ids = state.optJSONObject("ids") ?: JSONObject().also { state.put("ids", it) }
+            // Ids of commands accepted for days (FamilySecurity.relayedCommandTypes) are kept as long as they can be accepted.
+            val relayedIds = state.optJSONObject("relayed_ids") ?: JSONObject().also { state.put("relayed_ids", it) }
             val id = inner.getString("command_id")
-            if (ids.has(id)) {
+            if (ids.has(id) || relayedIds.has(id)) {
                 if(controlId.isNotEmpty())FamilyEvidence(ctx).use{it.controlConsumed(getChannelTopicForToken(token),controlId)}
                 return RelayConsumption.CONSUMED
             }
             if (msgType != "alert_receipt" && msgTs < state.optLong(msgType)) return RelayConsumption.REJECTED
             for (key in ids.keys().asSequence().toList()) if (ids.optLong(key) < System.currentTimeMillis() - 24 * 60 * 60_000L) ids.remove(key)
-            ids.put(id, msgTs); state.put(msgType, msgTs)
+            for (key in relayedIds.keys().asSequence().toList()) if (relayedIds.optLong(key) < System.currentTimeMillis() - FamilySecurity.RELAYED_COMMAND_LIFETIME_MS) relayedIds.remove(key)
+            (if (msgType in FamilySecurity.relayedCommandTypes) relayedIds else ids).put(id, msgTs); state.put(msgType, msgTs)
             committedControlState=state.toString()
         }
 
