@@ -1,12 +1,15 @@
 # Changelog
 
-## 6.0.1 — documented 25 November 2026 (Hong Kong)
+## 6.0.2 — documented 26 November 2026 (Hong Kong)
 
-Version 6.0.1 fixes one timing flaw in 6.0 and changes nothing else in the app. Full notes: [6.0.1 release notes](docs/releases/6.0.1.md). Version code: 100 plus the GitHub Actions run number of the release run; the installed app shows it. Terms revision unchanged, `2026-11-24-v8`.
+Version 6.0.2 fixes twelve problems found in an audit of 6.0 and one delivery timing flaw. Full notes, with what is not fixed and what was not tested: [6.0.2 release notes](docs/releases/6.0.2.md). Version code: 100 plus the GitHub Actions run number of the release run; the installed app shows it. Terms revision `2026-11-26-v9` (one sentence corrected in each language; existing users see the one-time notice, no new consent). No version 6.0.1 was released; its one fix is part of 6.0.2.
 
-- Fixed: right after a pairing, key rotation or reset, a record queued for the new family (for example the parent's pairing message) could stay unsent until a later trigger, usually within a minute, up to about 15 minutes on a child phone with both Android permissions off. Nothing was lost and no protection was affected. A request to send made right after queueing a record, which finds a send running, is now carried out once when that send ends. Not changed: records a child phone had waiting when it accepts a key rotation still go out at the next regular check.
-- Tests and build only: the Android test jars come through Gradle from Google's Maven Central mirror with pinned SHA-512 values; a failed test prints its message; one test no longer fails by chance on sealed text; a new test reproduces the timing flaw.
-- Tested: 938 unit tests, 1 known failure on the Windows development PC only, also with the tests limited to two processor cores; lint 0 errors; the new tests fail without the fix. Two earlier forms of the fix were dropped; with the first, one GitHub run hung in the test step and was cancelled, and that hang was not reproduced on the PC. Not tested: the flaw was never seen on a real phone, so the fix has no before-and-after check on hardware.
+- Import: the teen is told from the export's folder names; a chat the teen never answered is scored; a silent group no longer stops an import; messages older than 14 days are dropped while reading; conversations are identified by Instagram's own thread number; a repeated import keeps one conversation and the higher score.
+- Keys and delivery: a key rotation and a release or remote reset stay valid for up to 10 days; a release is never reported as "not sent" once it reached the connection; a child clock set ahead and back no longer blocks later records; a record queued while an older send was ending is sent when that send ends.
+- Relay: a daily limit on new record ids per phone, and an index on the lifetime table.
+- Scoring: a chat whose scoring fails once is tried again at the next run.
+- Build: the app's tests run in their own job without secrets, before the relay deploy and the signing job.
+- Tested: 981 unit tests on the Windows development PC; 1 failed there, the known `RelayOutboxTest > concurrentFirstOpenCannotRaceDatabaseCreation`, which fails only on that PC. Lint reported 0 errors.
 
 ## 6.0 — documented 24 November 2026 (Hong Kong)
 
