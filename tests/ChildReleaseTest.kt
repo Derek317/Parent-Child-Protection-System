@@ -293,4 +293,18 @@ class ChildReleaseTest {
             assertFalse(result!!.accepted);assertEquals(mode,written,result!!.written)
         }
     }
+
+    // ---- the remote reset toast and the pairing wording ----
+    @Test fun theRemoteResetToastSaysItCanTakeUpToTenDaysInBothLanguages() {
+        withRelay("accept"){_->
+            val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+            try {
+                call(a,"sendParentCommand",true);idle();answer(a)
+                waitFor("the sent toast"){org.robolectric.shadows.ShadowToast.getTextOfLatestToast()?.contains("指令已發送")==true}
+                val text=org.robolectric.shadows.ShadowToast.getTextOfLatestToast()
+                assertTrue(text,text.contains("10 天")&&text.contains("受監察")&&text.contains("up to 10 days")&&text.contains("monitored"))
+                assertTrue("Chinese first",text.indexOf("10 天")<text.indexOf("up to 10 days"))
+            } finally {c.pause().stop().destroy()}
+        }
+    }
 }

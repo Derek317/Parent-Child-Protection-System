@@ -951,6 +951,12 @@ object GuardEngine {
     @Volatile private var lastResetWritten: Pair<String, String>? = null
     /** SENT_UNCONFIRMED: no answer within the wait; the reset stays queued and may already be with the relay. */
     enum class ReleaseOutcome { SENT, SENT_UNSURE, SENT_UNCONFIRMED, NOT_SENT }
+    /** With a sent release (Chinese, English): the outbox and the relay hold it this long for a child that stays offline. */
+    fun releaseDelayNotice(): Pair<String, String> {
+        val days = FamilySecurity.RELAYED_COMMAND_LIFETIME_MS / 86_400_000L
+        return "子女手機會在下次連線時解除，最長可能需要 $days 天；在此之前，子女手機本身的畫面仍會顯示受監察。" to
+            "The child phone is released when it next comes online, which can take up to $days days; until then its own screen still shows that it is monitored."
+    }
     /** Test hook replacing the relay round trip of [releaseChildBeforeLeaving]. */
     @Volatile internal var releaseOverride: ((Context, Long) -> ReleaseOutcome)? = null
     /** During a pending key rotation the reset is posted to the new token only; a child still on the old token will not get it. */
@@ -5546,10 +5552,7 @@ class MainActivity : Activity() {
                     val outcome = GuardEngine.releaseChildBeforeLeaving(this@MainActivity, 8_000L, purgeFamily)
                     runOnUiThread {
                         if (isDestroyed) return@runOnUiThread
-                        // The relay and the parent's outbox together hold the release this long for a child that stays offline.
-                        val days = FamilySecurity.RELAYED_COMMAND_LIFETIME_MS / 86_400_000L
-                        val late = "子女手機會在下次連線時解除，最長可能需要 $days 天；在此之前，子女手機本身的畫面仍會顯示受監察。"
-                        val lateEn = "The child phone is released when it next comes online, which can take up to $days days; until then its own screen still shows that it is monitored."
+                        val (late, lateEn) = GuardEngine.releaseDelayNotice()
                         when (outcome) {
                             GuardEngine.ReleaseOutcome.SENT -> finished("解除指令已送到中繼站；子女手機開啟並連線後會變成未設定狀態。這不代表子女手機已確認；若它沒有解除，請在子女手機輸入上面的主密碼。若你留在家長身份，之後須用邀請重新配對子女手機。$late / The release reached the relay; the child phone becomes unconfigured once it is on and connected. This does not mean the child phone confirmed it; if it is not released, enter the master password above on the child phone. If you stay a parent, you must pair the child phone again with an invite later. $lateEn", true)
                             GuardEngine.ReleaseOutcome.SENT_UNSURE -> finished("解除指令已送出，但此手機正在更新金鑰，子女手機可能沒有收到。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。若子女手機收到了，它會變成未設定狀態，須用邀請重新配對。", true)
@@ -5608,7 +5611,9 @@ class MainActivity : Activity() {
         GuardEngine.rotateKeyAndNotifyChild(this, resetChild) { success ->
             uiHandler.post {
                 if (!activityVisible || !GuardEngine.isParentMode(this)) return@post
-                Toast.makeText(this, if (success) "指令已發送，請等待子女手機確認。" else "未能發送，保留目前配對。請查看診斷後重試。", Toast.LENGTH_LONG).show()
+                val sent = if (!resetChild) "指令已發送，請等待子女手機確認。"
+                    else GuardEngine.releaseDelayNotice().let { (zh, en) -> "指令已發送，請等待子女手機確認。$zh / The command was sent; wait for the child phone to confirm. $en" }
+                Toast.makeText(this, if (success) sent else "未能發送，保留目前配對。請查看診斷後重試。", Toast.LENGTH_LONG).show()
                 renderUi()
             }
         }
