@@ -65,7 +65,7 @@ This wording informs the user. It does not by itself transfer the developer's ow
 
 ## Security requirements for the import
 
-- Treat the file as hostile input: cap the number of entries read, the size of each entry and the total bytes read; reject path traversal in zip entry names; never write entries to disk; never execute or render HTML.
+- Treat the file as hostile input: cap the number of entries read, the size of each entry and the total bytes read; drop messages older than the 14-day window while reading, and count toward the total cap on message files only what is kept (a file whose messages are all older counts only its names); reject path traversal in zip entry names; never write entries to disk; never execute or render HTML.
 - Parse with bounded memory; a malformed or oversized file must fail with a plain message and store nothing from that file.
 - Text from the file reaches only the encrypted store and the on-phone model. It is never logged, never sent to the relay and never sent to the parent.
 

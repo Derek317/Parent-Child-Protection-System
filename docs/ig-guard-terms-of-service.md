@@ -1,7 +1,7 @@
 # IG Guard 使用條款 / Terms of Service
 
-更新 / Updated: 24 November 2026（香港 / Hong Kong）
-條款修訂 / Terms revision: 2026-11-24-v8
+更新 / Updated: 26 November 2026（香港 / Hong Kong）
+條款修訂 / Terms revision: 2026-11-26-v9
 營運 / Operator: Safe Guard — ppefyp2026@gmail.com
 
 ## 繁體中文
@@ -79,7 +79,7 @@
 
 **相機。** 子女手機只在掃描畫面為讀取 QR 碼才請求相機權限。影像只在記憶體中處理，不儲存，不傳送。父母手機不請求相機權限。
 
-**仍然沒有保護的情況。** 已 root 或已被入侵的子女手機仍可使用其金鑰。父母若配對了並非子女本人使用的裝置，或子女掃描了陌生人的 QR 碼，此機制不能防止。子女解除安裝 App 時，父母只會看到心跳缺失。中繼資料仍然可見。如子女手機時鐘調快，而惡意中繼站扣起一則已簽署的心跳，該心跳其後最多可延遲24小時仍被視為最新。App 不能證明金鑰存放於防篡改硬件。此機制不保證沒有漏洞，亦不保證偵測到所有偽造；詳見儲存庫的 docs/security-review.md。心跳亦註明子女手機最新一份分數報告的發送時間；如該報告比心跳早超過 60 分鐘仍未送達父母手機，亦會顯示同一提醒。其他控制記錄（例如擷取確認）不等待父母手機確認收妥，未送達提醒不涵蓋它們。分成多個部分傳送的分數報告，各部分的發送時間相同；如較早的部分已送達，之後遺失的部分不會引起提醒。如子女手機的時鐘曾調快後再調回，其心跳在時鐘回到較早時間之前不會用於此提醒；心跳缺失的提醒不受影響。
+**仍然沒有保護的情況。** 已 root 或已被入侵的子女手機仍可使用其金鑰。父母若配對了並非子女本人使用的裝置，或子女掃描了陌生人的 QR 碼，此機制不能防止。子女解除安裝 App 時，父母只會看到心跳缺失。中繼資料仍然可見。如子女手機時鐘調快，而惡意中繼站扣起一則已簽署的心跳，該心跳其後最多可延遲24小時仍被視為最新。App 不能證明金鑰存放於防篡改硬件。此機制不保證沒有漏洞，亦不保證偵測到所有偽造；詳見儲存庫的 docs/security-review.md。心跳亦註明子女手機最新一份分數報告的發送時間；如該報告比心跳早超過 60 分鐘仍未送達父母手機，亦會顯示同一提醒。其他控制記錄（例如擷取確認）不等待父母手機確認收妥，未送達提醒不涵蓋它們。分成多個部分傳送的分數報告，各部分的發送時間相同；如較早的部分已送達，之後遺失的部分不會引起提醒。如子女手機的時鐘曾調快後再調回，時鐘調回後此提醒會繼續運作，因為父母手機記錄的心跳時間不會晚於其本身的現在時間；心跳缺失的提醒不受影響。
 
 ### 3. 加密及保留
 
@@ -188,7 +188,7 @@ The model can be wrong in both directions. It cannot reliably tell sexual conver
 
 **Camera.** The child phone asks for camera permission only on the scan screen, only to read the QR code. Frames are processed in memory; no image is stored or sent. The parent phone does not ask for camera permission.
 
-**What is still not protected.** A rooted or compromised child phone can still use its key. This does not prevent a parent pairing a device that is not really the child's phone, or a child scanning a stranger's QR code. If the child uninstalls the app, the parent only sees missing heartbeats. Relay metadata remains visible. If a child phone's clock is set ahead and a hostile relay holds a signed heartbeat back, that heartbeat can count as fresh later by at most 24 hours. The app cannot prove that the key sits in tamper-resistant hardware. This mechanism does not promise that the app is free of vulnerabilities or that every forgery is detected; see docs/security-review.md in the repository. Scores reports also wait for the parent phone's receipt and are counted the same way. Other control records (such as capture acknowledgements) do not wait for the parent phone's receipt, so the notice does not cover them. If the child phone's clock was set ahead and then set back, its heartbeats are not used for this notice until its clock passes the earlier time; the missing-heartbeat alert is not affected.
+**What is still not protected.** A rooted or compromised child phone can still use its key. This does not prevent a parent pairing a device that is not really the child's phone, or a child scanning a stranger's QR code. If the child uninstalls the app, the parent only sees missing heartbeats. Relay metadata remains visible. If a child phone's clock is set ahead and a hostile relay holds a signed heartbeat back, that heartbeat can count as fresh later by at most 24 hours. The app cannot prove that the key sits in tamper-resistant hardware. This mechanism does not promise that the app is free of vulnerabilities or that every forgery is detected; see docs/security-review.md in the repository. Scores reports also wait for the parent phone's receipt and are counted the same way. Other control records (such as capture acknowledgements) do not wait for the parent phone's receipt, so the notice does not cover them. If the child phone's clock was set ahead and then set back, this notice goes on working once the clock is back, because the parent phone never records a heartbeat's time as later than its own present time; the missing-heartbeat alert is not affected.
 
 ### 3. Encryption and retention
 
