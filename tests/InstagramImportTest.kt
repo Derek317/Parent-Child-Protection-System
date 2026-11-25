@@ -211,6 +211,23 @@ class InstagramImportTest {
         val report = outbox().filter { it.optBoolean("relay_control") }.map { it.getJSONObject("envelope") }.filter { it.optString("type") == "scores_mode_report" }.maxByOrNull { it.getLong("sent_at_ms") }!!
         assertEquals("the parent sees the name once", 1, report.getJSONArray("conversations").length())
     }
+    @Test fun anUnscoredAttemptAfterAnOverlappingImportDoesNotEraseTheScore() {
+        activate(ScoresMethod.UPLOAD)
+        val fixed = System.currentTimeMillis()
+        fun export(vararg extra: M) = zip("inbox/sam_111/message_1.json" to json(extra.toList() + listOf(M("Sam", "hello", 3), M(teen, "hi", 4)), listOf("Sam", teen), fixed).toByteArray())
+        assertEquals(2, import(export()).messages)
+        assertEquals(1, runBatch().scored); assertEquals(listOf("Sam" to 100.0), rows())
+        // An overlapping import marks the thread; the attempt that follows gives no score (needs review).
+        assertEquals(1, import(export(M("Sam", "more", 2))).messages)
+        runBatch(FakeScorer({ FakeScorer.UNSURE }))
+        assertEquals("the earlier score stands and is still reported", listOf("Sam" to 100.0), rows())
+        assertEquals("the unscored attempt joins it", 2, count("risk_results"))
+        assertEquals("not due again until new messages", 0, runBatch().scored)
+        // The mark stays: the next result with a score, after new messages, replaces the earlier ones.
+        assertEquals(1, import(export(M("Sam", "and more", 1), M("Sam", "more", 2))).messages)
+        assertEquals(1, runBatch(FakeScorer({ FakeScorer.LOW })).scored)
+        assertEquals(listOf("Sam" to 0.0), rows()); assertEquals(1, count("risk_results"))
+    }
     @Test fun aConversationIsKeyedByItsThreadNumberSoANewNameIsTheSameThread() {
         activate(ScoresMethod.UPLOAD)
         val fixed = System.currentTimeMillis()

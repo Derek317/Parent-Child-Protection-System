@@ -596,8 +596,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     }
     /**
      * Child, import (caller's transaction): [threadKey] got messages from an overlapping import, so its next result replaces its
-     * earlier ones (see [saveRiskResult]) instead of joining them. Until then the earlier score stands. The mark is scored_seq -1:
-     * the thread is due (it is anyway, it has new messages) and no schema change is needed.
+     * earlier ones (see [saveRiskResult]) instead of joining them. Until then the earlier score stands. The mark is a negative
+     * scored_seq (no schema change): -1 here, so the thread is due (it is anyway, it has new messages); due-ness reads its absolute value.
      */
     fun rescoreRiskThread(scope:String,threadKey:String) {
         writableDatabase.execSQL("UPDATE risk_threads SET scored_seq=-1 WHERE scope=? AND thread_index=?",arrayOf(scope,index(scope,"conversation",threadKey)))
@@ -609,7 +609,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     fun riskUnknownCount(scope:String,now:Long):Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM risk_unknown WHERE scope=? AND seen_at>=?",arrayOf(scope,(now-RiskLimits.DAYS*DAY).toString())).use{it.moveToFirst();it.getInt(0)}
     /** Child: threads whose newest stored message is newer than the last scored one. */
     fun riskDueThreads(scope:String):List<Pair<String,Long>> = readableDatabase.rawQuery(
-        "SELECT s.thread_index,MAX(s.seq) FROM risk_store s WHERE s.scope=? GROUP BY s.thread_index HAVING MAX(s.seq)>COALESCE((SELECT t.scored_seq FROM risk_threads t WHERE t.scope=s.scope AND t.thread_index=s.thread_index),0) ORDER BY MAX(s.seq)",arrayOf(scope)).use { c ->
+        "SELECT s.thread_index,MAX(s.seq) FROM risk_store s WHERE s.scope=? GROUP BY s.thread_index HAVING MAX(s.seq)>COALESCE((SELECT ABS(t.scored_seq) FROM risk_threads t WHERE t.scope=s.scope AND t.thread_index=s.thread_index),0) ORDER BY MAX(s.seq)",arrayOf(scope)).use { c ->
         buildList{while(c.moveToNext())add(c.getString(0) to c.getLong(1))}
     }
     /** Child: the newest [limit] messages of a thread, oldest first. */
@@ -626,13 +626,15 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 if(!it.moveToFirst()){return false}
                 open(scope,"risk_store",it.getString(0),"label",it.getString(1))
             }
-            // After an overlapping import the new result replaces the earlier ones, in this same transaction.
+            // After an overlapping import the next result with a score replaces the earlier ones, in this same transaction. A result
+            // without one erases nothing: it joins them, and the mark stays (as -seq: not due until new messages) for the next score.
             val rescore=db.rawQuery("SELECT scored_seq FROM risk_threads WHERE scope=? AND thread_index=?",arrayOf(scope,thread)).use{it.moveToFirst() && it.getLong(0)<0}
-            if(rescore)db.delete("risk_results","scope=? AND thread_index=?",arrayOf(scope,thread))
+            if(rescore && score!=null)db.delete("risk_results","scope=? AND thread_index=?",arrayOf(scope,thread))
+            val mark=if(rescore && score==null)-seq else seq
             db.insertOrThrow("risk_results",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);if(score!=null)put("score",score) else putNull("score");if(reason!=null)put("reason",reason) else putNull("reason");put("scored_at",now)})
             db.execSQL("DELETE FROM risk_results WHERE scope=? AND thread_index=? AND scored_at<?",arrayOf(scope,thread,(now-RiskLimits.DAYS*DAY).toString()))
-            db.insertWithOnConflict("risk_threads",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);put("label",seal(scope,"risk_threads",thread,"label",label));put("scored_seq",seq)},SQLiteDatabase.CONFLICT_IGNORE)
-            db.execSQL("UPDATE risk_threads SET scored_seq=?,label=? WHERE scope=? AND thread_index=?",arrayOf(seq,seal(scope,"risk_threads",thread,"label",label),scope,thread))
+            db.insertWithOnConflict("risk_threads",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);put("label",seal(scope,"risk_threads",thread,"label",label));put("scored_seq",mark)},SQLiteDatabase.CONFLICT_IGNORE)
+            db.execSQL("UPDATE risk_threads SET scored_seq=?,label=? WHERE scope=? AND thread_index=?",arrayOf(mark,seal(scope,"risk_threads",thread,"label",label),scope,thread))
             db.setTransactionSuccessful();return true
         }finally{db.endTransaction()}
     }
