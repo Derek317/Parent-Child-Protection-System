@@ -182,13 +182,13 @@ class ScoresModeParentTest {
         deliver(report(listOf(row("secretlabel", 61.375, System.currentTimeMillis() - 1000))))
         FamilyEvidence(ctx).use { db -> db.readableDatabase.rawQuery("SELECT label,result,label_index FROM risk_scores", null).use { c ->
             assertTrue(c.moveToFirst()); for (i in 0..2) assertFalse(c.getString(i).contains("secretlabel"))
-            // Sealed text is "igv1:" plus random base64, which can contain "61" by chance. So the clear score is looked for in
-            // full, and any clear form (the result is a JSON object) is ruled out by characters base64 never has.
+            // Sealed text is "igv1:" plus random base64, which can contain "61" by chance. A clear result (a JSON object or a
+            // number) is ruled out by the prefix and by characters base64 never has.
             val sealed = c.getString(1)
-            assertFalse(sealed.contains("61.375"))
-            assertTrue(sealed.startsWith("igv1:")); assertTrue(sealed.none { it in "{\".}" }); assertTrue(sealed.toDoubleOrNull() == null)
+            assertTrue(sealed.startsWith("igv1:")); assertTrue(sealed.none { it in "{\".}" })
         } }
-        assertFalse(ctx.getDatabasePath("family_evidence.db").readBytes().toString(Charsets.ISO_8859_1).contains("secretlabel"))
+        val file = ctx.getDatabasePath("family_evidence.db").readBytes().toString(Charsets.ISO_8859_1)
+        assertFalse(file.contains("secretlabel")); assertFalse(file.contains("61.375"))
     }
 
     // ---------- deletion rules ----------

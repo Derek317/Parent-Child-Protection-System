@@ -255,9 +255,9 @@ class TwoPhoneRelayTest {
         fun relayKey(frameId: String) = "c0" + MessageDigest.getInstance("SHA-256").digest(frameId.toByteArray()).joinToString("") { "%02x".format(it) }
         assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
         val token = GuardEngine.getOrCreateFamilyToken(ctx); val family = roomOf(token)
-        waitUntil("M3 at the relay", seen = { synchronized(relay) { " (published=${family.published.size})" } }) { synchronized(relay) { family.published.size == 1 } }
+        waitUntil("M3 at the relay", seen = { synchronized(relay) { " (published=${family.published.map { it.first }})" } }) { synchronized(relay) { family.published.size == 1 } }
         repeat(3) { GuardEngine.requestFullCapture(ctx) } // three signed capture_policy commands into the new room
-        waitUntil("the commands reached the new room", seen = { synchronized(relay) { " (published=${family.published.size}, child inbox=${family.inbox.getValue("child").size})" } }) { synchronized(relay) { family.published.size == 4 && family.inbox.getValue("child").size == 4 } }
+        waitUntil("the commands reached the new room", seen = { synchronized(relay) { " (published=${family.published.map { it.first }}, child inbox=${family.inbox.getValue("child").size})" } }) { synchronized(relay) { family.published.size == 4 && family.inbox.getValue("child").size == 4 } }
         val keys = synchronized(relay) { family.published.drop(1).map { relayKey(it.second) } }
         assertTrue(p.child.confirm())
         assertPaired(p)
@@ -284,7 +284,7 @@ class TwoPhoneRelayTest {
             val p = Phones(); p.upToDigits()
             assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
             val token = GuardEngine.getOrCreateFamilyToken(ctx); val family = roomOf(token)
-            waitUntil("M3 at the relay (force=$force)", seen = { synchronized(relay) { " (published=${family.published.size})" } }) { synchronized(relay) { family.published.size == 1 } }
+            waitUntil("M3 at the relay (force=$force)", seen = { synchronized(relay) { " (published=${family.published.map { it.first }})" } }) { synchronized(relay) { family.published.size == 1 } }
             assertTrue(GuardEngine.expireUnconfirmedChildPairing(ctx, if (force) System.currentTimeMillis() else System.currentTimeMillis() + Pairing.CONFIRM_WINDOW_MS, force))
             waitUntil("the new room is retired (force=$force)") { family.retired }
             val alias = TestKeyStore.privateKeys.keys.single { it.startsWith("ig_guard.child_signing") }
