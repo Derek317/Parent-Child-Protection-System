@@ -222,4 +222,18 @@ class ChildReleaseTest {
             assertNull("no plain Cancel: the child may already be released",button("取消"))
         } finally {c.pause().stop().destroy()}
     }
+    /** A sent or possibly sent release says it acts when the child next connects, up to 10 days, and the child still shows as monitored. */
+    @Test fun aSentReleaseSaysItCanTakeUpToTenDaysInBothLanguages() {
+        for (outcome in listOf(GuardEngine.ReleaseOutcome.SENT,GuardEngine.ReleaseOutcome.valueOf("SENT_UNCONFIRMED"))) {
+            prefs.edit().clear().commit();ctx.deleteDatabase("family_evidence.db");GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,secret)
+            val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+            try {
+                openLeaveSheetWith(outcome,a)
+                val text=texts().first{it.contains("解除指令")&&it.contains("中繼")&&it.contains("未設定")}
+                assertTrue(text,text.contains("下次連線")&&text.contains("10 天")&&text.contains("受監察"))
+                assertTrue(text,text.contains("next comes online")&&text.contains("up to 10 days")&&text.contains("monitored"))
+                assertTrue("the Chinese text comes first",text.indexOf("10 天")<text.indexOf("up to 10 days"))
+            } finally {c.pause().stop().destroy()}
+        }
+    }
 }

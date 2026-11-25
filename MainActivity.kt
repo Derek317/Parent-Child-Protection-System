@@ -5539,10 +5539,14 @@ class MainActivity : Activity() {
                     val outcome = GuardEngine.releaseChildBeforeLeaving(this@MainActivity, 8_000L, purgeFamily)
                     runOnUiThread {
                         if (isDestroyed) return@runOnUiThread
+                        // The relay and the parent's outbox together hold the release this long for a child that stays offline.
+                        val days = FamilySecurity.RELAYED_COMMAND_LIFETIME_MS / 86_400_000L
+                        val late = "子女手機會在下次連線時解除，最長可能需要 $days 天；在此之前，子女手機本身的畫面仍會顯示受監察。"
+                        val lateEn = "The child phone is released when it next comes online, which can take up to $days days; until then its own screen still shows that it is monitored."
                         when (outcome) {
-                            GuardEngine.ReleaseOutcome.SENT -> finished("解除指令已送到中繼站；子女手機開啟並連線後會變成未設定狀態。這不代表子女手機已確認；若它沒有解除，請在子女手機輸入上面的主密碼。若你留在家長身份，之後須用邀請重新配對子女手機。", true)
+                            GuardEngine.ReleaseOutcome.SENT -> finished("解除指令已送到中繼站；子女手機開啟並連線後會變成未設定狀態。這不代表子女手機已確認；若它沒有解除，請在子女手機輸入上面的主密碼。若你留在家長身份，之後須用邀請重新配對子女手機。$late / The release reached the relay; the child phone becomes unconfigured once it is on and connected. This does not mean the child phone confirmed it; if it is not released, enter the master password above on the child phone. If you stay a parent, you must pair the child phone again with an invite later. $lateEn", true)
                             GuardEngine.ReleaseOutcome.SENT_UNSURE -> finished("解除指令已送出，但此手機正在更新金鑰，子女手機可能沒有收到。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。若子女手機收到了，它會變成未設定狀態，須用邀請重新配對。", true)
-                            GuardEngine.ReleaseOutcome.SENT_UNCONFIRMED -> finished("解除指令可能已送出，但未獲中繼站確認：子女手機之後連線時可能會變成未設定狀態，也可能仍受保護。請記下上面的主密碼；若子女手機沒有解除，請在子女手機輸入它。 / The release may have been sent, but the relay did not confirm it: the child phone may become unconfigured when it next connects, or may still be protected. Note the master password above; if the child phone is not released, enter it on the child phone.", true)
+                            GuardEngine.ReleaseOutcome.SENT_UNCONFIRMED -> finished("解除指令可能已送出，但未獲中繼站確認：子女手機之後連線時可能會變成未設定狀態，也可能仍受保護。請記下上面的主密碼；若子女手機沒有解除，請在子女手機輸入它。$late / The release may have been sent, but the relay did not confirm it: the child phone may become unconfigured when it next connects, or may still be protected. Note the master password above; if the child phone is not released, enter it on the child phone. $lateEn", true)
                             GuardEngine.ReleaseOutcome.NOT_SENT -> finished("解除指令未能送出，子女手機仍受保護。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。", false)
                         }
                     }
