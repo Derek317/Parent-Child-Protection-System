@@ -61,10 +61,12 @@ class FamilySecurityTest {
         assertNotNull("ordinary commands keep 24 hours",read(command().put("ts_ms",now-day)))
         assertNull(read(command().put("ts_ms",now-day-1)))
     }
-    /** The 10 days above are the relay's packet TTL plus the parent outbox's PENDING_TTL: a change to either must be seen here. */
-    @Test fun theTenDaysAreTheRelayTtlPlusTheOutboxTtl() {
+    /** RELAYED_COMMAND_LIFETIME_MS is the parent outbox's PENDING_TTL plus the relay's packet TTL, read from their sources: if either
+     *  changes (or its form, so it can no longer be read here) without the constant following, this fails. */
+    @Test fun theRelayedLifetimeIsTheOutboxTtlPlusTheRelayTtl() {
         val root=java.io.File(requireNotNull(System.getProperty("igguard.protocol.vector")){"igguard.protocol.vector is not set"}).parentFile.resolve("../..").canonicalFile
-        assertTrue("relay TTL is 7 days",Regex("const TTL = 7 \\* 24 \\* 60 \\* 60 \\* 1000;").containsMatchIn(root.resolve("relay/src/worker.js").readText()))
-        assertTrue("outbox PENDING_TTL is 3 days",Regex("PENDING_TTL=3\\*DAY").containsMatchIn(root.resolve("FamilyEvidence.kt").readText()))
+        val relayDays=requireNotNull(Regex("""const TTL = (\d+) \* 24 \* 60 \* 60 \* 1000;""").find(root.resolve("relay/src/worker.js").readText())){"relay TTL not found"}.groupValues[1].toLong()
+        val outboxDays=requireNotNull(Regex("""PENDING_TTL=(\d+)\*DAY\b""").find(root.resolve("FamilyEvidence.kt").readText())){"PENDING_TTL not found"}.groupValues[1].toLong()
+        assertEquals("outbox $outboxDays d + relay $relayDays d",(outboxDays+relayDays)*day,FamilySecurity.RELAYED_COMMAND_LIFETIME_MS)
     }
 }
