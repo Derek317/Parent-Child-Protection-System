@@ -10,6 +10,11 @@ const WINDOW = 8;
 // class answered with a long retry would make the app close the socket and back off for hours.
 const DAY = 86_400_000;
 const DAILY_DATA_BUDGET = 2000;
+// New packet ids per sending role (parent, child) per UTC day, forwarded or buffered: each leaves a packet_lifetimes row for
+// TTL + REGISTRATION_TTL. Per role, so one phone can never spend the other's. A phone's data is refused once its new ids that
+// day reach 10 000; its alerts, receipts and controls are refused only at 30 000. A real family sends a few hundred a day.
+const DAILY_NEW_IDS = 30_000;
+const DAILY_NEW_DATA_IDS = 10_000;
 const ranks = { control: '0', receipt: '1', urgent: '2', data: '3' };
 const encoder = new TextEncoder();
 class AccessDenied extends Error {}
@@ -60,6 +65,7 @@ export class FamilyRoom extends DurableObject {
     if (present && !this.registering) {
       // Rooms registered before lifetimes existed have storage but not this table; a room with no storage still gets nothing.
       this.sql.exec('CREATE TABLE IF NOT EXISTS packet_lifetimes (id TEXT PRIMARY KEY, digest TEXT NOT NULL, kind TEXT NOT NULL, expires INTEGER NOT NULL) WITHOUT ROWID');
+      this.sql.exec('CREATE INDEX IF NOT EXISTS packet_lifetimes_expires ON packet_lifetimes(expires)');
       this.schemaReady = true;
     }
     return present;
@@ -69,6 +75,7 @@ export class FamilyRoom extends DurableObject {
     if (this.hasSchema()) return;
     this.sql.exec('CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID');
     this.sql.exec('CREATE TABLE IF NOT EXISTS packet_lifetimes (id TEXT PRIMARY KEY, digest TEXT NOT NULL, kind TEXT NOT NULL, expires INTEGER NOT NULL) WITHOUT ROWID');
+    this.sql.exec('CREATE INDEX IF NOT EXISTS packet_lifetimes_expires ON packet_lifetimes(expires)');
     for (const name of ['parent_inbox', 'child_inbox']) {
       // Primary-key order places controls before context without another write-amplifying index.
       this.sql.exec(`CREATE TABLE IF NOT EXISTS ${name} (id TEXT PRIMARY KEY, wire TEXT NOT NULL, digest TEXT NOT NULL, kind TEXT NOT NULL, expires INTEGER NOT NULL) WITHOUT ROWID`);
@@ -273,6 +280,7 @@ export class FamilyRoom extends DurableObject {
       if (existing) return;
       const peer = this.peer(role);
       if (packet.kind !== 'control' && peer) {
+        if (!this.spendBudget(role, packet.kind, false, !lifetime)) { budget = true; return; }
         if (!lifetime) this.sql.exec('INSERT INTO packet_lifetimes(id,digest,kind,expires) VALUES(?,?,?,?)', lifetimeId, bodyHash, packet.kind, Date.now() + TTL);
         send(peer, { type: 'message', id: key, delivery_id: crypto.randomUUID(), wire: packet.wire, digest: bodyHash, buffered: false });
         forwarded = true;
@@ -280,7 +288,7 @@ export class FamilyRoom extends DurableObject {
       }
       const count = this.sql.exec(`SELECT COUNT(*) AS n FROM ${inbox}`).one().n;
       if (count >= (packet.kind === 'data' ? MAX_QUEUE - 32 : MAX_QUEUE)) { full = true; return; }
-      if (packet.kind === 'data' && !this.spendBudget()) { budget = true; return; }
+      if (!this.spendBudget(role, packet.kind, packet.kind === 'data', !lifetime)) { budget = true; return; }
       if (!lifetime) {
         lifetime = { expires: Date.now() + TTL };
         this.sql.exec('INSERT INTO packet_lifetimes(id,digest,kind,expires) VALUES(?,?,?,?)', lifetimeId, bodyHash, packet.kind, lifetime.expires);
@@ -291,8 +299,8 @@ export class FamilyRoom extends DurableObject {
       send(socket, { type: 'error', id: packet.id, code: 'id_conflict', retry_after_ms: 60_000 }); return;
     }
     if (full) { send(socket, { type: 'error', id: packet.id, code: 'queue_full', retry_after_ms: 30_000 }); return; }
-    // Only ordinary data reaches here. The app already answers a data queue_full by keeping the record on the phone and sending on.
-    // 30 s like the full mailbox: a reply arriving after the app's 15 s publish timeout reaches its fail() path, which honours the delay.
+    // The same answer as a full mailbox. The app keeps a refused data record on the phone and sends on; any other class keeps its
+    // record and reconnects after 30 s. A reply arriving after the app's 15 s publish timeout reaches its fail() path, which honours the delay.
     if (budget) { send(socket, { type: 'error', id: packet.id, code: 'queue_full', retry_after_ms: 30_000 }); return; }
     if (expired) { send(socket, { type: 'error', id: packet.id, code: 'expired', retry_after_ms: 0 }); return; }
     if (!forwarded) {
@@ -303,14 +311,21 @@ export class FamilyRoom extends DurableObject {
     send(socket, { type: 'accepted', id: packet.id, mode: forwarded ? 'forwarded' : 'buffered' });
   }
 
-  // Counts buffered data inserts per UTC day inside the caller's transaction; returns false once spent.
-  spendBudget() {
+  // Counts, per UTC day inside the caller's transaction, the room's buffered data inserts and the sender's new packet ids;
+  // returns false, spending nothing, once either is spent.
+  spendBudget(role, kind, data, fresh) {
+    if (!data && !fresh) return true;
     const day = Math.floor(Date.now() / DAY);
     const row = this.sql.exec("SELECT value FROM metadata WHERE key='budget'").toArray()[0];
     let spent = row ? JSON.parse(row.value) : null;
     if (!spent || spent.day !== day) spent = { day, data: 0 };
-    if (spent.data >= DAILY_DATA_BUDGET) return false;
-    spent.data++;
+    // A row without per-role counts (none, or one shared number) starts both roles at zero.
+    if (typeof spent.fresh !== 'object' || spent.fresh === null) spent.fresh = {};
+    const used = spent.fresh[role] ?? 0;
+    if (data && spent.data >= DAILY_DATA_BUDGET) return false;
+    if (fresh && used >= (kind === 'data' ? DAILY_NEW_DATA_IDS : DAILY_NEW_IDS)) return false;
+    if (data) spent.data++;
+    if (fresh) spent.fresh[role] = used + 1;
     this.sql.exec("INSERT OR REPLACE INTO metadata(key,value) VALUES('budget',?)", JSON.stringify(spent));
     return true;
   }
@@ -360,7 +375,7 @@ export class FamilyRoom extends DurableObject {
   async ensureAlarm() {
     if (!this.hasSchema()) return;
     const current = await this.ctx.storage.getAlarm();
-    const nextPacket = this.sql.exec('SELECT MIN(expires) AS expiry FROM (SELECT expires FROM parent_inbox UNION ALL SELECT expires FROM child_inbox UNION ALL SELECT expires+? AS expires FROM packet_lifetimes)', REGISTRATION_TTL).one().expiry;
+    const nextPacket = this.sql.exec('SELECT MIN(expires) AS expiry FROM (SELECT MIN(expires) AS expires FROM parent_inbox UNION ALL SELECT MIN(expires) FROM child_inbox UNION ALL SELECT MIN(expires)+? FROM packet_lifetimes)', REGISTRATION_TTL).one().expiry;
     const owner = this.metadata();
     const next = Math.min(nextPacket ?? Infinity, owner ? owner.last_active + REGISTRATION_TTL : Infinity);
     if (Number.isFinite(next) && (current === null || current > next || current <= Date.now())) await this.ctx.storage.setAlarm(Math.max(Date.now() + 1000, next));
