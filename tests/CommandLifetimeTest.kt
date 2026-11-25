@@ -12,7 +12,7 @@ import org.robolectric.annotation.Config
 import java.util.UUID
 
 /**
- * key_rotated must reach a child that was offline for days, as long as the parent's outbox and the relay
+ * key_rotated and remote_reset_child must reach a child that was offline for days, as long as the parent's outbox and the relay
  * can still hand them over (3 + 7 days), without a replay and without acting on a later pairing.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -33,6 +33,7 @@ class CommandLifetimeTest {
         .put("command_id", UUID.randomUUID().toString()).put("ts_ms", System.currentTimeMillis() - age)
     private fun rotation(age: Long, next: String = UUID.randomUUID().toString()) =
         command("key_rotated", age).put("new_token", next).put("new_pin", FamilySecurity.passwordVerifier(QrPairing.PASSWORD))
+    private fun reset(age: Long) = command("remote_reset_child", age)
     /** The record as the parent queues it (signed, relay_control wrapper). */
     private fun record(cmd: JSONObject) = Pairing.commandRecord(FamilySecurity.signCommand(cmd, parent.privateKey), cmd.getString("command_id"))
     /** The relay hands [record] over under a fresh relay id, encrypted with [under]. */
@@ -66,14 +67,39 @@ class CommandLifetimeTest {
         assertTrue("its id is kept past 24 hours", prefs.getString("control_state_json", "")!!.contains(cmd.getString("command_id")))
     }
 
+    // ---------------- remote_reset_child ----------------
+    @Test fun aChildOfflineForDaysStillReceivesTheRelease() {
+        QrPairing.pairChild(ctx, parent)
+        assertEquals(RelayConsumption.CONSUMED, deliver(record(reset(10 * day - 60_000L))))
+        assertEquals("the late child is released", "unconfigured", role)
+    }
+
+    @Test fun aStaleReleaseIsRefused() {
+        QrPairing.pairChild(ctx, parent)
+        assertEquals(RelayConsumption.REJECTED, deliver(record(reset(10 * day + 60_000L))))
+        assertEquals("child", role)
+    }
+
+    /** The relay re-delivers a record (same id and bytes) until it expires: after a re-pairing into the same room it must not act again. */
+    @Test fun aReleaseIsNotReplayedAfterTheSameFamilyPairsTheChildAgain() {
+        QrPairing.pairChild(ctx, parent); val room = token
+        val release = record(reset(3 * day))
+        assertEquals(RelayConsumption.CONSUMED, deliver(release)); assertEquals("unconfigured", role)
+        assertTrue(GuardEngine.applyPairing(ctx, FamilySecurity.Invite(room, FamilySecurity.passwordVerifier(QrPairing.PASSWORD), parent.publicKey)))
+        assertEquals(room, token); assertEquals("child", role)
+        laterCommand()
+        assertEquals("consumed without effect", RelayConsumption.CONSUMED, deliver(release))
+        assertEquals("the replayed release does not reset the re-paired child", "child", role)
+    }
+
     // ---------------- a later pairing ----------------
     @Test fun oldRecordsOfThePreviousFamilyAreRefusedAfterANewPairing() {
         QrPairing.pairChild(ctx, parent); val old = token
-        val rotate = record(rotation(2 * day))
+        val release = record(reset(2 * day)); val rotate = record(rotation(2 * day))
         // Paired again by QR with the same parent identity: a new family token, so a new room and a new scope.
         QrPairing.pairChild(ctx, parent, password = QrPairing.PASSWORD)
         val fresh = token; assertNotEquals(old, fresh)
-        for (r in listOf(rotate)) {
+        for (r in listOf(release, rotate)) {
             assertEquals(RelayConsumption.REJECTED, deliver(r, old))
             assertEquals(RelayConsumption.REJECTED, deliver(r, fresh))
         }

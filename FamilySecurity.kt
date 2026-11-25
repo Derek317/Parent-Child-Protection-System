@@ -283,7 +283,7 @@ object FamilySecurity {
      *  delivered: up to 3 days in the parent's outbox (FamilyEvidence PENDING_TTL), then 7 days at the relay (relay/src/worker.js TTL).
      *  The child keeps such ids as long (GuardEngine control_state_json "relayed_ids"). */
     const val RELAYED_COMMAND_LIFETIME_MS = (3 + 7) * 24 * 60 * 60_000L
-    val relayedCommandTypes = setOf("key_rotated")
+    val relayedCommandTypes = setOf("key_rotated", "remote_reset_child")
     private fun validCommand(command: JSONObject, scope: String, now: Long): Boolean {
         val type = command.optString("type")
         if (type !in controlTypes || command.optString("scope") != scope) return false
@@ -292,7 +292,7 @@ object FamilySecurity {
         val timestamp = command.optLong("ts_ms")
         // Pairing messages only matter while a pairing screen is open (QR 3 min, child waits at most 10 min for pair_complete).
         val lifetime = if (type in relayedCommandTypes) RELAYED_COMMAND_LIFETIME_MS
-            else if (type in setOf("remote_reset_child", "pair_reply", "pair_complete")) 20 * 60_000L else 24 * 60 * 60_000L
+            else if (type in setOf("pair_reply", "pair_complete")) 20 * 60_000L else 24 * 60 * 60_000L
         if (timestamp <= 0 || timestamp > now + 120_000L || timestamp < now - lifetime) return false
         return when (type) {
             "capture_policy" -> command.optInt("schema_version")==2 && command.optString("mode")=="full_visible_conversation" &&

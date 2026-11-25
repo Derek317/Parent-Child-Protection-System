@@ -38,7 +38,7 @@ class FamilySecurityTest {
         val cases=listOf(
             command("remote_reset_child").put("ts_ms",0),
             command("remote_reset_child").put("ts_ms",now+3*60_000),
-            command("remote_reset_child").put("ts_ms",now-21*60_000),
+            command("remote_reset_child").put("ts_ms",now-10*86_400_000L-1),
             command().put("command_id",""),
             command("unlock_code").put("code","234ABC").put("exp",now),
             command("unlock_code").put("code","234ABC").put("exp",now+16*60_000),
@@ -57,6 +57,7 @@ class FamilySecurityTest {
             .put("new_pin",FamilySecurity.passwordVerifier("ParentPassword928!")).put("ts_ms",now-age)
         assertNotNull("10 days old",read(rotation(10*day)))
         assertNull("older",read(rotation(10*day+1)))
+        assertNotNull("a release too",read(command("remote_reset_child").put("ts_ms",now-10*day)))
         assertNotNull("ordinary commands keep 24 hours",read(command().put("ts_ms",now-day)))
         assertNull(read(command().put("ts_ms",now-day-1)))
     }
