@@ -19,7 +19,7 @@ No Cloudflare account is needed for the parents or children using the app. Both 
 4. The public endpoint is tracked in [relay/endpoint.json](../relay/endpoint.json). An optional repository variable **RELAY_BASE_URL** can override it. It is public configuration, not a secret. Both Android roles use the same configured endpoint.
 5. A `4.8-hotfix.N` source tag updates the existing 4.8 release only when the signed APK passes verification. It does not move the original `4.8` tag. Failed hotfix builds leave the existing release notes and assets intact.
 
-The signed-APK verification runs only on `main` and release tags. It verifies the existing replacement signing certificate, package `app.family.igguard`, version name `6.0` (the value hard-coded in the workflow's verify step; update it with each release), a version code greater than 150 and a non-debuggable release. It never reads the private signing key outside the temporary signing step.
+The signed-APK verification runs only on `main` and release tags. It verifies the existing replacement signing certificate, package `app.family.igguard`, version name `6.0.1` (the value hard-coded in the workflow's verify step; update it with each release), a version code greater than 150 and a non-debuggable release. It never reads the private signing key outside the temporary signing step.
 
 ## Deploy from Codespaces instead
 

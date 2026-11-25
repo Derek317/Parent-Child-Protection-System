@@ -257,7 +257,7 @@ jobs:
                   minSdk 26
                   targetSdk 34
                   versionCode $VER_CODE
-                  versionName "6.0"
+                  versionName "6.0.1"
               }
 
               signingConfigs {
@@ -535,7 +535,7 @@ jobs:
             test "$certificate" = "0eb6f30787c2d6dc23136a28cfd7a08a7956e5fe0565ba142f6711be38ca3f0e"
             "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
             grep -q "name='app.family.igguard'" "$RUNNER_TEMP/apk-badging.txt"
-            grep -q "versionName='6.0'" "$RUNNER_TEMP/apk-badging.txt"
+            grep -q "versionName='6.0.1'" "$RUNNER_TEMP/apk-badging.txt"
             code="$(sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" "$RUNNER_TEMP/apk-badging.txt" | head -1)"
             test "$code" -gt 150
             unzip -p "$apk" assets/ig-guard-terms-of-service.md > "$RUNNER_TEMP/apk-terms.md"

@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.0.1 — documented 25 November 2026 (Hong Kong)
+
+Version 6.0.1 fixes one timing flaw in 6.0 and changes nothing else in the app. Full notes: [6.0.1 release notes](docs/releases/6.0.1.md). Version code: 100 plus the GitHub Actions run number of the release run; the installed app shows it. Terms revision unchanged, `2026-11-24-v8`.
+
+- Fixed: right after a pairing, key rotation or reset, a record queued for the new family (for example the parent's pairing message) could stay unsent until a later trigger, usually within a minute, up to about 15 minutes on a child phone with both Android permissions off. Nothing was lost and no protection was affected. The delivery worker now restarts delivery for whatever is due for the current family when it ends.
+- Tests and build only: the Android test jars come through Gradle from Google's Maven Central mirror with pinned SHA-512 values; a failed test prints its message; one test no longer fails by chance on sealed text; a new test reproduces the timing flaw.
+- Tested: 937 unit tests, 1 known failure on the Windows development PC only; lint 0 errors; the new test fails without the fix and passes with it. Not tested: the flaw was never seen on a real phone, so the fix has no before-and-after check on hardware.
+
 ## 6.0 — documented 24 November 2026 (Hong Kong)
 
 Version 6.0 replaces chat invitations with QR pairing and gives the child phone its own signing key. Full notes, including what was tested on real phones and what was not: [6.0 release notes](docs/releases/6.0.md). Version code: 100 plus the GitHub Actions run number of the release run (at least 151); the installed app shows it. Terms revision `2026-11-24-v8`: new section 2D (both languages), and the Terms, privacy policy, deletion guide and data-flow note describe the changes below. The Terms have not been reviewed by a lawyer and are not legal advice. Nothing here is approved by Meta, and this change does not make the app free of vulnerabilities.
