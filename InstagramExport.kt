@@ -306,10 +306,10 @@ internal object InstagramExport {
     // ---------------- assembling ----------------
     private fun key(name: String) = name.trim().removePrefix("@").lowercase(Locale.ROOT)
 
-    private class Conversation(val people: LinkedHashMap<String, String>, val listed: List<String>, val json: Boolean, val ordered: List<RawMessage>, val old: Boolean)
+    private class Conversation(val folder: String, val people: LinkedHashMap<String, String>, val listed: List<String>, val json: Boolean, val ordered: List<RawMessage>, val old: Boolean)
 
     private fun assemble(files: Map<String, List<RawFile>>, childName: String?, limits: ExportLimits): ParsedExport {
-        val conversations = files.values.map { group ->
+        val conversations = files.map { (folder, group) ->
             val sorted = group.sortedBy { it.number }
             val people = LinkedHashMap<String, String>()
             val listed = sorted.firstOrNull { it.participants.isNotEmpty() }?.participants.orEmpty()
@@ -317,7 +317,7 @@ internal object InstagramExport {
             // Files are numbered newest first and each lists its messages newest first, so reversing the whole gives oldest first.
             val reversed = sorted.flatMap { it.messages }.asReversed()
             val ordered = if (reversed.all { it.ts != null }) reversed.sortedBy { it.ts } else reversed   // sortedBy is stable
-            Conversation(people, listed.map(::key), sorted.any { it.json }, ordered, sorted.any { it.old })
+            Conversation(folder, people, listed.map(::key), sorted.any { it.json }, ordered, sorted.any { it.old })
         }
         // The teen is in every thread they wrote in, but HTML names only who wrote, so a group the teen never wrote in lacks them.
         // So the teen is the one person in more threads than anyone else (and in two at least): threads of two or more people first,
@@ -345,7 +345,10 @@ internal object InstagramExport {
             val other = others.single()
             val label = c.people.getValue(other)
             val messages = c.ordered.map { ExportMessage(key(it.sender) == teen, it.text, it.ts, it.timeKey) }
-            result.add(ExportConversation(label, key(label), messages, c.old))
+            // A zip names each conversation by its folder (the account and a thread number), so two accounts with one name stay apart.
+            // A lone file has no folder: its name keys it, as capture keys threads.
+            val thread = if (c.folder.isEmpty()) key(label) else "folder:" + c.folder.substringAfterLast('/').lowercase(Locale.ROOT)
+            result.add(ExportConversation(label, thread, messages, c.old))
         }
         if (result.isEmpty() && groupKeys.isEmpty()) return ParsedExport(ImportResult.NOTHING_FOUND)
         return ParsedExport(ImportResult.OK, result, groupKeys.distinct())

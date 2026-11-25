@@ -181,13 +181,15 @@ class InstagramImportTest {
         val rows = count("risk_store"); val seq = stored()
         val again = import(bytes); assertEquals(ImportResult.OK, again.result); assertEquals(0, again.messages)
         assertEquals(rows, count("risk_store")); assertEquals(seq, stored())
-        // One conversation's file on its own is the same messages too (same names, same times).
+        // One conversation's file on its own has no folder to name it: it is keyed by the name, apart from the zip's, and a repeat of it stores nothing.
+        assertEquals(4, import(json(chat, now = fixed).toByteArray(), "message_1.json").messages)
         assertEquals(0, import(json(chat, now = fixed).toByteArray(), "message_1.json").messages)
+        val rowsWithLone = count("risk_store")
         // HTML: the same file twice.
         GuardEngine.setChildSelfHandle(ctx, teen)
         val htmlTwice = html(chat.take(2).map { it.copy(text = "html only ${it.text}") }, fixed).toByteArray()
         val h1 = import(htmlTwice, "message_1.html"); val h2 = import(htmlTwice, "message_1.html")
-        assertEquals(2, h1.messages); assertEquals(0, h2.messages); assertEquals(rows + 2, count("risk_store"))
+        assertEquals(2, h1.messages); assertEquals(0, h2.messages); assertEquals(rowsWithLone + 2, count("risk_store"))
     }
     @Test fun theSameMessagesFromJsonHtmlOrAnotherLanguageAreStoredOnce() {
         activate(ScoresMethod.UPLOAD); GuardEngine.setChildSelfHandle(ctx, teen)
@@ -196,6 +198,18 @@ class InstagramImportTest {
         assertEquals("the HTML of the same chat", 0, import(html(chat, fixed).toByteArray(), "message_1.html").messages)
         assertEquals("a Chinese-language export of it", 0, import(html(chat, fixed, ::zhTime).toByteArray(), "message_1.html").messages)
         assertEquals(4, count("risk_store")); assertEquals(4, stored().size)
+    }
+    @Test fun twoAccountsWithTheSameNameAreTwoConversations() {
+        activate(ScoresMethod.UPLOAD)
+        val first = json(listOf(M("Sam", "from the first sam", 1), M(teen, "hi first", 2)), listOf("Sam", teen))
+        val second = json(listOf(M("Sam", "from the second sam", 3), M(teen, "hi second", 4)), listOf("Sam", teen))
+        val r = import(zip("inbox/sam_111/message_1.json" to first.toByteArray(), "inbox/sam_222/message_1.json" to second.toByteArray()))
+        assertEquals(ImportResult.OK, r.result); assertEquals(2, r.conversations); assertEquals(4, r.messages)
+        assertEquals(2, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
+        val scorer = FakeScorer(); assertEquals(2, runBatch(scorer).scored)
+        assertTrue("each prompt holds one account's chat", scorer.prompts.none { it.contains("first sam") && it.contains("second sam") })
+        val report = outbox().filter { it.optBoolean("relay_control") }.map { it.getJSONObject("envelope") }.filter { it.optString("type") == "scores_mode_report" }.maxByOrNull { it.getLong("sent_at_ms") }!!
+        assertEquals("the parent sees the name once", 1, report.getJSONArray("conversations").length())
     }
     /** What 6.0.1 stored for an import: the thread keyed by the other person's name, the id by the time exactly as the file wrote it. */
     private fun storeAs601(bytes: ByteArray, name: String) {
