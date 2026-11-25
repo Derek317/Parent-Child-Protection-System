@@ -1480,7 +1480,7 @@ object GuardEngine {
             accepted.clear();cpLastHttpStatus="未能保留對話 · ${e.javaClass.simpleName} · 請保持畫面並重試"
             return emptyList()
         }
-        if(accepted.isNotEmpty()){retryPendingAlerts(ctx);ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))}
+        if(accepted.isNotEmpty()){retryPendingAlerts(ctx,justQueued=true);ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))}
         return accepted
     }
 
