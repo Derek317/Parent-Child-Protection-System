@@ -211,6 +211,34 @@ class InstagramImportTest {
         val report = outbox().filter { it.optBoolean("relay_control") }.map { it.getJSONObject("envelope") }.filter { it.optString("type") == "scores_mode_report" }.maxByOrNull { it.getLong("sent_at_ms") }!!
         assertEquals("the parent sees the name once", 1, report.getJSONArray("conversations").length())
     }
+    @Test fun afterAnOverlappingImportTheHigherScoreIsKept() {
+        activate(ScoresMethod.UPLOAD)
+        val fixed = System.currentTimeMillis()
+        fun export(vararg extra: M) = zip("inbox/sam_111/message_1.json" to json(extra.toList() + listOf(M("Sam", "hello", 5), M(teen, "hi", 6)), listOf("Sam", teen), fixed).toByteArray())
+        /** Scores the one due thread with [score], as the scoring run does. */
+        fun score(score: Double) = FamilyEvidence(ctx).use { db -> val (thread, seq) = db.riskDueThreads(scope).single(); assertTrue(db.saveRiskResult(scope, thread, seq, score, null, System.currentTimeMillis())) }
+        assertEquals(2, import(export()).messages); score(80.0)
+        // Lower: it joins the earlier result, and the higher one is still reported.
+        assertEquals(1, import(export(M("Sam", "a", 4))).messages); score(20.0)
+        assertEquals("a lower new score does not replace a higher one", listOf("Sam" to 80.0), rows()); assertEquals(2, count("risk_results"))
+        // Higher: it replaces every earlier result.
+        assertEquals(1, import(export(M("Sam", "b", 3), M("Sam", "a", 4))).messages); score(90.0)
+        assertEquals(listOf("Sam" to 90.0), rows()); assertEquals(1, count("risk_results"))
+        // Equal: it replaces too, so one row.
+        assertEquals(1, import(export(M("Sam", "c", 2), M("Sam", "b", 3), M("Sam", "a", 4))).messages); score(90.0)
+        assertEquals(listOf("Sam" to 90.0), rows()); assertEquals(1, count("risk_results"))
+        // Without an overlapping import a result joins as always (no mark).
+        assertEquals(0, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
+    }
+    @Test fun anEqualScoreAfterAnOverlappingImportLeavesOneRow() {
+        activate(ScoresMethod.UPLOAD)
+        val fixed = System.currentTimeMillis()
+        fun export(vararg extra: M) = zip("inbox/sam_111/message_1.json" to json(extra.toList() + listOf(M("Sam", "hello", 5), M(teen, "hi", 6)), listOf("Sam", teen), fixed).toByteArray())
+        fun score(score: Double) = FamilyEvidence(ctx).use { db -> val (thread, seq) = db.riskDueThreads(scope).single(); assertTrue(db.saveRiskResult(scope, thread, seq, score, null, System.currentTimeMillis())) }
+        assertEquals(2, import(export()).messages); score(80.0)
+        assertEquals(1, import(export(M("Sam", "a", 4))).messages); score(80.0)
+        assertEquals(listOf("Sam" to 80.0), rows()); assertEquals(1, count("risk_results"))
+    }
     @Test fun anUnscoredAttemptAfterAnOverlappingImportDoesNotEraseTheScore() {
         activate(ScoresMethod.UPLOAD)
         val fixed = System.currentTimeMillis()
@@ -223,10 +251,10 @@ class InstagramImportTest {
         assertEquals("the earlier score stands and is still reported", listOf("Sam" to 100.0), rows())
         assertEquals("the unscored attempt joins it", 2, count("risk_results"))
         assertEquals("not due again until new messages", 0, runBatch().scored)
-        // The mark stays: the next result with a score, after new messages, replaces the earlier ones.
+        // The mark stays: the next result with a score, after new messages, replaces the earlier ones (it is not lower).
         assertEquals(1, import(export(M("Sam", "and more", 1), M("Sam", "more", 2))).messages)
-        assertEquals(1, runBatch(FakeScorer({ FakeScorer.LOW })).scored)
-        assertEquals(listOf("Sam" to 0.0), rows()); assertEquals(1, count("risk_results"))
+        assertEquals(1, runBatch(FakeScorer()).scored)
+        assertEquals(listOf("Sam" to 100.0), rows()); assertEquals(1, count("risk_results"))
     }
     @Test fun aConversationIsKeyedByItsThreadNumberSoANewNameIsTheSameThread() {
         activate(ScoresMethod.UPLOAD)
@@ -240,12 +268,12 @@ class InstagramImportTest {
         assertEquals(ImportResult.OK, r.result); assertEquals(1, r.messages); assertEquals(3, count("risk_store"))
         assertEquals(listOf("other: hello", "child: hi", "other: new name, same me").sorted(), stored().sorted())
         assertEquals("until it is scored again the old score stands", listOf("Sam" to 100.0), rows())
-        // Scored again with a different result: the new score replaces the old one, it does not join it.
-        assertEquals(1, runBatch(FakeScorer({ FakeScorer.LOW })).scored); assertEquals(1, count("risk_results"))
-        assertEquals(listOf("Samuel" to 0.0), rows())
+        // Scored again lower: the higher score is kept, the new one joins it, under the new name.
+        assertEquals(1, runBatch(FakeScorer({ FakeScorer.LOW })).scored); assertEquals(2, count("risk_results"))
+        assertEquals(listOf("Samuel" to 100.0), rows())
         // The same export again changes nothing.
         assertEquals(0, import(zip("inbox/samuel_111/message_1.json" to renamed.toByteArray())).messages)
-        assertEquals(0, runBatch().scored); assertEquals(listOf("Samuel" to 0.0), rows())
+        assertEquals(0, runBatch().scored); assertEquals(listOf("Samuel" to 100.0), rows())
     }
     @Test fun twoAccountsWithOneNameMergedBy601AreSplitByTheirThreadNumbers() {
         activate(ScoresMethod.UPLOAD)
@@ -301,12 +329,12 @@ class InstagramImportTest {
         assertEquals(ImportResult.OK, r.result); assertEquals("only the newer message is new", 1, r.messages)
         assertEquals("one thread: the older note moved with it", 6, count("risk_store")); assertEquals(listOf("other: an older note") + expected, stored())
         assertEquals("its score moved with it and stands", listOf(friend to 100.0), rows()); assertEquals(1, count("risk_threads"))
-        val scorer = FakeScorer({ FakeScorer.LOW }); assertEquals("one thread is scored, once", 1, runBatch(scorer).scored)
+        val scorer = FakeScorer(); assertEquals("one thread is scored, once", 1, runBatch(scorer).scored)
         assertEquals(expected.size + 1, (expected + "other: an older note").count { scorer.prompts.single().contains(it) })
-        assertEquals("the new score replaced the old one", listOf(friend to 0.0), rows()); assertEquals(1, count("risk_results"))
+        assertEquals("the new score (not lower) replaced the old one", listOf(friend to 100.0), rows()); assertEquals(1, count("risk_results"))
         // The same export again changes nothing.
         assertEquals(0, import(export).messages); assertEquals(6, count("risk_store")); assertEquals(1, count("risk_results"))
-        assertEquals("nothing else is due", 0, runBatch().scored); assertEquals(listOf(friend to 0.0), rows())
+        assertEquals("nothing else is due", 0, runBatch().scored); assertEquals(listOf(friend to 100.0), rows())
         // A lone HTML file after a 6.0.1 import of the same file, not yet scored.
         FamilyEvidence(ctx).use { it.wipeRisk() }
         storeAs601(html(chat, fixed).toByteArray(), "message_1.html")

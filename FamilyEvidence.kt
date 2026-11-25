@@ -595,8 +595,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         for(table in listOf("risk_threads","risk_authors"))db.delete(table,"scope=? AND thread_index=?",arrayOf(scope,from))
     }
     /**
-     * Child, import (caller's transaction): [threadKey] got messages from an overlapping import, so its next result replaces its
-     * earlier ones (see [saveRiskResult]) instead of joining them. Until then the earlier score stands. The mark is a negative
+     * Child, import (caller's transaction): [threadKey] got messages from an overlapping import, so its next score replaces its
+     * earlier results if it is not lower than them (see [saveRiskResult]). Until then the earlier score stands. The mark is a negative
      * scored_seq (no schema change): -1 here, so the thread is due (it is anyway, it has new messages); due-ness reads its absolute value.
      */
     fun rescoreRiskThread(scope:String,threadKey:String) {
@@ -626,10 +626,13 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 if(!it.moveToFirst()){return false}
                 open(scope,"risk_store",it.getString(0),"label",it.getString(1))
             }
-            // After an overlapping import the next result with a score replaces the earlier ones, in this same transaction. A result
-            // without one erases nothing: it joins them, and the mark stays (as -seq: not due until new messages) for the next score.
+            // After an overlapping import the next score replaces the earlier results (in this same transaction) if it is equal to or
+            // higher than the highest of them: the higher score is kept. A lower score joins them, as any result does, and clears the
+            // mark like any score: the conversation now has its current score beside the older higher one, which ages out at 14 days.
+            // A result without a score erases nothing: it joins them, and the mark stays (as -seq: not due until new messages).
             val rescore=db.rawQuery("SELECT scored_seq FROM risk_threads WHERE scope=? AND thread_index=?",arrayOf(scope,thread)).use{it.moveToFirst() && it.getLong(0)<0}
-            if(rescore && score!=null)db.delete("risk_results","scope=? AND thread_index=?",arrayOf(scope,thread))
+            val highest=if(rescore && score!=null)db.rawQuery("SELECT MAX(score) FROM risk_results WHERE scope=? AND thread_index=?",arrayOf(scope,thread)).use{if(it.moveToFirst() && !it.isNull(0))it.getDouble(0) else null} else null
+            if(rescore && score!=null && (highest==null || score>=highest))db.delete("risk_results","scope=? AND thread_index=?",arrayOf(scope,thread))
             val mark=if(rescore && score==null)-seq else seq
             db.insertOrThrow("risk_results",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);if(score!=null)put("score",score) else putNull("score");if(reason!=null)put("reason",reason) else putNull("reason");put("scored_at",now)})
             db.execSQL("DELETE FROM risk_results WHERE scope=? AND thread_index=? AND scored_at<?",arrayOf(scope,thread,(now-RiskLimits.DAYS*DAY).toString()))
