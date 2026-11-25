@@ -98,8 +98,13 @@ class InstagramImportTest {
     private fun time(ms: Long) = SimpleDateFormat("MMM dd, yyyy, h:mm a", Locale.ENGLISH).format(Date(ms))
     private data class M(val sender: String, val text: String, val hoursAgo: Int)
     private val chat = listOf(M(friend, "see you tomorrow", 1), M(teen, "ok, bring the notes", 2), M(friend, "did you finish the maths?", 3), M(teen, "hi Bea", 4))
-    private fun html(messages: List<M>, now: Long = System.currentTimeMillis()) = "<html><body>" + messages.joinToString("") {
-        "<div class=\"pam\"><h2 class=\"_3-95 _2pim _a6-h _a6-i\">${it.sender}</h2><div class=\"_3-95 _a6-p\"><div><div></div><div>${it.text}</div><div></div></div></div><div class=\"_3-94 _a6-o\">${time(now - it.hoursAgo * hour)}</div></div>"
+    /** The time as a Chinese-language account's HTML export writes it. */
+    private fun zhTime(ms: Long) = java.util.Calendar.getInstance().apply { timeInMillis = ms }.let { c ->
+        val h = c.get(java.util.Calendar.HOUR_OF_DAY)
+        "${c.get(java.util.Calendar.MONTH) + 1} 月 ${c.get(java.util.Calendar.DAY_OF_MONTH)}, ${c.get(java.util.Calendar.YEAR)} ${if (h % 12 == 0) 12 else h % 12}:${"%02d".format(c.get(java.util.Calendar.MINUTE))} ${if (h < 12) "上午" else "下午"}"
+    }
+    private fun html(messages: List<M>, now: Long = System.currentTimeMillis(), format: (Long) -> String = ::time) = "<html><body>" + messages.joinToString("") {
+        "<div class=\"pam\"><h2 class=\"_3-95 _2pim _a6-h _a6-i\">${it.sender}</h2><div class=\"_3-95 _a6-p\"><div><div></div><div>${it.text}</div><div></div></div></div><div class=\"_3-94 _a6-o\">${format(now - it.hoursAgo * hour)}</div></div>"
     } + "</body></html>"
     private fun json(messages: List<M>, participants: List<String> = listOf(friend, teen), now: Long = System.currentTimeMillis()) = JSONObject()
         .put("participants", JSONArray(participants.map { JSONObject().put("name", it) }))
@@ -183,6 +188,54 @@ class InstagramImportTest {
         val htmlTwice = html(chat.take(2).map { it.copy(text = "html only ${it.text}") }, fixed).toByteArray()
         val h1 = import(htmlTwice, "message_1.html"); val h2 = import(htmlTwice, "message_1.html")
         assertEquals(2, h1.messages); assertEquals(0, h2.messages); assertEquals(rows + 2, count("risk_store"))
+    }
+    @Test fun theSameMessagesFromJsonHtmlOrAnotherLanguageAreStoredOnce() {
+        activate(ScoresMethod.UPLOAD); GuardEngine.setChildSelfHandle(ctx, teen)
+        val fixed = System.currentTimeMillis()
+        assertEquals(4, import(json(chat, now = fixed).toByteArray(), "message_1.json").messages)
+        assertEquals("the HTML of the same chat", 0, import(html(chat, fixed).toByteArray(), "message_1.html").messages)
+        assertEquals("a Chinese-language export of it", 0, import(html(chat, fixed, ::zhTime).toByteArray(), "message_1.html").messages)
+        assertEquals(4, count("risk_store")); assertEquals(4, stored().size)
+    }
+    /** What 6.0.1 stored for an import: the thread keyed by the other person's name, the id by the time exactly as the file wrote it. */
+    private fun storeAs601(bytes: ByteArray, name: String) {
+        val parsed = InstagramExport.parse(ByteArrayInputStream(bytes), name, teen, ExportLimits())
+        val now = System.currentTimeMillis()
+        FamilyEvidence(ctx).use { db ->
+            for (c in parsed.conversations) {
+                val key = c.label.trim().removePrefix("@").lowercase(Locale.ROOT)
+                val seen = HashMap<String, Int>()
+                val recent = c.messages.filter { it.ts != null && it.ts >= now - RiskLimits.DAYS * 86_400_000L }.takeLast(RiskLimits.MESSAGES)
+                for ((i, m) in recent.withIndex()) {
+                    val direction = if (m.outgoing) "outgoing" else "incoming"
+                    val basis = "$key|${m.timeKey}|$direction|${m.text}"
+                    val id = "import:" + sha("$basis|${seen.merge(basis, 1, Int::plus)}".toByteArray()).take(40)
+                    assertTrue(db.storeRiskMessage(scope, id, key, c.label, direction, m.text, m.ts!!, m.ts!!, i.toLong(), now))
+                }
+            }
+        }
+    }
+    @Test fun aPhoneUpgradedFrom601ThatImportsAnOverlappingExportKeepsEachMessageOnceInOneThread() {
+        activate(ScoresMethod.UPLOAD); GuardEngine.setChildSelfHandle(ctx, teen)
+        val fixed = System.currentTimeMillis()
+        val newer = listOf(M(friend, "one more thing", 0)) + chat
+        val expected = listOf("child: hi Bea", "other: did you finish the maths?", "child: ok, bring the notes", "other: see you tomorrow", "other: one more thing")
+        // A zip after a 6.0.1 import of the same chat that was already scored.
+        storeAs601(json(chat, now = fixed).toByteArray(), "message_1.json")
+        assertEquals(1, runBatch().scored)
+        val r = import(zip("inbox/beafriend_1/message_1.json" to json(newer, now = fixed).toByteArray()))
+        assertEquals(ImportResult.OK, r.result); assertEquals("only the newer message is new", 1, r.messages)
+        assertEquals(5, count("risk_store")); assertEquals(expected, stored())
+        val scorer = FakeScorer(); assertEquals("one thread is scored, once", 1, runBatch(scorer).scored)
+        assertEquals(expected.size, expected.count { scorer.prompts.single().contains(it) })
+        assertEquals("nothing else is due", 0, runBatch().scored)
+        // A lone HTML file after a 6.0.1 import of the same file, not yet scored.
+        FamilyEvidence(ctx).use { it.wipeRisk() }
+        storeAs601(html(chat, fixed).toByteArray(), "message_1.html")
+        val h = import(html(newer, fixed).toByteArray(), "message_1.html")
+        assertEquals(ImportResult.OK, h.result); assertEquals(1, h.messages)
+        assertEquals(5, count("risk_store")); assertEquals(expected, stored())
+        assertEquals(1, runBatch().scored)
     }
     @Test fun oldMessageFilesAreDroppedWhileReadingAndDoNotCountAgainstTheTotal() {
         activate(ScoresMethod.UPLOAD)

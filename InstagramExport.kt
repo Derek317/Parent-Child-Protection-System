@@ -45,7 +45,7 @@ internal data class ExportLimits(
     val maxTextChars: Int = 4_000
 )
 
-internal class ExportMessage(val outgoing: Boolean, val text: String, /** Milliseconds, or null when the file gave no usable time. */ val ts: Long?, /** The time as the file wrote it, for stable ids. */ val timeKey: String)
+internal class ExportMessage(val outgoing: Boolean, val text: String, /** Milliseconds, or null when the file gave no usable time. */ val ts: Long?, /** The time as the file wrote it: only to find rows stored by 6.0.1 and earlier. */ val timeKey: String)
 /** A one-to-one conversation. [messages] are oldest first. [old]: messages older than the window were dropped while reading. */
 internal class ExportConversation(val label: String, val key: String, val messages: List<ExportMessage>, val old: Boolean = false)
 /** [groupKeys] name each skipped group conversation (stable across imports, so a repeat does not count it twice). */
@@ -381,6 +381,15 @@ internal object InstagramImport {
         return true
     }
 
+    /** One id per message of a thread keyed [key]; the same text, direction and [time] again is told apart by its occurrence. */
+    private fun ids(key: String, messages: List<ExportMessage>, time: (ExportMessage) -> String): List<String> {
+        val seen = HashMap<String, Int>()
+        return messages.map { m ->
+            val basis = "$key|${time(m)}|${if (m.outgoing) "outgoing" else "incoming"}|${m.text}"
+            "import:" + MessageDigest.getInstance("SHA-256").digest("$basis|${seen.merge(basis, 1, Int::plus)}".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }.take(40)
+        }
+    }
+
     /** Parses and stores one file. Nothing is stored unless the whole file parsed. */
     fun run(ctx: Context, input: InputStream, fileName: String?, limits: ExportLimits = ExportLimits(), now: Long = System.currentTimeMillis()): ImportSummary {
         val app = ctx.applicationContext
@@ -406,14 +415,15 @@ internal object InstagramImport {
                         val recent = c.messages.filter { it.ts != null && it.ts >= cutoff }.takeLast(RiskLimits.MESSAGES)
                         if (recent.isEmpty()) continue
                         conversations++
-                        val seen = HashMap<String, Int>()
+                        // The id is the time read to the minute, so JSON, HTML and any language give one id (undated messages were dropped above).
+                        val ids = ids(c.key, recent) { Math.floorDiv(it.ts!!, 60_000L).toString() }
+                        // 6.0.1 and earlier keyed the id by the time as the file wrote it, and the thread by the name: such a row is replaced, not kept beside the new one.
+                        val before = ids(c.label.trim().removePrefix("@").lowercase(Locale.ROOT), recent) { it.timeKey }
                         for ((i, m) in recent.withIndex()) {
                             val direction = if (m.outgoing) "outgoing" else "incoming"
-                            val basis = "${c.key}|${m.timeKey}|$direction|${m.text}"
-                            val occurrence = seen.merge(basis, 1, Int::plus)!!
-                            val id = "import:" + MessageDigest.getInstance("SHA-256").digest("$basis|$occurrence".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }.take(40)
-                            val stamp = minOf(m.ts!!, now)   // undated messages were dropped above
-                            if (db.storeRiskMessage(scope, id, c.key, c.label, direction, m.text, stamp, stamp, i.toLong(), now)) stored++
+                            val stamp = minOf(m.ts!!, now)
+                            val replaced = sql.delete("risk_store", "scope=? AND id=?", arrayOf(scope, before[i])) > 0
+                            if (db.storeRiskMessage(scope, ids[i], c.key, c.label, direction, m.text, stamp, stamp, i.toLong(), now) && !replaced) stored++
                         }
                     }
                     for (g in parsed.groupKeys) db.noteRiskUnknown(scope, g, now)
