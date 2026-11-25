@@ -577,6 +577,31 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         for(table in listOf("risk_store","risk_results","risk_threads","risk_authors"))db.delete(table,"scope=? AND thread_index=?",arrayOf(scope,thread))
         return fresh
     }
+    /**
+     * Child, import (caller's transaction): the conversation stored under [fromKey] continues as [toKey], as one thread. Its messages
+     * and results move to [toKey] (message ids, and so their sealing, are unchanged); its scoring state moves too unless [toKey] has
+     * its own; its author markers go. Nothing is deleted that is not moved, so the conversation keeps the score it had.
+     */
+    fun moveRiskThread(scope:String,fromKey:String,toKey:String) {
+        val db=writableDatabase;val from=index(scope,"conversation",fromKey);val to=index(scope,"conversation",toKey)
+        if(from==to)return
+        for(table in listOf("risk_store","risk_results"))db.execSQL("UPDATE $table SET thread_index=? WHERE scope=? AND thread_index=?",arrayOf(to,scope,from))
+        val hasOwn=db.rawQuery("SELECT 1 FROM risk_threads WHERE scope=? AND thread_index=?",arrayOf(scope,to)).use{it.moveToFirst()}
+        if(!hasOwn)db.rawQuery("SELECT label,scored_seq,sent_sig FROM risk_threads WHERE scope=? AND thread_index=?",arrayOf(scope,from)).use {
+            // The label is sealed to its thread, so it is opened and sealed again for the new one.
+            if(it.moveToFirst())db.insertOrThrow("risk_threads",null,ContentValues().apply{put("scope",scope);put("thread_index",to)
+                put("label",seal(scope,"risk_threads",to,"label",open(scope,"risk_threads",from,"label",it.getString(0))));put("scored_seq",it.getLong(1));put("sent_sig",it.getString(2))})
+        }
+        for(table in listOf("risk_threads","risk_authors"))db.delete(table,"scope=? AND thread_index=?",arrayOf(scope,from))
+    }
+    /**
+     * Child, import (caller's transaction): [threadKey] got messages from an overlapping import, so its next result replaces its
+     * earlier ones (see [saveRiskResult]) instead of joining them. Until then the earlier score stands. The mark is scored_seq -1:
+     * the thread is due (it is anyway, it has new messages) and no schema change is needed.
+     */
+    fun rescoreRiskThread(scope:String,threadKey:String) {
+        writableDatabase.execSQL("UPDATE risk_threads SET scored_seq=-1 WHERE scope=? AND thread_index=?",arrayOf(scope,index(scope,"conversation",threadKey)))
+    }
     /** Child: marks a thread set aside as a group chat (or refreshes the marker); keeps no text. */
     fun noteRiskUnknown(scope:String,threadKey:String,now:Long) {
         writableDatabase.insertWithOnConflict("risk_unknown",null,ContentValues().apply{put("scope",scope);put("thread_index",index(scope,"conversation",threadKey));put("seen_at",now)},SQLiteDatabase.CONFLICT_REPLACE)
@@ -601,6 +626,9 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 if(!it.moveToFirst()){return false}
                 open(scope,"risk_store",it.getString(0),"label",it.getString(1))
             }
+            // After an overlapping import the new result replaces the earlier ones, in this same transaction.
+            val rescore=db.rawQuery("SELECT scored_seq FROM risk_threads WHERE scope=? AND thread_index=?",arrayOf(scope,thread)).use{it.moveToFirst() && it.getLong(0)<0}
+            if(rescore)db.delete("risk_results","scope=? AND thread_index=?",arrayOf(scope,thread))
             db.insertOrThrow("risk_results",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);if(score!=null)put("score",score) else putNull("score");if(reason!=null)put("reason",reason) else putNull("reason");put("scored_at",now)})
             db.execSQL("DELETE FROM risk_results WHERE scope=? AND thread_index=? AND scored_at<?",arrayOf(scope,thread,(now-RiskLimits.DAYS*DAY).toString()))
             db.insertWithOnConflict("risk_threads",null,ContentValues().apply{put("scope",scope);put("thread_index",thread);put("label",seal(scope,"risk_threads",thread,"label",label));put("scored_seq",seq)},SQLiteDatabase.CONFLICT_IGNORE)

@@ -358,9 +358,14 @@ internal object InstagramExport {
             val other = others.single()
             val label = c.people.getValue(other)
             val messages = c.ordered.map { ExportMessage(key(it.sender) == teen, it.text, it.ts, it.timeKey) }
-            // A zip names each conversation by its folder (the account and a thread number), so two accounts with one name stay apart.
-            // A lone file has no folder: its name keys it, as capture keys threads.
-            val thread = if (c.folder.isEmpty()) key(label) else "folder:" + c.folder.substringAfterLast('/').lowercase(Locale.ROOT)
+            // A zip folder ends in the conversation's own thread number: it keys the conversation, so a new display name, another
+            // language or two accounts with one name change nothing. A folder without one is keyed by its name; a lone file has no
+            // folder and is keyed by the other person's name, as capture keys threads.
+            val segment = c.folder.substringAfterLast('/')
+            val thread = when {
+                c.folder.isEmpty() -> key(label)
+                else -> THREAD_NUMBER.matchEntire(segment)?.let { "thread:" + it.groupValues[2] } ?: ("folder:" + segment.lowercase(Locale.ROOT))
+            }
             result.add(ExportConversation(label, thread, messages, c.old))
         }
         if (result.isEmpty() && groupKeys.isEmpty()) return ParsedExport(ImportResult.NOTHING_FOUND)
@@ -376,6 +381,8 @@ internal object InstagramImport {
     @Volatile var running = false
     @Volatile var last: ImportSummary? = null
     @Volatile var listener: (() -> Unit)? = null
+    /** Test seam: runs inside the import's transaction, just before it commits. */
+    @Volatile internal var beforeCommit: () -> Unit = {}
     /** Test seam: how a picked file is run. Production starts a thread. */
     @Volatile var runner: (Runnable) -> Unit = { Thread(it, "Instagram import").start() }
 
@@ -434,15 +441,22 @@ internal object InstagramImport {
                         // The id is the time read to the minute, so JSON, HTML and any language give one id (undated messages were dropped above).
                         val ids = ids(c.key, recent) { Math.floorDiv(it.ts!!, 60_000L).toString() }
                         // 6.0.1 and earlier keyed the id by the time as the file wrote it, and the thread by the name: such a row is replaced, not kept beside the new one.
-                        val before = ids(c.label.trim().removePrefix("@").lowercase(Locale.ROOT), recent) { it.timeKey }
+                        val legacyKey = c.label.trim().removePrefix("@").lowercase(Locale.ROOT)
+                        val before = ids(legacyKey, recent) { it.timeKey }
+                        val replaced = before.map { sql.delete("risk_store", "scope=? AND id=?", arrayOf(scope, it)) > 0 }
+                        // A 6.0.x thread of this conversation (found by an old id) continues as this one: its other messages and its score move here.
+                        if (replaced.any { it }) db.moveRiskThread(scope, legacyKey, c.key)
+                        var added = false
                         for ((i, m) in recent.withIndex()) {
                             val direction = if (m.outgoing) "outgoing" else "incoming"
                             val stamp = minOf(m.ts!!, now)
-                            val replaced = sql.delete("risk_store", "scope=? AND id=?", arrayOf(scope, before[i])) > 0
-                            if (db.storeRiskMessage(scope, ids[i], c.key, c.label, direction, m.text, stamp, stamp, i.toLong(), now) && !replaced) stored++
+                            if (db.storeRiskMessage(scope, ids[i], c.key, c.label, direction, m.text, stamp, stamp, i.toLong(), now)) { added = true; if (!replaced[i]) stored++ }
                         }
+                        // The thread's next score replaces its earlier ones; until it is written, the earlier score stands.
+                        if (added) db.rescoreRiskThread(scope, c.key)
                     }
                     for (g in parsed.groupKeys) db.noteRiskUnknown(scope, g, now)
+                    beforeCommit()
                     sql.setTransactionSuccessful()
                 } finally { sql.endTransaction() }
             }

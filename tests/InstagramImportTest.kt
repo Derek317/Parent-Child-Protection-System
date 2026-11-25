@@ -211,6 +211,42 @@ class InstagramImportTest {
         val report = outbox().filter { it.optBoolean("relay_control") }.map { it.getJSONObject("envelope") }.filter { it.optString("type") == "scores_mode_report" }.maxByOrNull { it.getLong("sent_at_ms") }!!
         assertEquals("the parent sees the name once", 1, report.getJSONArray("conversations").length())
     }
+    @Test fun aConversationIsKeyedByItsThreadNumberSoANewNameIsTheSameThread() {
+        activate(ScoresMethod.UPLOAD)
+        val fixed = System.currentTimeMillis()
+        val first = json(listOf(M("Sam", "hello", 2), M(teen, "hi", 3)), listOf("Sam", teen), fixed)
+        assertEquals(2, import(zip("inbox/sam_111/message_1.json" to first.toByteArray())).messages)
+        assertEquals(1, runBatch().scored); assertEquals(100.0, rows().single().second!!, 0.01)
+        // Sam renamed the account and the next export is overlapping: one thread, the old messages once.
+        val renamed = json(listOf(M("Samuel", "new name, same me", 1), M("Samuel", "hello", 2), M(teen, "hi", 3)), listOf("Samuel", teen), fixed)
+        val r = import(zip("inbox/samuel_111/message_1.json" to renamed.toByteArray()))
+        assertEquals(ImportResult.OK, r.result); assertEquals(1, r.messages); assertEquals(3, count("risk_store"))
+        assertEquals(listOf("other: hello", "child: hi", "other: new name, same me").sorted(), stored().sorted())
+        assertEquals("until it is scored again the old score stands", listOf("Sam" to 100.0), rows())
+        // Scored again with a different result: the new score replaces the old one, it does not join it.
+        assertEquals(1, runBatch(FakeScorer({ FakeScorer.LOW })).scored); assertEquals(1, count("risk_results"))
+        assertEquals(listOf("Samuel" to 0.0), rows())
+        // The same export again changes nothing.
+        assertEquals(0, import(zip("inbox/samuel_111/message_1.json" to renamed.toByteArray())).messages)
+        assertEquals(0, runBatch().scored); assertEquals(listOf("Samuel" to 0.0), rows())
+    }
+    @Test fun twoAccountsWithOneNameMergedBy601AreSplitByTheirThreadNumbers() {
+        activate(ScoresMethod.UPLOAD)
+        val fixed = System.currentTimeMillis()
+        val bytes = zip("inbox/sam_111/message_1.json" to json(listOf(M("Sam", "from the first sam", 1), M(teen, "hi first", 2)), listOf("Sam", teen), fixed).toByteArray(),
+            "inbox/sam_222/message_1.json" to json(listOf(M("Sam", "from the second sam", 3), M(teen, "hi second", 4)), listOf("Sam", teen), fixed).toByteArray())
+        storeAs601(bytes, "export.zip")
+        assertEquals("6.0.1 kept them as one thread", 1, runBatch().scored)
+        val r = import(bytes)
+        assertEquals(ImportResult.OK, r.result); assertEquals(0, r.messages); assertEquals(4, count("risk_store"))
+        assertEquals(2, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
+        assertEquals("the merged thread's score went with the first and stands until it is scored again", listOf("Sam" to 100.0), rows())
+        val scorer = FakeScorer(); assertEquals(2, runBatch(scorer).scored)
+        assertTrue(scorer.prompts.none { it.contains("first sam") && it.contains("second sam") })
+        assertEquals(2, count("risk_results")); assertEquals(2, count("risk_threads"))
+    }
+    /** The child's report rows: (label, score rounded). */
+    private fun rows() = FamilyEvidence(ctx).use { it.riskReportRows(scope, System.currentTimeMillis()) }.map { it.label to it.score?.let { s -> Math.round(s).toDouble() } }
     /** What 6.0.1 stored for an import: the thread keyed by the other person's name, the id by the time exactly as the file wrote it. */
     private fun storeAs601(bytes: ByteArray, name: String) {
         val parsed = InstagramExport.parse(ByteArrayInputStream(bytes), name, teen, ExportLimits())
@@ -234,15 +270,26 @@ class InstagramImportTest {
         val fixed = System.currentTimeMillis()
         val newer = listOf(M(friend, "one more thing", 0)) + chat
         val expected = listOf("child: hi Bea", "other: did you finish the maths?", "child: ok, bring the notes", "other: see you tomorrow", "other: one more thing")
-        // A zip after a 6.0.1 import of the same chat that was already scored.
-        storeAs601(json(chat, now = fixed).toByteArray(), "message_1.json")
-        assertEquals(1, runBatch().scored)
-        val r = import(zip("inbox/beafriend_1/message_1.json" to json(newer, now = fixed).toByteArray()))
+        // A zip after a 6.0.1 import of the same chat (plus an older message the new export does not hold) that was already scored.
+        val older = M(friend, "an older note", 30)
+        storeAs601(json(chat + older, now = fixed).toByteArray(), "message_1.json")
+        assertEquals(1, runBatch().scored); assertEquals(listOf(friend to 100.0), rows())
+        val export = zip("inbox/beafriend_1/message_1.json" to json(newer, now = fixed).toByteArray())
+        // A failure before the import commits leaves the old thread, its messages and its score as they were.
+        InstagramImport.beforeCommit = { throw IllegalStateException("invented failure") }
+        try { assertEquals(ImportResult.IO_ERROR, import(export).result) } finally { InstagramImport.beforeCommit = {} }
+        assertEquals(5, count("risk_store")); assertEquals(1, count("risk_results")); assertEquals(1, count("risk_threads"))
+        assertEquals(listOf(friend to 100.0), rows()); assertEquals(0, runBatch().scored)
+        val r = import(export)
         assertEquals(ImportResult.OK, r.result); assertEquals("only the newer message is new", 1, r.messages)
-        assertEquals(5, count("risk_store")); assertEquals(expected, stored())
-        val scorer = FakeScorer(); assertEquals("one thread is scored, once", 1, runBatch(scorer).scored)
-        assertEquals(expected.size, expected.count { scorer.prompts.single().contains(it) })
-        assertEquals("nothing else is due", 0, runBatch().scored)
+        assertEquals("one thread: the older note moved with it", 6, count("risk_store")); assertEquals(listOf("other: an older note") + expected, stored())
+        assertEquals("its score moved with it and stands", listOf(friend to 100.0), rows()); assertEquals(1, count("risk_threads"))
+        val scorer = FakeScorer({ FakeScorer.LOW }); assertEquals("one thread is scored, once", 1, runBatch(scorer).scored)
+        assertEquals(expected.size + 1, (expected + "other: an older note").count { scorer.prompts.single().contains(it) })
+        assertEquals("the new score replaced the old one", listOf(friend to 0.0), rows()); assertEquals(1, count("risk_results"))
+        // The same export again changes nothing.
+        assertEquals(0, import(export).messages); assertEquals(6, count("risk_store")); assertEquals(1, count("risk_results"))
+        assertEquals("nothing else is due", 0, runBatch().scored); assertEquals(listOf(friend to 0.0), rows())
         // A lone HTML file after a 6.0.1 import of the same file, not yet scored.
         FamilyEvidence(ctx).use { it.wipeRisk() }
         storeAs601(html(chat, fixed).toByteArray(), "message_1.html")

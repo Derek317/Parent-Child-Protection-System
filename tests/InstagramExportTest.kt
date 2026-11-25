@@ -217,6 +217,17 @@ class InstagramExportTest {
         assertEquals(ImportResult.TOO_LARGE, InstagramExport.parse(ByteArrayInputStream(zip("c/message_1.json" to crowd)), "e.zip", null, ExportLimits(maxMessageBytes = 3_000), since).result)
     }
 
+    @Test fun aConversationIsKeyedByTheThreadNumberAtTheEndOfItsFolder() {
+        fun keyOf(folder: String) = parse(zip("$folder/message_1.json" to jsonOf(chat).toByteArray()), "e.zip").conversations.single().key
+        assertEquals("thread:1234567890", keyOf("your_instagram_activity/messages/inbox/beafriend_1234567890"))
+        assertEquals("another name and layout, same number", "thread:1234567890", keyOf("messages/inbox/someone_else_1234567890"))
+        assertEquals("a non-Latin name before the number", "thread:456", keyOf("inbox/陳小明_456"))
+        assertEquals("nothing before the number", "thread:789", keyOf("inbox/_789"))
+        assertEquals("no number: the folder's name", "folder:beafriend", keyOf("inbox/BeaFriend"))
+        assertEquals("folder:bea_friend_x1", keyOf("inbox/bea_friend_x1"))
+        assertEquals("a lone file: the other person's name", "bea friend", parse(jsonOf(chat), "message_1.json").conversations.single().key)
+    }
+
     @Test fun malformedFilesFailPlainly() {
         assertEquals(ImportResult.MALFORMED, parse("{ not json", "message_1.json").result)
         assertEquals(ImportResult.MALFORMED, parse("{\"participants\": []}", "message_1.json").result)
