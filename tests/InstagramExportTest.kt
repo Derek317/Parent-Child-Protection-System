@@ -200,6 +200,23 @@ class InstagramExportTest {
         assertEquals(ImportResult.OK, parse(zip("a/message_1.json" to ok, "b.txt" to ByteArray(1)), "e.zip", child = teen, limits = small.copy(maxEntries = 2, maxEntryBytes = 100_000, maxMessageBytes = 100_000)).result)
     }
 
+    @Test fun messagesOlderThanTheWindowAreDroppedWhileReadingAndOnlyWhatIsKeptCountsAgainstTheTotal() {
+        val since = now - 14 * 24 * hour
+        val old = jsonOf(chat.map { it.copy(hoursAgo = it.hoursAgo + 24 * 20) }).toByteArray()
+        val recent = jsonOf(listOf(M("Cy Pal", "lunch?", 1), M(teen, "yes", 2)), listOf("Cy Pal", teen)).toByteArray()
+        val bytes = zip("a/message_1.json" to old, "b/message_1.json" to recent)
+        val limits = ExportLimits(maxMessageBytes = recent.size + 100L)
+        assertEquals("without a window every file counts, as before", ImportResult.TOO_LARGE, parse(bytes, "e.zip", limits = limits).result)
+        val p = InstagramExport.parse(ByteArrayInputStream(bytes), "e.zip", null, limits, since)
+        assertEquals(ImportResult.OK, p.result)
+        val bea = p.conversations.single { it.label == friend }
+        assertTrue(bea.old); assertTrue(bea.messages.isEmpty())
+        assertEquals(listOf(true to "yes", false to "lunch?"), pairs(p.conversations.single { it.label == "Cy Pal" }))
+        // An old file still counts the names it keeps.
+        val crowd = jsonOf((1..200).map { M("sender with a long name number $it", "hi", 24 * 20 + it) }, emptyList()).toByteArray()
+        assertEquals(ImportResult.TOO_LARGE, InstagramExport.parse(ByteArrayInputStream(zip("c/message_1.json" to crowd)), "e.zip", null, ExportLimits(maxMessageBytes = 3_000), since).result)
+    }
+
     @Test fun malformedFilesFailPlainly() {
         assertEquals(ImportResult.MALFORMED, parse("{ not json", "message_1.json").result)
         assertEquals(ImportResult.MALFORMED, parse("{\"participants\": []}", "message_1.json").result)

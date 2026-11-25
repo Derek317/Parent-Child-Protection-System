@@ -37,7 +37,7 @@ internal data class ExportLimits(
     val maxEntries: Int = 20_000,
     /** Uncompressed bytes of one message file. */
     val maxEntryBytes: Long = 10L shl 20,
-    /** Uncompressed bytes of all message files together. */
+    /** Uncompressed bytes of all message files together, counting only what is kept: a file whose messages are all older than the window counts its names alone. */
     val maxMessageBytes: Long = 64L shl 20,
     /** Uncompressed bytes of everything the zip holds, media included (which is skipped, not kept): the bound on a zip bomb. */
     val maxInflatedBytes: Long = 1L shl 30,
@@ -46,8 +46,8 @@ internal data class ExportLimits(
 )
 
 internal class ExportMessage(val outgoing: Boolean, val text: String, /** Milliseconds, or null when the file gave no usable time. */ val ts: Long?, /** The time as the file wrote it, for stable ids. */ val timeKey: String)
-/** A one-to-one conversation. [messages] are oldest first. */
-internal class ExportConversation(val label: String, val key: String, val messages: List<ExportMessage>)
+/** A one-to-one conversation. [messages] are oldest first. [old]: messages older than the window were dropped while reading. */
+internal class ExportConversation(val label: String, val key: String, val messages: List<ExportMessage>, val old: Boolean = false)
 /** [groupKeys] name each skipped group conversation (stable across imports, so a repeat does not count it twice). */
 internal class ParsedExport(val result: ImportResult, val conversations: List<ExportConversation> = emptyList(), val groupKeys: List<String> = emptyList()) {
     val groups: Int get() = groupKeys.size
@@ -55,8 +55,8 @@ internal class ParsedExport(val result: ImportResult, val conversations: List<Ex
 
 internal object InstagramExport {
     private class RawMessage(val sender: String, val ts: Long?, val timeKey: String, val text: String)
-    /** One message file. [messages] are in file order (newest first); [participants] is only known from JSON. */
-    private class RawFile(val number: Int, val participants: List<String>, val messages: List<RawMessage>, val json: Boolean)
+    /** One message file. [messages] are in file order (newest first); [senders] name everyone who wrote, kept or not; [participants] is only known from JSON. */
+    private class RawFile(val number: Int, val participants: List<String>, val senders: Collection<String>, val messages: List<RawMessage>, val json: Boolean, val old: Boolean)
     private class Failure(val result: ImportResult) : Exception()
 
     private val FILE_NAME = Regex("(^|/)message_(\\d{1,6})\\.(html|json)$", RegexOption.IGNORE_CASE)
@@ -64,18 +64,18 @@ internal object InstagramExport {
 
     /**
      * Parses [input]. [fileName] is only a hint (the content decides). [childName] is the account name stored for the child, or null.
-     * No Android UI and no storage: the result is plain objects.
+     * Messages dated before [since] are dropped while reading (their senders still count). No Android UI and no storage: the result is plain objects.
      */
-    fun parse(input: InputStream, fileName: String?, childName: String?, limits: ExportLimits = ExportLimits()): ParsedExport = try {
+    fun parse(input: InputStream, fileName: String?, childName: String?, limits: ExportLimits = ExportLimits(), since: Long? = null): ParsedExport = try {
         val files = LinkedHashMap<String, MutableList<RawFile>>()
         val head = PushbackInputStream(input, 4)
         val magic = ByteArray(2)
         val got = readFully(head, magic)
         if (got > 0) head.unread(magic, 0, got)
-        if (got == 2 && magic[0] == 'P'.code.toByte() && magic[1] == 'K'.code.toByte()) readZip(head, limits, files)
+        if (got == 2 && magic[0] == 'P'.code.toByte() && magic[1] == 'K'.code.toByte()) readZip(head, limits, since, files)
         else {
             val bytes = readBounded(head, limits.maxEntryBytes)
-            files.getOrPut("") { mutableListOf() }.add(parseFile(bytes, fileName.orEmpty(), 0, limits))
+            files.getOrPut("") { mutableListOf() }.add(parseFile(bytes, fileName.orEmpty(), 0, limits, since))
         }
         if (files.isEmpty()) ParsedExport(ImportResult.NOTHING_FOUND) else assemble(files, childName, limits)
     } catch (f: Failure) {
@@ -112,7 +112,7 @@ internal object InstagramExport {
 
     private fun unsafeName(name: String) = name.contains("..") || name.startsWith("/") || name.startsWith("\\") || name.contains('\u0000') || DRIVE.containsMatchIn(name)
 
-    private fun readZip(input: InputStream, limits: ExportLimits, files: MutableMap<String, MutableList<RawFile>>) {
+    private fun readZip(input: InputStream, limits: ExportLimits, since: Long?, files: MutableMap<String, MutableList<RawFile>>) {
         var entries = 0
         var messageBytes = 0L
         var inflated = 0L
@@ -132,26 +132,29 @@ internal object InstagramExport {
                 size += n; inflated += n
                 if (inflated > limits.maxInflatedBytes) throw Failure(ImportResult.TOO_LARGE)
                 if (out != null) {
-                    if (size > limits.maxEntryBytes || messageBytes + size > limits.maxMessageBytes) throw Failure(ImportResult.TOO_LARGE)
+                    if (size > limits.maxEntryBytes) throw Failure(ImportResult.TOO_LARGE)
                     out.write(buffer, 0, n)
                 }
             }
             if (out != null) {
-                messageBytes += size
                 val match = FILE_NAME.find(name)!!
-                files.getOrPut(name.substringBeforeLast('/', "")) { mutableListOf() }.add(parseFile(out.toByteArray(), name, match.groupValues[2].toInt(), limits))
+                val file = parseFile(out.toByteArray(), name, match.groupValues[2].toInt(), limits, since)
+                // What is kept counts: the whole file if it keeps a message, else only the names it keeps.
+                messageBytes += if (file.messages.isNotEmpty()) size else (file.senders + file.participants).sumOf { it.length.toLong() }
+                if (messageBytes > limits.maxMessageBytes) throw Failure(ImportResult.TOO_LARGE)
+                files.getOrPut(name.substringBeforeLast('/', "")) { mutableListOf() }.add(file)
             }
         }
     }
 
-    private fun parseFile(bytes: ByteArray, name: String, number: Int, limits: ExportLimits): RawFile {
+    private fun parseFile(bytes: ByteArray, name: String, number: Int, limits: ExportLimits, since: Long?): RawFile {
         val text = try {
             Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
         } catch (_: CharacterCodingException) { throw Failure(ImportResult.MALFORMED) }
         val body = text.removePrefix("\uFEFF").trimStart()
         return when {
-            body.startsWith("{") -> parseJson(body, number, limits)
-            body.startsWith("<") -> parseHtml(body, number, limits)
+            body.startsWith("{") -> parseJson(body, number, limits, since)
+            body.startsWith("<") -> parseHtml(body, number, limits, since)
             else -> throw Failure(ImportResult.MALFORMED)
         }
     }
@@ -168,10 +171,12 @@ internal object InstagramExport {
 
     private fun clean(s: String, limits: ExportLimits) = s.replace("\u0000", "").trim().take(limits.maxTextChars)
 
-    private fun parseJson(body: String, number: Int, limits: ExportLimits): RawFile {
+    private fun parseJson(body: String, number: Int, limits: ExportLimits, since: Long?): RawFile {
         val root = try { JSONObject(body) } catch (_: Exception) { throw Failure(ImportResult.MALFORMED) }
         val participants = ArrayList<String>()
         val messages = ArrayList<RawMessage>()
+        val senders = LinkedHashSet<String>()
+        var old = false
         try {
             root.optJSONArray("participants")?.let { a -> for (i in 0 until a.length()) a.optJSONObject(i)?.optString("name")?.takeIf { it.isNotBlank() }?.let { participants.add(fixMojibake(it)) } }
             val array = root.getJSONArray("messages")
@@ -188,10 +193,12 @@ internal object InstagramExport {
                     listed(m, "audio_files") -> "[voice note]"
                     else -> clean(fixMojibake(m.optString("content")), limits)
                 }
-                if (text.isNotEmpty()) messages.add(RawMessage(sender, ts, ts.toString(), text))
+                if (text.isEmpty()) continue
+                senders.add(sender)
+                if (since != null && ts < since) old = true else messages.add(RawMessage(sender, ts, ts.toString(), text))
             }
         } catch (_: Exception) { throw Failure(ImportResult.MALFORMED) }
-        return RawFile(number, participants, messages, true)
+        return RawFile(number, participants, senders, messages, true, old)
     }
     private fun listed(m: JSONObject, name: String) = (m.optJSONArray(name)?.length() ?: 0) > 0
 
@@ -254,8 +261,10 @@ internal object InstagramExport {
         return null
     }
 
-    private fun parseHtml(body: String, number: Int, limits: ExportLimits): RawFile {
+    private fun parseHtml(body: String, number: Int, limits: ExportLimits, since: Long?): RawFile {
         val messages = ArrayList<RawMessage>()
+        val senders = LinkedHashSet<String>()
+        var old = false
         val formats = timeFormats()
         var start = body.indexOf(H2)
         while (start >= 0) {
@@ -286,26 +295,29 @@ internal object InstagramExport {
             }
             val timeAt = chunk.indexOf(TIME, bodyEnd)
             val rawTime = if (timeAt < 0) "" else chunk.substring(timeAt + TIME.length).substringBefore("</div>").replace(TAG, "").let { entities(it).trim() }
-            if (text.isNotEmpty()) messages.add(RawMessage(sender, if (rawTime.isEmpty()) null else parseTime(rawTime, formats), rawTime, text))
+            if (text.isEmpty()) continue
+            senders.add(sender)
+            val ts = if (rawTime.isEmpty()) null else parseTime(rawTime, formats)
+            if (since != null && ts != null && ts < since) old = true else messages.add(RawMessage(sender, ts, rawTime, text))
         }
-        return RawFile(number, emptyList(), messages, false)
+        return RawFile(number, emptyList(), senders, messages, false, old)
     }
 
     // ---------------- assembling ----------------
     private fun key(name: String) = name.trim().removePrefix("@").lowercase(Locale.ROOT)
 
-    private class Conversation(val people: LinkedHashMap<String, String>, val listed: List<String>, val json: Boolean, val ordered: List<RawMessage>)
+    private class Conversation(val people: LinkedHashMap<String, String>, val listed: List<String>, val json: Boolean, val ordered: List<RawMessage>, val old: Boolean)
 
     private fun assemble(files: Map<String, List<RawFile>>, childName: String?, limits: ExportLimits): ParsedExport {
         val conversations = files.values.map { group ->
             val sorted = group.sortedBy { it.number }
             val people = LinkedHashMap<String, String>()
             val listed = sorted.firstOrNull { it.participants.isNotEmpty() }?.participants.orEmpty()
-            for (name in listed + sorted.flatMap { f -> f.messages.map { it.sender } }) people.putIfAbsent(key(name), name.trim())
+            for (name in listed + sorted.flatMap { it.senders }) people.putIfAbsent(key(name), name.trim())
             // Files are numbered newest first and each lists its messages newest first, so reversing the whole gives oldest first.
             val reversed = sorted.flatMap { it.messages }.asReversed()
             val ordered = if (reversed.all { it.ts != null }) reversed.sortedBy { it.ts } else reversed   // sortedBy is stable
-            Conversation(people, listed.map(::key), sorted.any { it.json }, ordered)
+            Conversation(people, listed.map(::key), sorted.any { it.json }, ordered, sorted.any { it.old })
         }
         // The teen is in every thread they wrote in, but HTML names only who wrote, so a group the teen never wrote in lacks them.
         // So the teen is the one person in more threads than anyone else (and in two at least): threads of two or more people first,
@@ -333,7 +345,7 @@ internal object InstagramExport {
             val other = others.single()
             val label = c.people.getValue(other)
             val messages = c.ordered.map { ExportMessage(key(it.sender) == teen, it.text, it.ts, it.timeKey) }
-            result.add(ExportConversation(label, key(label), messages))
+            result.add(ExportConversation(label, key(label), messages, c.old))
         }
         if (result.isEmpty() && groupKeys.isEmpty()) return ParsedExport(ImportResult.NOTHING_FOUND)
         return ParsedExport(ImportResult.OK, result, groupKeys.distinct())
@@ -373,14 +385,15 @@ internal object InstagramImport {
     fun run(ctx: Context, input: InputStream, fileName: String?, limits: ExportLimits = ExportLimits(), now: Long = System.currentTimeMillis()): ImportSummary {
         val app = ctx.applicationContext
         if (!allowed(app)) return ImportSummary(ImportResult.NOT_ALLOWED)
-        val parsed = InstagramExport.parse(input, fileName, GuardEngine.getChildSelfHandle(app).ifBlank { null }, limits)
+        val cutoff = now - RiskLimits.DAYS * 86_400_000L
+        // Only the 14-day window is kept, so older messages are dropped while reading: an export too large in full can still be read.
+        val parsed = InstagramExport.parse(input, fileName, GuardEngine.getChildSelfHandle(app).ifBlank { null }, limits, cutoff)
         if (parsed.result != ImportResult.OK) return ImportSummary(parsed.result)
         // A time that cannot be read cannot be held to the 14-day limit: such messages are dropped, and a file with nothing but those is not a good export.
         val all = parsed.conversations.flatMap { it.messages }
-        if (all.isNotEmpty() && all.all { it.ts == null }) return ImportSummary(ImportResult.TIME_UNREADABLE)
+        if (all.isNotEmpty() && all.all { it.ts == null } && parsed.conversations.none { it.old }) return ImportSummary(ImportResult.TIME_UNREADABLE)
         return try {
             val scope = GuardEngine.getChannelTopic(app)
-            val cutoff = now - RiskLimits.DAYS * 86_400_000L
             var stored = 0
             var conversations = 0
             // The parse can be long: a wipe, pause, withdrawal or method change meanwhile must win, so permission is checked again under the session lock.
@@ -413,7 +426,7 @@ internal object InstagramImport {
             if (!stillAllowed) return ImportSummary(ImportResult.NOT_ALLOWED)
             try { RiskScoringSchedule.sync(app) } catch (_: RuntimeException) {}
             // One-to-one chats with readable times, none recent: the file is too old, not empty (bug-review B-2).
-            if (conversations == 0 && parsed.conversations.any { c -> c.messages.any { it.ts != null } }) return ImportSummary(ImportResult.TOO_OLD, 0, parsed.groups, stored)
+            if (conversations == 0 && parsed.conversations.any { c -> c.old || c.messages.any { it.ts != null } }) return ImportSummary(ImportResult.TOO_OLD, 0, parsed.groups, stored)
             if (conversations > 0) try { RiskScoringSchedule.afterImport(app) } catch (_: RuntimeException) {}
             ImportSummary(ImportResult.OK, conversations, parsed.groups, stored)
         } catch (_: Exception) {

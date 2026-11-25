@@ -184,6 +184,19 @@ class InstagramImportTest {
         val h1 = import(htmlTwice, "message_1.html"); val h2 = import(htmlTwice, "message_1.html")
         assertEquals(2, h1.messages); assertEquals(0, h2.messages); assertEquals(rows + 2, count("risk_store"))
     }
+    @Test fun oldMessageFilesAreDroppedWhileReadingAndDoNotCountAgainstTheTotal() {
+        activate(ScoresMethod.UPLOAD)
+        val recent = json(chat).toByteArray()
+        val olderBea = json((1..40).map { M(if (it % 2 == 0) teen else friend, "older words number $it", 24 * 20 + it) }).toByteArray()
+        val oldCy = json((1..40).map { M(if (it % 2 == 0) teen else "Cy Pal", "old words number $it", 24 * 30 + it) }, listOf("Cy Pal", teen)).toByteArray()
+        val limits = ExportLimits(maxMessageBytes = recent.size + 100L)
+        val r = import(zip("inbox/bea/message_1.json" to recent, "inbox/bea/message_2.json" to olderBea, "inbox/cy/message_1.json" to oldCy), limits = limits)
+        assertEquals(ImportResult.OK, r.result); assertEquals(1, r.conversations); assertEquals(4, r.messages); assertEquals(0, r.groups)
+        assertTrue(stored().none { it.contains("old") })
+        // Recent files still count in full: the cap is still a cap.
+        val recentCy = json(listOf(M("Cy Pal", "lunch?", 1), M(teen, "yes", 2)), listOf("Cy Pal", teen)).toByteArray()
+        assertEquals(ImportResult.TOO_LARGE, import(zip("inbox/bea/message_1.json" to recent, "inbox/cy/message_1.json" to recentCy), limits = ExportLimits(maxMessageBytes = recent.size + 10L)).result)
+    }
     @Test fun anExportWhoseChatsAreAllOlderThanTheLimitSaysSoAndStoresNothing() {
         activate(ScoresMethod.UPLOAD)
         val old = listOf(M(friend, "ancient", 24 * 15), M(teen, "also ancient", 24 * 16))
