@@ -68,8 +68,8 @@ android { testOptions {
     unitTests.includeAndroidResources = true
     unitTests.all {
         maxHeapSize = '1g'
-        // A failed test prints its message (for example which wait timed out), not only the exception class.
-        testLogging { events 'failed'; exceptionFormat 'full' }
+        // A failed test prints its message, and every test prints when it starts, so a hang shows which test it is in.
+        testLogging { events 'started', 'failed'; exceptionFormat 'full' }
         dependsOn 'copyRobolectricJars'
         systemProperty 'robolectric.offline', 'true'
         systemProperty 'robolectric.dependency.dir', layout.buildDirectory.dir('robolectric-jars').get().asFile.absolutePath
