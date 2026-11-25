@@ -28,8 +28,8 @@ class TermsUpdatedNoticeTest {
     private val consent get()=ctx.getSharedPreferences("ig_guard_consent",Context.MODE_PRIVATE)
     @Before fun reset(){consent.edit().clear().commit();LocalVault.preferences(ctx).edit().clear().commit();ctx.deleteDatabase("family_evidence.db")}
     private fun all(v:View):List<View> = listOf(v)+if(v is ViewGroup)(0 until v.childCount).flatMap{all(v.getChildAt(it))}else emptyList()
-    private fun acceptOlderRevision() {
-        val record=JSONObject().put("accepted",true).put("version","2026-11-18-v2").put("sha256","a".repeat(64))
+    private fun acceptOlderRevision(version:String="2026-11-18-v2") {
+        val record=JSONObject().put("accepted",true).put("version",version).put("sha256","a".repeat(64))
             .put("accepted_at",System.currentTimeMillis()).put("app_version","4.9-beta.3").put("acknowledgments",JSONArray(AppConsent.acknowledgments.toList()))
         consent.edit().putString("receipt",LocalVault.seal(ctx,"consent_receipt",record.toString())).commit()
     }
@@ -51,6 +51,25 @@ class TermsUpdatedNoticeTest {
         ShadowDialog.reset()
         val second=Robolectric.buildActivity(MainActivity::class.java).setup()
         try { assertFalse("shown only once",dialogTexts().any{it.contains("條款已更新")||it.contains("使用條款已更新")}) } finally {second.pause().stop().destroy()}
+    }
+    /** The real 6.0.2 upgrade: a receipt for 6.0/6.0.1's revision gets the notice once and is never asked to consent again. */
+    @Test fun v8ReceiptShowsTheNoticeOnceWithoutNewConsent() {
+        acceptOlderRevision("2026-11-24-v8")
+        assertNotEquals("2026-11-24-v8",AppConsent.VERSION)
+        val first=Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            assertTrue(dialogTexts().any{it.contains("條款已更新")||it.contains("使用條款已更新")})
+            assertNull("no consent page",first.get().findViewById<View>(android.R.id.content).findViewWithTag<Button>("consent_accept"))
+            assertTrue(AppConsent.hasAccepted(ctx))
+            assertEquals("the original receipt is kept","2026-11-24-v8",AppConsent.receipt(ctx)!!.version)
+        } finally {first.pause().stop().destroy()}
+        ShadowDialog.reset()
+        val second=Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            assertFalse("shown only once",dialogTexts().any{it.contains("條款已更新")||it.contains("使用條款已更新")})
+            assertNull(second.get().findViewById<View>(android.R.id.content).findViewWithTag<Button>("consent_accept"))
+            assertTrue(AppConsent.hasAccepted(ctx))
+        } finally {second.pause().stop().destroy()}
     }
     @Test fun currentReceiptShowsNoNotice() {
         AppConsent.accept(ctx,AppConsent.acknowledgments)
