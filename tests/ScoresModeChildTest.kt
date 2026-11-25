@@ -777,13 +777,25 @@ class ScoresModeChildTest {
         val scorer = FakeScorer(logits = { p -> if (p.contains(text(1))) throw IllegalStateException("decode failed") else FakeScorer.HIGH })
         val result = runBatch(scorer)
         assertEquals(RiskBatch.Outcome.COMPLETED, result.outcome); assertEquals(1, result.failedThreads); assertTrue(scorer.closed)
-        assertEquals(2, result.scored); assertTrue(RiskLocal.lastRun(ctx) > 0)
+        assertEquals(1, result.scored); assertTrue(RiskLocal.lastRun(ctx) > 0)
+        assertEquals("a first throw stores nothing: the thread is tried again", 1, dueCount())
+        // The same thread throws again at the same sequence: now it is stored as needs review.
+        val again = runBatch(scorer)
+        assertEquals(1, again.failedThreads); assertEquals(1, again.scored); assertEquals(3, scorer.prompts.size)
         FamilyEvidence(ctx).use { db ->
             val rows = db.riskReportRows(scope, System.currentTimeMillis())
             assertEquals("insufficient_context", rows.first { it.label == "bad" }.reason); assertEquals(100.0, rows.first { it.label == "good" }.score!!, 0.01)
             assertTrue("the failed thread is not retried until it has new messages", db.riskDueThreads(scope).isEmpty())
         }
-        assertEquals(0, runBatch(FakeScorer()).scored)
+        val idle = FakeScorer(); assertEquals(0, runBatch(idle).scored); assertTrue(idle.prompts.isEmpty())
+    }
+    @Test fun aThreadWhoseScorerCallThrowsOnceIsScoredAgainWithoutNewMessages() {
+        activate(); capture(obs(text(1)))
+        val passing = runBatch(FakeScorer(logits = { throw IllegalStateException("passing native failure") }))
+        assertEquals(RiskBatch.Outcome.COMPLETED, passing.outcome); assertEquals(1, passing.failedThreads); assertEquals(0, passing.scored)
+        assertEquals("a single thrown call stores nothing, so the thread stays due", 1, dueCount())
+        val retried = FakeScorer(); runBatch(retried)
+        assertEquals(1, retried.prompts.size); assertNull(latestReason()); assertEquals(0, dueCount())
     }
     @Test fun aScorerThatCannotOpenFailsTheRunRecordsNothingAndBacksOffSixHours() {
         activate(); capture(obs(text(1)))

@@ -473,7 +473,7 @@ internal object RiskLocal {
     /** Store and results only: queued reports (such as the "model is valid" state) are left alone. */
     private fun wipeStore(ctx: Context) = retrying("store") {
         FamilyEvidence(ctx).use { it.wipeRisk() }
-        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(LAST_IMPORT).remove(IMPORT_REQUEST).remove(IMPORT_REQUEST_DONE).remove(WIPE_PENDING).remove(RiskBatch.IN_FLIGHT).remove(RiskBatch.IN_FLIGHT_SUSPECT).commit()
+        prefs(ctx).edit().remove(LAST_SCORED).remove(LAST_REVIEW).remove(LAST_IMPORT).remove(IMPORT_REQUEST).remove(IMPORT_REQUEST_DONE).remove(WIPE_PENDING).remove(RiskBatch.IN_FLIGHT).remove(RiskBatch.IN_FLIGHT_SUSPECT).remove(RiskBatch.THREW_ONCE).commit()
     }
 
     /** Leaving the child role, a new family, or a remote reset: data plus all mode state and the consent receipt. */
@@ -967,10 +967,13 @@ internal object RiskBatch {
     internal const val DEATHS_TO_MARK = 2
     private fun sameCall(a: JSONObject, scope: String, thread: String, seq: Long) =
         a.optString("scope") == scope && a.optString("thread") == thread && a.optLong("seq", -1L) == seq
+    /** Content-free {"scope", "threads": {blind thread index: sequence}} of threads whose scorer call threw once at that sequence. */
+    internal const val THREW_ONCE = "risk_scoring_threw_once"
 
     /**
-     * A thread whose scorer call throws anything but [RiskContextTooLong] is stored as "insufficient_context" at its
-     * newest sequence, so it is not retried until it has new messages, and the run goes on. A scorer that cannot be
+     * A thread whose scorer call throws anything but [RiskContextTooLong] is not stored the first time (the failure may pass),
+     * so the next run scores it again. If it throws again at the same sequence it is stored as "insufficient_context" at its
+     * newest sequence, so it is not retried until it has new messages. Either way the run goes on. A scorer that cannot be
      * opened (or a library that cannot load) fails the run: nothing is recorded and the failure time delays the next try.
      */
     fun run(ctx: Context, openScorer: (File) -> RiskScorer, shouldStop: () -> Boolean): Result {
@@ -1005,6 +1008,8 @@ internal object RiskBatch {
             edit.commit()
         }
         val suspect = prefs.getString(IN_FLIGHT_SUSPECT, null)?.let { try { JSONObject(it) } catch (_: Exception) { null } }
+        val threwOnce = prefs.getString(THREW_ONCE, null)?.let { try { JSONObject(it).takeIf { o -> o.optString("scope") == scope }?.getJSONObject("threads") } catch (_: Exception) { null } } ?: JSONObject()
+        fun saveThrewOnce() { prefs.edit().putString(THREW_ONCE, JSONObject().put("scope", scope).put("threads", threwOnce).toString()).commit() }
         val due = FamilyEvidence(app).use { it.riskDueThreads(scope) }
         var scored = 0
         var review = 0
@@ -1026,6 +1031,7 @@ internal object RiskBatch {
                     if (messages.isEmpty()) continue
                     var score: Double? = null
                     var reason: String? = null
+                    var threw = false
                     // Written to disk before the call; only a process death leaves it behind. It carries the earlier death count only
                     // for the same thread and sequence, so deaths of different threads never add up.
                     val deaths = if (suspect != null && sameCall(suspect, scope, thread, seq)) suspect.optInt("deaths", 0) else 0
@@ -1037,7 +1043,7 @@ internal object RiskBatch {
                     } catch (_: RiskContextTooLong) { reason = "context_too_long"
                     } catch (e: Exception) {
                         Log.w("IGGuard", "One thread could not be scored: ${e.javaClass.simpleName}")
-                        reason = "insufficient_context"; failures++
+                        reason = "insufficient_context"; failures++; threw = true
                     } finally {
                         // The call returned (scored, failed, or a cooperative stop): no death, so marker and count are cleared.
                         val e = prefs.edit().remove(IN_FLIGHT)
@@ -1047,6 +1053,10 @@ internal object RiskBatch {
                     // A pause, withdrawal or session change during the (uninterruptible) scorer call discards the result.
                     val after = halt()
                     if (after != null) { outcome = after; break }
+                    // A first throw at this sequence stores nothing, so a passing failure does not leave the thread unscored;
+                    // a second throw in a row stores it, so a thread that always throws costs at most two calls per sequence.
+                    if (threw && threwOnce.optLong(thread, -1L) != seq) { threwOnce.put(thread, seq); saveThrewOnce(); continue }
+                    if (threwOnce.remove(thread) != null) saveThrewOnce()
                     if (FamilyEvidence(app).use { it.saveRiskResult(scope, thread, seq, score, reason, System.currentTimeMillis()) }) {
                         scored++
                         if (score == null) review++
