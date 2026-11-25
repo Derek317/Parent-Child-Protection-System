@@ -153,6 +153,20 @@ class DeploymentIsolation(unittest.TestCase):
         self.assertIn("needs.relay-deploy.result", condition)
         self.assertIn("needs.build.result", condition)
 
+    def test_deploy_and_signing_wait_for_the_app_tests_which_hold_no_secrets(self):
+        tests = JOBS['app-test']
+        self.assertNotIn('environment', tests)
+        self.assertNotIn('needs', tests)
+        self.assertNotIn('secrets.', yaml.safe_dump(tests))
+        self.assertIn('Run regression checks', [s.get('name') for s in tests['steps']])
+        # The signing job no longer runs the tests itself: it only starts after they passed.
+        self.assertNotIn('Run regression checks', [s.get('name') for s in steps('build')])
+        for job in ('relay-deploy', 'build'):
+            self.assertIn('app-test', JOBS[job]['needs'], job)
+        self.assertNotIn('always()', str(JOBS['relay-deploy'].get('if')))
+        self.assertNotIn('!cancelled()', str(JOBS['relay-deploy'].get('if')))  # default: every needed job must succeed
+        self.assertIn("needs.app-test.result == 'success'", JOBS['build']['if'])
+
 
 class ThirdPartyActionsArePinned(unittest.TestCase):
     def test_every_uses_is_a_full_commit_sha_with_a_tag_comment(self):

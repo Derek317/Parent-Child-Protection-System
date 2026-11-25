@@ -17,7 +17,7 @@ python3 - <<'PY'
 from pathlib import Path
 import os,re,shutil
 repo=Path(os.environ['IG_GUARD_SOURCE']); out=Path(os.environ['IG_GUARD_BUILD'])
-s=(repo/'.github/workflows/build-apk.yml').read_text().split('      - name: Assemble Android project structure\n',1)[1].split('        run: |\n',1)[1].split('\n      - name:',1)[0]
+s=(repo/'.github/workflows/build-apk.yml').read_text().split('      - name: Assemble Android project structure\n',1)[1].split('        run: &assemble_android |\n',1)[1].split('\n      - name:',1)[0]
 s='\n'.join(x[10:] if x.startswith('          ') else x for x in s.splitlines())+'\n'
 s=s.replace('${{ github.run_number }}','1')
 (out/'generate.sh').write_text(s)

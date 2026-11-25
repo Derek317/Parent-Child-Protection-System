@@ -55,82 +55,11 @@ jobs:
         run: npm ci && npm test
 
   # Production deploy. Only this job can see Cloudflare secrets, and only on main or a hotfix tag.
-  relay-deploy:
-    needs: relay-test
-    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/4.8-hotfix.') }}
-    environment: relay-prod
-    concurrency:
-      group: ig-guard-relay-deploy
-      cancel-in-progress: false
+  # The app's Python and Kotlin tests, with no environment and no secrets. The relay deploy and the signing job both wait for it.
+  app-test:
     runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout relay source
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - name: Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: relay/package-lock.json
-
-      - name: Install relay dependencies
-        working-directory: relay
-        run: npm ci
-
-      - name: Deploy to the configured Cloudflare account
-        working-directory: relay
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
-          WRANGLER_SEND_METRICS: 'false'
-        run: |
-          set -euo pipefail
-          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            npm run deploy | tee "$RUNNER_TEMP/relay-deployment.txt"
-            python3 - "$RUNNER_TEMP/relay-deployment.txt" <<'PY'
-          from pathlib import Path
-          import re, sys
-          for endpoint in dict.fromkeys(re.findall(r'https://[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev',Path(sys.argv[1]).read_text())):
-              print('::notice title=Cloudflare deployed endpoint::'+endpoint)
-          PY
-          else
-            echo "::warning title=Cloudflare deploy skipped::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is missing. Checking the existing endpoint instead."
-            echo "Cloudflare deployment credentials are not configured; checking the existing endpoint instead." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Verify deployed relay and authenticated offline delivery
-        env:
-          RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
-        run: |
-          set -euo pipefail
-          status=0
-          python3 scripts/relay-config.py --require --probe || status=1
-          if (cd relay && npm run smoke); then
-            echo "::notice title=Relay protocol::Authenticated WebSocket, offline delivery and signed receipt checks passed."
-          else
-            status=1
-          fi
-          exit "$status"
-
-  build:
-    needs: [plan, relay-test, relay-deploy]
-    # relay-deploy is skipped on refs that do not deploy; a failed or cancelled test/deploy stops the build.
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.relay-test.result == 'success' && (needs.relay-deploy.result == 'success' || needs.relay-deploy.result == 'skipped') }}
-    # `release` (protected refs only) holds the signing secrets; other refs get an empty, unprotected environment.
-    environment: ${{ needs.plan.outputs.environment }}
-    runs-on: ubuntu-24.04
-    # A normal run takes about 15 minutes (25 with the model on a tag); a hung test must not hold the queue for 6 hours.
-    timeout-minutes: 60
-    env:
-      RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
-      # The one place the release model is fetched from (uploaded by hand to the `model-beacon` release; never in git).
-      # Its last path segment must equal RiskModelSpec.FILE_NAME in RiskModel.kt; the packaging step checks that.
-      MODEL_URL: https://github.com/Derek317/Parent-Child-Protection-System/releases/download/model-beacon/qwen3-1.7b-beacon-Q4_K_M.gguf
-    outputs:
-      artifact_name: ${{ steps.package_signed.outputs.artifact_name || steps.package_unsigned.outputs.artifact_name }}
-      signed_verified: ${{ steps.verify.outputs.signed_verified }}
-      model_packaged: ${{ steps.package_model.outputs.model_packaged }}
+    # A normal run takes about 10 minutes; a hung test must not hold the queue for 6 hours.
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -151,7 +80,7 @@ jobs:
           gradle-version: '8.7'
 
       - name: Assemble Android project structure
-        run: |
+        run: &assemble_android |
           set -euo pipefail
 
           mkdir -p app/src/main/java/app/family/igguard
@@ -468,6 +397,104 @@ jobs:
           EOF
           gradle testDebugUnitTest lintDebug --no-daemon
 
+  relay-deploy:
+    needs: [relay-test, app-test]
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/4.8-hotfix.') }}
+    environment: relay-prod
+    concurrency:
+      group: ig-guard-relay-deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout relay source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: relay/package-lock.json
+
+      - name: Install relay dependencies
+        working-directory: relay
+        run: npm ci
+
+      - name: Deploy to the configured Cloudflare account
+        working-directory: relay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -euo pipefail
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            npm run deploy | tee "$RUNNER_TEMP/relay-deployment.txt"
+            python3 - "$RUNNER_TEMP/relay-deployment.txt" <<'PY'
+          from pathlib import Path
+          import re, sys
+          for endpoint in dict.fromkeys(re.findall(r'https://[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev',Path(sys.argv[1]).read_text())):
+              print('::notice title=Cloudflare deployed endpoint::'+endpoint)
+          PY
+          else
+            echo "::warning title=Cloudflare deploy skipped::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is missing. Checking the existing endpoint instead."
+            echo "Cloudflare deployment credentials are not configured; checking the existing endpoint instead." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Verify deployed relay and authenticated offline delivery
+        env:
+          RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
+        run: |
+          set -euo pipefail
+          status=0
+          python3 scripts/relay-config.py --require --probe || status=1
+          if (cd relay && npm run smoke); then
+            echo "::notice title=Relay protocol::Authenticated WebSocket, offline delivery and signed receipt checks passed."
+          else
+            status=1
+          fi
+          exit "$status"
+
+  build:
+    needs: [plan, relay-test, app-test, relay-deploy]
+    # relay-deploy is skipped on refs that do not deploy; a failed or cancelled test/deploy stops the build.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.relay-test.result == 'success' && needs.app-test.result == 'success' && (needs.relay-deploy.result == 'success' || needs.relay-deploy.result == 'skipped') }}
+    # `release` (protected refs only) holds the signing secrets; other refs get an empty, unprotected environment.
+    environment: ${{ needs.plan.outputs.environment }}
+    runs-on: ubuntu-24.04
+    # A normal run takes about 10 minutes (20 with the model on a tag); a hang must not hold the queue for 6 hours.
+    timeout-minutes: 60
+    env:
+      RELAY_BASE_URL: ${{ vars.RELAY_BASE_URL }}
+      # The one place the release model is fetched from (uploaded by hand to the `model-beacon` release; never in git).
+      # Its last path segment must equal RiskModelSpec.FILE_NAME in RiskModel.kt; the packaging step checks that.
+      MODEL_URL: https://github.com/Derek317/Parent-Child-Protection-System/releases/download/model-beacon/qwen3-1.7b-beacon-Q4_K_M.gguf
+    outputs:
+      artifact_name: ${{ steps.package_signed.outputs.artifact_name || steps.package_unsigned.outputs.artifact_name }}
+      signed_verified: ${{ steps.verify.outputs.signed_verified }}
+      model_packaged: ${{ steps.package_model.outputs.model_packaged }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK 34
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+        with:
+          gradle-version: '8.7'
+
+      - name: Assemble Android project structure
+        run: *assemble_android
+
       - name: Compile unsigned APK
         id: package_unsigned
         if: needs.plan.outputs.protected != 'true'
@@ -623,12 +650,13 @@ jobs:
           retention-days: 1
 
   release:
-    needs: [plan, relay-test, relay-deploy, build]
+    needs: [plan, relay-test, app-test, relay-deploy, build]
     # A tag whose build FAILED still publishes the documented notes-only release (docs/releases/4.7.md),
-    # so a failed build is accepted here. It does not publish when the relay tests or deploy failed (build is
+    # so a failed build is accepted here, and so are failed app tests (they ran inside the build job before they
+    # got their own job). It does not publish when the relay tests or deploy failed (build is
     # then skipped), when the run was cancelled, or for refs that are not release tags. A rejected
     # environment approval also appears as a failed build; see docs/ci-secrets-hardening.md.
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') && github.event.deleted != true && needs.plan.outputs.protected == 'true' && needs.relay-test.result == 'success' && (needs.relay-deploy.result == 'success' || needs.relay-deploy.result == 'skipped') && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') && github.event.deleted != true && needs.plan.outputs.protected == 'true' && needs.relay-test.result == 'success' && (needs.relay-deploy.result == 'success' || needs.relay-deploy.result == 'skipped') && (needs.build.result == 'success' || needs.build.result == 'failure' || needs.app-test.result == 'failure') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
