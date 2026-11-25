@@ -278,6 +278,22 @@ class TwoPhoneRelayTest {
         try { waitUntil("redelivered to the child's family connection") { received.containsAll(keys) } } finally { socket.cancel() }
     }
 
+    /** A delivery worker of the family before the pairing is still ending when the parent accepts: M3 must not wait for a later trigger. */
+    @Test fun m3IsSentWhenAnOlderDeliveryWorkerEndsAfterThePairingWasAccepted() {
+        val p = Phones(); p.upToDigits()
+        val ending = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
+        GuardEngine.beforeDeliveryWorkerEndsForTest = { GuardEngine.beforeDeliveryWorkerEndsForTest = null; ending.countDown(); release.await(60, java.util.concurrent.TimeUnit.SECONDS) }
+        try {
+            GuardEngine.requestFullCapture(ctx) // an older record of the family before the pairing
+            assertTrue("the older delivery worker is ending", ending.await(20, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
+            val family = roomOf(GuardEngine.getOrCreateFamilyToken(ctx))
+            settle(1000) // the pairing's own requests to deliver were turned away: the older worker still holds the slot
+            release.countDown()
+            waitUntil("M3 at the relay after the older worker ended", seen = { synchronized(relay) { " (published=${family.published.map { it.first }})" } }) { synchronized(relay) { family.published.size == 1 } }
+        } finally { GuardEngine.beforeDeliveryWorkerEndsForTest = null; release.countDown() }
+    }
+
     /** The parent's "取消並重新配對" and the automatic 10-minute rollback both retire the new family room: a late child gets 410. */
     @Test fun aRolledBackPairingRetiresTheNewRoomSoALateChildStops() {
         for (force in listOf(true, false)) {

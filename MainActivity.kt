@@ -183,6 +183,8 @@ object GuardEngine {
     // State transactions only. Never hold this lock during network I/O.
     private val pollLock = Any()
     private val deliveryInFlight = AtomicBoolean(false)
+    /** Tests only: runs on a delivery worker as it ends, before it gives the delivery slot back. */
+    @Volatile internal var beforeDeliveryWorkerEndsForTest: (() -> Unit)? = null
     /** A QR-join password check runs off the main thread; set and cleared on it, so the UI-thread checks refuse meanwhile and every attempt stays in order. */
     internal val passwordCheckRunning = AtomicBoolean(false)
     private data class DeliveryCallback(val origin:Triple<String,String,Int>,val complete:(Boolean,String)->Unit)
@@ -1956,11 +1958,15 @@ object GuardEngine {
                     }
                 }
             } finally {
+                beforeDeliveryWorkerEndsForTest?.invoke()
                 deliveryInFlight.set(false)
                 if(AppConsent.hasAccepted(app))finishDeliveryCallbacks(app)
                 app.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(app.packageName))
                 // A new capture arriving as the worker exits must not be stranded.
-                if(transferAllowed(app) && captureRelaySession(app)==session && relayRouteTokens(app).any{token->FamilyEvidence(app).use{it.due(getChannelTopicForToken(token),System.currentTimeMillis(),session.first).isNotEmpty()}})retryPendingAlerts(app)
+                // Also after the family or role changed meanwhile: a pairing queues its record while this worker still holds the
+                // slot, so its own call was turned away. The role is read now, not taken from this worker's session.
+                val role=captureRelaySession(app).first
+                if(transferAllowed(app) && relayRouteTokens(app).any{token->FamilyEvidence(app).use{it.due(getChannelTopicForToken(token),System.currentTimeMillis(),role).isNotEmpty()}})retryPendingAlerts(app)
             }
         }
     }
