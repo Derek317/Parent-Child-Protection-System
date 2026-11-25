@@ -307,4 +307,16 @@ class ChildReleaseTest {
             } finally {c.pause().stop().destroy()}
         }
     }
+    @Test fun aSentReleaseSaysThePairingAgainIsByQrCode() {
+        for (outcome in listOf(GuardEngine.ReleaseOutcome.SENT,GuardEngine.ReleaseOutcome.SENT_UNSURE)) {
+            prefs.edit().clear().commit();ctx.deleteDatabase("family_evidence.db");GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,secret)
+            val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+            try {
+                openLeaveSheetWith(outcome,a)
+                val text=texts().first{it.startsWith("解除指令")}
+                assertTrue(text,text.contains("QR 碼重新配對"));assertFalse(text,text.contains("用邀請"))
+                if(outcome==GuardEngine.ReleaseOutcome.SENT){assertTrue(text,text.contains("with the QR code"));assertFalse(text,text.contains("invite"))}
+            } finally {c.pause().stop().destroy()}
+        }
+    }
 }
