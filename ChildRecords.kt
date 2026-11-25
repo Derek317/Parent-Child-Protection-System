@@ -92,7 +92,9 @@ object ChildRecords {
         val ids = state.optJSONObject("ids") ?: JSONObject().also { state.put("ids", it) }
         if (ids.has(child.id) || child.timeMs < state.optLong(child.type)) return GateResult.Replay
         for (key in ids.keys().asSequence().toList()) if (ids.optLong(key) < now - CONTROL_KEEP_MS) ids.remove(key)
-        ids.put(child.id, child.timeMs); state.put(child.type, child.timeMs)
+        // The ordering mark is clamped to now (a record may be dated 24 h ahead); the id keeps its own time so it stays a replay
+        // for as long as the record itself is in its window.
+        ids.put(child.id, child.timeMs); state.put(child.type, minOf(child.timeMs, now))
         return GateResult.Verified(record, child.type, child.id, child.timeMs, state.toString())
     }
 

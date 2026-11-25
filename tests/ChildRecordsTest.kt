@@ -224,6 +224,19 @@ class ChildRecordsTest {
         assertTrue(gate(wrap(first), state = null) is GateResult.Verified)
     }
 
+    /** A child clock set ahead and then back: the record dated ahead must not hold later records back, nor be replayable. */
+    @Test fun aControlRecordDatedAheadDoesNotBlockLaterOnesOnceTheClockIsBack() {
+        val hour = 3_600_000L
+        val ahead = control("capture_ack", now + 10 * hour)
+        val s1 = verified(wrap(ahead)).newControlState!!
+        val back = gate(wrap(control("capture_ack", now + 60_000)), state = s1, at = now + 60_000)
+        assertTrue("a record with the real time after the clock was set back: $back", back is GateResult.Verified)
+        // 25 hours on, another record prunes the old ids; the record dated ahead is still inside its window and still a replay.
+        val later = now + 25 * hour
+        val s3 = verified(wrap(control("sync_child_handle", later)), state = (back as GateResult.Verified).newControlState, at = later).newControlState
+        assertEquals(GateResult.Replay, gate(wrap(ahead), state = s3, at = later))
+    }
+
     @Test fun tamperNoticeAtMostOncePerHour() {
         assertTrue(ChildRecords.tamperNoticeDue(0, now))
         assertFalse(ChildRecords.tamperNoticeDue(now, now))

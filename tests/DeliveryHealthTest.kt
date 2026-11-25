@@ -223,6 +223,15 @@ class DeliveryHealthTest {
         assertFalse(prefs.contains(DeliveryHealth.FIRST_BAD_MS))
     }
 
+    /** A child clock set ahead and then back: the heartbeat dated ahead must not switch the check off until the real time catches up. */
+    @Test fun aHeartbeatDatedAheadDoesNotBlockTheCheckOnceTheChildClockIsBack() {
+        parentWithPinnedChild(); connectedFor(20)
+        val now = System.currentTimeMillis()
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb("00", "0000", "0", ts = now + 10 * 60 * 60_000L))))   // 10 hours ahead
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb("03", "0090", "0", ts = now + 60_000L))))             // the real time again
+        assertEquals("the bad report after the clock was set back raises the notice", 1, notices())
+    }
+
     /** A signed scores report as a QR-paired child queues it (control record, receipt requested); [model] "other" is refused by the parser. */
     private fun scoresReport(sentAt: Long, model: String = "valid", rows: Int = 0): Pair<String, JSONObject> {
         val id = UUID.randomUUID().toString()

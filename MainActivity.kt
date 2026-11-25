@@ -2243,7 +2243,8 @@ object GuardEngine {
     private fun noteDeliveryHealth(ctx: Context, record: JSONObject, onNewAlertForParent: ((JSONObject) -> Unit)?, now: Long) {
         val report = DeliveryHealth.parse(record) ?: return
         // Only a heartbeat sent after the last one acted on counts: a delayed or replayed older one neither clears nor raises.
-        val sentAt = record.optLong("ts_ms", 0L)
+        // Clamped to now as recordChildHeartbeatOnParent does: a heartbeat dated ahead must not switch the check off once the clock is back.
+        val sentAt = minOf(record.optLong("ts_ms", 0L), now)
         if (sentAt <= prefs(ctx).getLong(DeliveryHealth.LAST_SENT_MS, 0L)) return
         check(prefs(ctx).edit().putLong(DeliveryHealth.LAST_SENT_MS, sentAt).commit())
         if (report.clear) { check(prefs(ctx).edit().remove(DeliveryHealth.NOTICE_MS).remove(DeliveryHealth.FIRST_BAD_MS).commit()); return }
