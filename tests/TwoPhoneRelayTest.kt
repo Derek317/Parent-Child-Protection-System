@@ -185,6 +185,15 @@ class TwoPhoneRelayTest {
         while (System.currentTimeMillis() < until) { idle(); if (condition()) return; Thread.sleep(50) }
         idle(); assertTrue("timed out: $what${seen()}", condition())
     }
+    /** For a wait that timed out: what became of the records queued for [token]'s family, and what the relay client last said. No content. */
+    private fun whyNotSent(token: String): String {
+        val now = System.currentTimeMillis()
+        val rows = FamilyEvidence(ctx).use { db -> db.readableDatabase.rawQuery("SELECT role,relay_kind,attempts,retry_at,accepted FROM outbox WHERE scope=?", arrayOf(GuardEngine.getChannelTopicForToken(token))).use { c ->
+            buildList { while (c.moveToNext()) add("${c.getString(0)}/${c.getString(1)} attempts=${c.getInt(2)} retry_in_ms=${c.getLong(3) - now} accepted=${c.getInt(4)}") } } }
+        val room = roomOf(token)
+        return " (published=${synchronized(relay) { room.published.map { it.first } }}, outbox=$rows, retired=${room.retired}, refusals=${synchronized(relay) { relay.refusals.toList() }}," +
+            " status=${GuardEngine.cpLastHttpStatus} | ${GuardEngine.cpParentStreamState})"
+    }
     /** Keeps the main looper running for [ms] (relay callbacks are posted to it). */
     private fun settle(ms: Long) { val until = System.currentTimeMillis() + ms; while (System.currentTimeMillis() < until) { idle(); Thread.sleep(50) } }
     private fun roomOf(token: String) = relay.room(FamilyRelay.room(GuardEngine.relayPublicKey(ctx), GuardEngine.getChannelTopicForToken(token)))
@@ -255,7 +264,7 @@ class TwoPhoneRelayTest {
         fun relayKey(frameId: String) = "c0" + MessageDigest.getInstance("SHA-256").digest(frameId.toByteArray()).joinToString("") { "%02x".format(it) }
         assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
         val token = GuardEngine.getOrCreateFamilyToken(ctx); val family = roomOf(token)
-        waitUntil("M3 at the relay", seen = { synchronized(relay) { " (published=${family.published.map { it.first }})" } }) { synchronized(relay) { family.published.size == 1 } }
+        waitUntil("M3 at the relay", seen = { whyNotSent(token) }) { synchronized(relay) { family.published.size == 1 } }
         repeat(3) { GuardEngine.requestFullCapture(ctx) } // three signed capture_policy commands into the new room
         waitUntil("the commands reached the new room", seen = { synchronized(relay) { " (published=${family.published.map { it.first }}, child inbox=${family.inbox.getValue("child").size})" } }) { synchronized(relay) { family.published.size == 4 && family.inbox.getValue("child").size == 4 } }
         val keys = synchronized(relay) { family.published.drop(1).map { relayKey(it.second) } }
@@ -320,7 +329,7 @@ class TwoPhoneRelayTest {
             val p = Phones(); p.upToDigits()
             assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
             val token = GuardEngine.getOrCreateFamilyToken(ctx); val family = roomOf(token)
-            waitUntil("M3 at the relay (force=$force)", seen = { synchronized(relay) { " (published=${family.published.map { it.first }})" } }) { synchronized(relay) { family.published.size == 1 } }
+            waitUntil("M3 at the relay (force=$force)", seen = { whyNotSent(token) }) { synchronized(relay) { family.published.size == 1 } }
             assertTrue(GuardEngine.expireUnconfirmedChildPairing(ctx, if (force) System.currentTimeMillis() else System.currentTimeMillis() + Pairing.CONFIRM_WINDOW_MS, force))
             waitUntil("the new room is retired (force=$force)") { family.retired }
             val alias = TestKeyStore.privateKeys.keys.single { it.startsWith("ig_guard.child_signing") }
