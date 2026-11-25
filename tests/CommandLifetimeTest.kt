@@ -105,4 +105,53 @@ class CommandLifetimeTest {
         }
         assertEquals("child", role); assertEquals(fresh, token)
     }
+
+    /** A reset the real parent queued for family A reaches the child only after the same parent and child paired again (token B). */
+    @Test fun aResetQueuedForTheOldFamilyDoesNotTouchTheNewPairing() {
+        GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
+        val invite = QrPairing.legacyInvite(ctx); val familyA = invite.token; val scopeA = GuardEngine.getChannelTopicForToken(familyA)
+        val identity = FamilySecurity.loadOrCreateParentIdentity(ctx, null, invite.parentPublicKey)
+        GuardEngine.rotateKeyAndNotifyChild(ctx, true)
+        val queued = FamilyEvidence(ctx).use { it.due(scopeA, Long.MAX_VALUE, "parent") }.map { it.wire }
+        assertTrue("the reset is queued for family A", queued.isNotEmpty())
+        // This phone now plays the child: a child of family A, then paired again by QR with the same parent (new token B).
+        GuardEngine.setRole(ctx, "unconfigured")
+        prefs.edit().remove("parent_master_password").remove("parent_share_verifier").remove("parent_signing_public").commit()
+        assertTrue(GuardEngine.applyPairing(ctx, invite)); assertEquals(familyA, token)
+        QrPairing.pairChild(ctx, identity, password = QrPairing.PASSWORD)
+        val familyB = token; assertNotEquals(familyA, familyB)
+        for (wire in queued) {
+            val frame = GuardEngine.decryptPayload(familyA, wire)!!
+            assertEquals("remote_reset_child", JSONObject(frame.getJSONObject("envelope").getString("payload")).getString("type"))
+            assertEquals("under A's key: unreadable here", RelayConsumption.REJECTED, GuardEngine.processIncomingRelayLine(ctx,
+                JSONObject().put("event", "message").put("id", UUID.randomUUID().toString()).put("message", wire).toString(), "child", null))
+            assertEquals("re-encrypted for B's room", RelayConsumption.REJECTED, deliver(frame, familyB))
+            // The check that refuses it: the parent's signature is good, the signed scope is A's room, not B's.
+            val now = System.currentTimeMillis()
+            assertNotNull(FamilySecurity.readCommand(frame.getJSONObject("envelope"), identity.publicKey, scopeA, now))
+            assertNull(FamilySecurity.readCommand(frame.getJSONObject("envelope"), identity.publicKey, GuardEngine.getChannelTopicForToken(familyB), now))
+        }
+        assertEquals("the new pairing is untouched", "child", role); assertEquals(familyB, token)
+        assertTrue(GuardEngine.hasSecureParentCommands(ctx))
+    }
+
+    // ---------------- ordering over days, and a wrong child clock ----------------
+    /** A late, older key_rotated after a newer one: refused, and REJECTED (not RETRY) so the relay connection consumes it. */
+    @Test fun aLateOlderKeyRotationIsRefusedAndConsumed() {
+        QrPairing.pairChild(ctx, parent)
+        val b = UUID.randomUUID().toString()
+        assertEquals(RelayConsumption.CONSUMED, deliver(record(rotation(day, b)))); assertEquals(b, token)
+        val older = record(rotation(2 * day))   // signed for the room the child is in now, but older than the rotation it followed
+        assertEquals(RelayConsumption.REJECTED, deliver(older))
+        assertEquals(b, token)
+        assertEquals("again: the same answer, never RETRY", RelayConsumption.REJECTED, deliver(older))
+    }
+
+    /** A child clock more than 10 days ahead (or more than 2 minutes behind) refuses the command: it fails closed. */
+    @Test fun aChildClockOutsideTheWindowRefusesTheCommand() {
+        QrPairing.pairChild(ctx, parent); val current = token
+        assertEquals("child clock 10 days and a minute ahead", RelayConsumption.REJECTED, deliver(record(rotation(10 * day + 60_000L))))
+        assertEquals("child clock 3 minutes behind", RelayConsumption.REJECTED, deliver(record(reset(-3 * 60_000L))))
+        assertEquals(current, token); assertEquals("child", role)
+    }
 }

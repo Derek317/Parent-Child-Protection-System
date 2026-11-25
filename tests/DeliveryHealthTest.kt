@@ -232,6 +232,20 @@ class DeliveryHealthTest {
         assertEquals("the bad report after the clock was set back raises the notice", 1, notices())
     }
 
+    /** A child clock wrong by more than the 10-day command window: its heartbeats fall outside the parent's window too, so the parent
+     *  stops seeing heartbeats and its existing missing-heartbeat alert fires; each refused record is counted as a quiet drop. */
+    @Test fun aChildClockFarOffShowsOnTheParentAsMissingHeartbeats() {
+        parentWithPinnedChild()
+        val now = System.currentTimeMillis()
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb("00", "0000", "0", ts = now - 101 * 60_000L))))   // the last good heartbeat
+        val drops = GuardEngine.childQuietDrops(ctx)
+        assertEquals("11 days ahead", RelayConsumption.REJECTED, deliver(signed(hb("00", "0000", "0", ts = now + 11 * 86_400_000L))))
+        assertEquals("11 days behind", RelayConsumption.REJECTED, deliver(signed(hb("00", "0000", "0", ts = now - 11 * 86_400_000L))))
+        assertEquals(drops + 2, GuardEngine.childQuietDrops(ctx))
+        assertTrue("no heartbeat counted: overdue", GuardEngine.isChildHeartbeatOverdue(ctx))
+        assertTrue("the parent's missing-heartbeat alert fires", GuardEngine.shouldFireHeartbeatMissingAlert(ctx))
+    }
+
     /** A signed scores report as a QR-paired child queues it (control record, receipt requested); [model] "other" is refused by the parser. */
     private fun scoresReport(sentAt: Long, model: String = "valid", rows: Int = 0): Pair<String, JSONObject> {
         val id = UUID.randomUUID().toString()
