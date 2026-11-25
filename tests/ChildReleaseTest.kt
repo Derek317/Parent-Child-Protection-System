@@ -236,4 +236,61 @@ class ChildReleaseTest {
             } finally {c.pause().stop().destroy()}
         }
     }
+
+    // ---- a frame written to the relay's socket may have reached it ----
+    /** A local relay: "accept" takes every publish; "after" closes the socket once a publish frame arrives; "before" closes before ready. */
+    private class Relay(val mode:String):okhttp3.mockwebserver.Dispatcher() {
+        val published=java.util.concurrent.atomic.AtomicBoolean()
+        val server=okhttp3.mockwebserver.MockWebServer().also{it.dispatcher=this}
+        override fun dispatch(request:okhttp3.mockwebserver.RecordedRequest)=okhttp3.mockwebserver.MockResponse().withWebSocketUpgrade(object:okhttp3.WebSocketListener(){
+            override fun onOpen(webSocket:okhttp3.WebSocket,response:okhttp3.Response){
+                if(mode=="before")webSocket.close(1011,"gone") else webSocket.send("{\"type\":\"ready\",\"protocol\":1}")
+            }
+            override fun onMessage(webSocket:okhttp3.WebSocket,text:String){
+                val p=JSONObject(text);if(p.optString("type")!="publish")return
+                published.set(true)
+                if(mode=="accept")webSocket.send(JSONObject().put("type","accepted").put("id",p.getString("id")).put("mode","buffered").toString())
+                else webSocket.close(1011,"gone")
+            }
+            override fun onClosing(webSocket:okhttp3.WebSocket,code:Int,reason:String){webSocket.close(code,reason)}
+        })
+    }
+    private fun <T> withRelay(mode:String,body:(Relay)->T):T {
+        val relay=Relay(mode);relay.server.start();CloudRelay.disconnect();CloudRelay.endpoint=relay.server.url("/").toString()
+        try{return body(relay)}finally{CloudRelay.disconnect();CloudRelay.endpoint=BuildConfig.RELAY_BASE_URL;relay.server.shutdown()}
+    }
+    private fun releaseNow():GuardEngine.ReleaseOutcome {
+        var outcome:GuardEngine.ReleaseOutcome?=null
+        kotlin.concurrent.thread{outcome=GuardEngine.releaseChildBeforeLeaving(ctx,10_000)}.join()
+        return outcome!!
+    }
+    @Test fun aResetWrittenToTheSocketBeforeItClosedIsSentNotConfirmedAndStaysQueued() {
+        val topic=GuardEngine.getChannelTopic(ctx)
+        withRelay("after"){relay->
+            val outcome=releaseNow()
+            assertTrue("the publish frame reached the relay's socket",relay.published.get())
+            assertEquals("the relay may hold it: never \"not sent\"",GuardEngine.ReleaseOutcome.SENT_UNCONFIRMED,outcome)
+            assertTrue("the reset stays queued",FamilyEvidence(ctx).use{it.pendingCount(topic)}>0)
+        }
+    }
+    @Test fun aResetThatNeverReachedTheSocketIsNotSentAndWithdrawn() {
+        val topic=GuardEngine.getChannelTopic(ctx)
+        withRelay("before"){relay->
+            val outcome=releaseNow()
+            assertFalse(relay.published.get())
+            assertEquals(GuardEngine.ReleaseOutcome.NOT_SENT,outcome)
+            assertEquals("withdrawn",0,FamilyEvidence(ctx).use{it.pendingCount(topic)})
+        }
+    }
+    @Test fun theRelayResultSaysWhetherTheFrameWasWritten() {
+        assertFalse("existing callers keep their meaning",CloudRelay.PublishResult(false,"x").written)
+        for((mode,written) in listOf("after" to true,"before" to false)) withRelay(mode){relay->
+            val connection=CloudRelay.Connection(ctx,GuardEngine.captureRelaySession(ctx),GuardEngine.getOrCreateFamilyToken(ctx),relay.server.url("/").toString())
+            val done=java.util.concurrent.CountDownLatch(1);var result:CloudRelay.PublishResult?=null
+            val id="written-$mode:0";val wire=GuardEngine.encryptPayload(GuardEngine.getOrCreateFamilyToken(ctx),"{}")
+            FamilyEvidence(ctx).use{it.enqueue(GuardEngine.getChannelTopic(ctx),id,wire,role="parent",kind="control")}
+            try{connection.publish(id,wire,"control"){result=it;done.countDown()};assertTrue(done.await(10,java.util.concurrent.TimeUnit.SECONDS))}finally{connection.close()}
+            assertFalse(result!!.accepted);assertEquals(mode,written,result!!.written)
+        }
+    }
 }

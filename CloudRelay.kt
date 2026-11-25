@@ -18,7 +18,8 @@ enum class RelayConsumption { CONSUMED, REJECTED, RETRY }
 
 /** One authenticated session; SQLite on the phones owns unconfirmed evidence. */
 object CloudRelay {
-    data class PublishResult(val accepted:Boolean,val message:String,val contextFull:Boolean=false,val expired:Boolean=false)
+    /** [written]: the publish frame was handed to the WebSocket (send returned true) before this failure, so the relay may hold it. */
+    data class PublishResult(val accepted:Boolean,val message:String,val contextFull:Boolean=false,val expired:Boolean=false,val written:Boolean=false)
     private const val ROOM_RETIRED="中繼房間已刪除或已停用 · 請兩部手機重新配對"
     private const val DAY_MS=24*60*60_000L
     /** The relay asks a child that proves its key to come back in 15 s while its parent has not registered that key (409). */
@@ -124,7 +125,8 @@ object CloudRelay {
                 try{connection(ctx,token).publish(id,wire,kind){result=it;completed.countDown()}}
                 catch(_:Exception){result=PublishResult(false,"中繼設定未完成或配對缺少家長驗證金鑰 · 請更新兩部手機及設定版本");completed.countDown()}
             }
-            if(!completed.await(16,TimeUnit.SECONDS))return PublishResult(false,"等待中繼確認逾時 · 已保留，稍後重試")
+            // The connection never answered: whether the frame was written is unknown, so it counts as written.
+            if(!completed.await(16,TimeUnit.SECONDS))return PublishResult(false,"等待中繼確認逾時 · 已保留，稍後重試",written=true)
         } catch(_:Exception){return PublishResult(false,"中繼設定未完成或配對缺少家長驗證金鑰 · 請更新兩部手機及設定版本")}
         return result
     }
@@ -155,7 +157,7 @@ object CloudRelay {
         private var flush:ScheduledFuture<*>?=null
         private var failures=0
         private var lastPublish=0L
-        private data class Pending(val json:JSONObject,val callback:(PublishResult)->Unit,var sent:Boolean=false,var timeout:ScheduledFuture<*>?=null)
+        private data class Pending(val json:JSONObject,val callback:(PublishResult)->Unit,var sent:Boolean=false,var timeout:ScheduledFuture<*>?=null,var written:Boolean=false)
         private val pending=linkedMapOf<String,Pending>()
         private fun current():Boolean {
             // A pairing room is not the family session: it ends when its pairing ends (close) or consent is withdrawn.
@@ -192,7 +194,7 @@ object CloudRelay {
                 val item=Pending(JSONObject().put("type","publish").put("id",id).put("wire",wire).put("kind",kind),onComplete)
                 pending[id]=item
                 item.timeout=executor.schedule({
-                    if(pending.remove(id)===item)item.callback(PublishResult(false,"中繼尚未確認 · 已保留，稍後重試"))
+                    if(pending.remove(id)===item)item.callback(PublishResult(false,"中繼尚未確認 · 已保留，稍後重試",written=item.written))
                     if(temporary && pending.isEmpty())stop()
                 },15,TimeUnit.SECONDS)
                 open();sendNext()
@@ -236,7 +238,7 @@ object CloudRelay {
         }
         private fun finishAll(text:String) {
             val items=pending.values.toList();pending.clear()
-            for(item in items){item.timeout?.cancel(false);item.callback(PublishResult(false,text))}
+            for(item in items){item.timeout?.cancel(false);item.callback(PublishResult(false,text,written=item.written))}
         }
         /** [exact]: wait exactly [serverDelay] (the relay's fixed 15 s for a key not registered yet), not the growing back-off. */
         private fun fail(text:String,serverDelay:Long?=null,exact:Boolean=false) {
@@ -267,6 +269,7 @@ object CloudRelay {
                 }
                 item.sent=true;lastPublish=System.currentTimeMillis()
                 if(socket?.send(item.json.toString())!=true){fail("中繼未能接收 · 已保留，稍後重試");return}
+                item.written=true
                 if(pending.values.any{!it.sent})flush=executor.schedule({sendNext()},100,TimeUnit.MILLISECONDS)
                 return
             }

@@ -885,7 +885,7 @@ object GuardEngine {
             .put("command_id",UUID.randomUUID().toString()).put("ts_ms", System.currentTimeMillis()).put("time", nowDateTimeStr())
         // Sent just before the parent deletes the relay room: the child must not keep that room's secrets or unsent records.
         if (resetChildToUnconfigured && purgeFamily && !queued) command.put("purge_family", true)
-        if (resetChildToUnconfigured) lastResetEvent = getChannelTopicForToken(oldToken) to "control:" + command.getString("command_id")
+        if (resetChildToUnconfigured) { lastResetEvent = getChannelTopicForToken(oldToken) to "control:" + command.getString("command_id"); lastResetWritten = null }
         // A pinned child deletes K on receipt: once the relay holds this reset the pin is dropped (recordRelayAcceptance).
         if (resetChildToUnconfigured && pinnedChildKey(ctx) != null)
             check(prefs(ctx).edit().putString(REMOTE_RESET_EVENT, "control:" + command.getString("command_id")).commit())
@@ -947,13 +947,15 @@ object GuardEngine {
      */
     /** Outbox scope and event id of the most recent signed reset, so a reset reported as not sent can really be withdrawn. */
     @Volatile private var lastResetEvent: Pair<String, String>? = null
+    /** Set to [lastResetEvent] once a frame of that reset was handed to the relay's socket: from then on it is never "not sent". */
+    @Volatile private var lastResetWritten: Pair<String, String>? = null
     /** SENT_UNCONFIRMED: no answer within the wait; the reset stays queued and may already be with the relay. */
     enum class ReleaseOutcome { SENT, SENT_UNSURE, SENT_UNCONFIRMED, NOT_SENT }
     /** Test hook replacing the relay round trip of [releaseChildBeforeLeaving]. */
     @Volatile internal var releaseOverride: ((Context, Long) -> ReleaseOutcome)? = null
     /** During a pending key rotation the reset is posted to the new token only; a child still on the old token will not get it. */
-    internal fun classifyRelease(ctx: Context, accepted: Boolean): ReleaseOutcome = when {
-        !accepted -> ReleaseOutcome.NOT_SENT
+    internal fun classifyRelease(ctx: Context, accepted: Boolean, written: Boolean = false): ReleaseOutcome = when {
+        !accepted -> if (written) ReleaseOutcome.SENT_UNCONFIRMED else ReleaseOutcome.NOT_SENT
         pendingRotation(ctx).optString("new_token").let { FamilySecurity.validToken(it) && it == getOrCreateFamilyToken(ctx) } -> ReleaseOutcome.SENT_UNSURE
         else -> ReleaseOutcome.SENT
     }
@@ -983,7 +985,8 @@ object GuardEngine {
         // No answer yet: the frame may already be on the socket (a publish takes up to 16 s). Never "not sent", and the reset stays
         // queued so "sent, not confirmed" holds whichever way the publish ends.
         if (done.count > 0L) return ReleaseOutcome.SENT_UNCONFIRMED
-        val outcome = classifyRelease(ctx, accepted)
+        // A failure after a frame was written (the socket closed before the relay answered) may still have reached the relay.
+        val outcome = classifyRelease(ctx, accepted, lastResetEvent.let { it != null && it == lastResetWritten })
         if (outcome == ReleaseOutcome.NOT_SENT) {
             // "Not sent" must be true: the signed reset would otherwise keep retrying and could unprotect the child later.
             lastResetEvent?.let { (scope, event) -> try { FamilyEvidence(ctx).use { it.acknowledgeEvent(scope, event) } } catch (_: Exception) { } }
@@ -1958,6 +1961,7 @@ object GuardEngine {
                         if(!transferAllowed(app) || captureRelaySession(app)!=session)break@deliveryLoop
                         if(!FamilyEvidence(app).use{it.pendingEvent(next.second,frame.id)})continue
                         val result=CloudRelay.publishBlocking(app,next.first,frame.id,frame.wire,frame.kind)
+                        if(result.written)lastResetEvent?.takeIf{it==next.second to frame.id.substringBeforeLast(':')}?.let{lastResetWritten=it}
                         synchronized(pollLock) {
                         if(!transferAllowed(app) || captureRelaySession(app)!=session)return@thread
                         if(result.accepted)recordRelayAcceptance(app,next.second,frame)
