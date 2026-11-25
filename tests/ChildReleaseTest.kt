@@ -319,4 +319,58 @@ class ChildReleaseTest {
             } finally {c.pause().stop().destroy()}
         }
     }
+
+    // ---- recovery texts: what 6.0 really offers (QR pairing under "加入子女 · Add a child"), in both languages ----
+    @Test fun theUncertainReleaseHasItsEnglishHalf() {
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            openLeaveSheetWith(GuardEngine.ReleaseOutcome.SENT_UNSURE,a)
+            val text=texts().first{it.startsWith("解除指令")}
+            assertTrue(text,text.contains(" / The release was sent")&&text.contains("may not have received it")&&text.contains("paired again by QR code"))
+            assertTrue("Chinese first",text.indexOf("可能沒有收到")<text.indexOf("may not have received"))
+        } finally {c.pause().stop().destroy()}
+    }
+    private fun openRecovery(a:MainActivity) {
+        call(a,"navigateTo","settings")
+        all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("家長主密碼與金鑰")==true}.performClick()
+        button("秘密可能外洩：重新安全配對")!!.performClick()
+    }
+    private fun shownTexts()=ShadowDialog.getShownDialogs().filter{it.isShowing}.flatMap{d->all(d.window!!.decorView).filterIsInstance<TextView>().map{it.text.toString()}}
+    @Test fun aFailedRecoveryPointsToQrPairingUnderAddAChild() {
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            GuardEngine.releaseOverride={_,_->GuardEngine.ReleaseOutcome.SENT}
+            openRecovery(a)
+            button("只建立新配對（不刪除中繼資料）")!!.performClick();idle()
+            (latest() as android.app.AlertDialog).getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();idle()
+            answer(a)
+            TestKeyStore.failEcGeneration=true
+            button("繼續")!!.performClick()
+            waitFor("result"){button("我已記下，繼續")!=null}
+            button("我已記下，繼續")!!.performClick();idle()
+            val text=shownTexts().first{it.contains("可能已收到解除指令")}
+            assertTrue(text,text.contains("「加入子女」以 QR 碼重新配對")&&text.contains("by QR code under “Add a child”"))
+            assertFalse(text,text.contains("邀請"))
+        } finally {c.pause().stop().destroy()}
+    }
+    @Test fun aFailedRoomDeletionPointsToQrPairingUnderAddAChild() {
+        val server=okhttp3.mockwebserver.MockWebServer()
+        server.dispatcher=object:okhttp3.mockwebserver.Dispatcher(){
+            override fun dispatch(request:okhttp3.mockwebserver.RecordedRequest)=okhttp3.mockwebserver.MockResponse().setResponseCode(503)
+        }
+        server.start();CloudRelay.endpoint=server.url("/").toString()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            GuardEngine.releaseOverride={_,_->GuardEngine.ReleaseOutcome.SENT}
+            openRecovery(a)
+            button("嘗試刪除舊中繼房間，再建立新配對")!!.performClick();idle();answer(a)
+            button("繼續")!!.performClick()
+            waitFor("result"){button("我已記下，繼續")!=null}
+            button("我已記下，繼續")!!.performClick()
+            waitFor("the deletion toast"){org.robolectric.shadows.ShadowToast.getTextOfLatestToast()?.contains("子女手機如已解除")==true}
+            val text=org.robolectric.shadows.ShadowToast.getTextOfLatestToast()
+            assertTrue(text,text.contains("「加入子女」以 QR 碼重新配對")&&text.contains("by QR code under “Add a child”"))
+            assertFalse(text,text.contains("邀請"))
+        } finally {c.pause().stop().destroy();CloudRelay.endpoint=BuildConfig.RELAY_BASE_URL;server.shutdown()}
+    }
 }

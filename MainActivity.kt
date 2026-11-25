@@ -5555,7 +5555,7 @@ class MainActivity : Activity() {
                         val (late, lateEn) = GuardEngine.releaseDelayNotice()
                         when (outcome) {
                             GuardEngine.ReleaseOutcome.SENT -> finished("解除指令已送到中繼站；子女手機開啟並連線後會變成未設定狀態。這不代表子女手機已確認；若它沒有解除，請在子女手機輸入上面的主密碼。若你留在家長身份，之後須用 QR 碼重新配對子女手機。$late / The release reached the relay; the child phone becomes unconfigured once it is on and connected. This does not mean the child phone confirmed it; if it is not released, enter the master password above on the child phone. If you stay a parent, you must pair the child phone again with the QR code later. $lateEn", true)
-                            GuardEngine.ReleaseOutcome.SENT_UNSURE -> finished("解除指令已送出，但此手機正在更新金鑰，子女手機可能沒有收到。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。若子女手機收到了，它會變成未設定狀態，須用 QR 碼重新配對。", true)
+                            GuardEngine.ReleaseOutcome.SENT_UNSURE -> finished("解除指令已送出，但此手機正在更新金鑰，子女手機可能沒有收到。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。若子女手機收到了，它會變成未設定狀態，須用 QR 碼重新配對。 / The release was sent, but this phone is updating its key, so the child phone may not have received it. Note the master password above; it must be entered on the child phone to pair with a new family. If the child phone received it, it becomes unconfigured and must be paired again by QR code.", true)
                             GuardEngine.ReleaseOutcome.SENT_UNCONFIRMED -> finished("解除指令可能已送出，但未獲中繼站確認：子女手機之後連線時可能會變成未設定狀態，也可能仍受保護。請記下上面的主密碼；若子女手機沒有解除，請在子女手機輸入它。$late / The release may have been sent, but the relay did not confirm it: the child phone may become unconfigured when it next connects, or may still be protected. Note the master password above; if the child phone is not released, enter it on the child phone. $lateEn", true)
                             GuardEngine.ReleaseOutcome.NOT_SENT -> finished("解除指令未能送出，子女手機仍受保護。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。", false)
                         }
@@ -5578,7 +5578,7 @@ class MainActivity : Activity() {
                     } catch(_:Exception){
                         // After a deletion the current invite points at a room that no longer exists: only a fresh pairing helps.
                         val message = if (roomDeleted) "舊中繼房間已刪除，但此手機沒有完成重新配對；原有本機資料已保留。舊邀請已不能使用，請重試「重新安全配對」以建立新配對。"
-                            else if (resetSent) "子女手機可能已收到解除指令並變成未設定狀態，但此手機沒有完成重新配對；原有家庭資料已保留。請重試「重新安全配對」，或用目前的邀請重新配對子女手機。"
+                            else if (resetSent) "子女手機可能已收到解除指令並變成未設定狀態，但此手機沒有完成重新配對；原有家庭資料已保留。請重試「重新安全配對」，或在「加入子女」以 QR 碼重新配對子女手機。\nThe child phone may have received the release and become unconfigured, but this phone did not finish pairing again; the existing family data is kept. Retry “重新安全配對” (pair again securely), or pair the child phone again by QR code under “Add a child”."
                             else "未能完成；原有資料已保留。請重試或聯絡支援。"
                         alert().setTitle("未能完成重新配對").setMessage(message).setPositiveButton("知道了", null).show()
                     }
@@ -5595,7 +5595,7 @@ class MainActivity : Activity() {
                     CloudRelay.retireRoom(this@MainActivity){ok,message->runOnUiThread{
                         if(isDestroyed || !parentUnlocked() || GuardEngine.captureRelaySession(this@MainActivity)!=expected)return@runOnUiThread
                         if(ok)create(resetSent,roomDeleted=true)
-                        else Toast.makeText(this@MainActivity,if(resetSent)"$message 子女手機如已解除，請用目前的邀請重新配對。" else message,Toast.LENGTH_LONG).show()
+                        else Toast.makeText(this@MainActivity,if(resetSent)"$message 子女手機如已解除，請在「加入子女」以 QR 碼重新配對。\nIf the child phone was released, pair it again by QR code under “Add a child”." else message,Toast.LENGTH_LONG).show()
                     }}
                 }
             }})
