@@ -289,6 +289,7 @@ class TwoPhoneRelayTest {
             assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
             val family = roomOf(GuardEngine.getOrCreateFamilyToken(ctx))
             settle(1000) // the pairing's own requests to deliver were turned away: the older worker still holds the slot
+            assertTrue("nothing was sent while the older worker held the slot", synchronized(relay) { family.published.isEmpty() })
             release.countDown()
             waitUntil("M3 at the relay after the older worker ended", seen = { synchronized(relay) { " (published=${family.published.map { it.first }})" } }) { synchronized(relay) { family.published.size == 1 } }
         } finally { GuardEngine.beforeDeliveryWorkerEndsForTest = null; release.countDown() }
