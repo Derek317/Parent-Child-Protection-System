@@ -4,9 +4,9 @@
 
 Version 6.0.1 fixes one timing flaw in 6.0 and changes nothing else in the app. Full notes: [6.0.1 release notes](docs/releases/6.0.1.md). Version code: 100 plus the GitHub Actions run number of the release run; the installed app shows it. Terms revision unchanged, `2026-11-24-v8`.
 
-- Fixed: right after a pairing, key rotation or reset, a record queued for the new family (for example the parent's pairing message) could stay unsent until a later trigger, usually within a minute, up to about 15 minutes on a child phone with both Android permissions off. Nothing was lost and no protection was affected. The delivery worker now restarts delivery for whatever is due for the current family when it ends.
+- Fixed: right after a pairing, key rotation or reset, a record queued for the new family (for example the parent's pairing message) could stay unsent until a later trigger, usually within a minute, up to about 15 minutes on a child phone with both Android permissions off. Nothing was lost and no protection was affected. A request to send made right after queueing a record, which finds a send running, is now carried out once when that send ends.
 - Tests and build only: the Android test jars come through Gradle from Google's Maven Central mirror with pinned SHA-512 values; a failed test prints its message; one test no longer fails by chance on sealed text; a new test reproduces the timing flaw.
-- Tested: 937 unit tests, 1 known failure on the Windows development PC only; lint 0 errors; the new test fails without the fix and passes with it. Not tested: the flaw was never seen on a real phone, so the fix has no before-and-after check on hardware.
+- Tested: 938 unit tests, 1 known failure on the Windows development PC only, also with the tests limited to two processor cores; lint 0 errors; the new tests fail without the fix. Two earlier forms of the fix were dropped; with the first, one GitHub run hung in the test step and was cancelled, and that hang was not reproduced on the PC. Not tested: the flaw was never seen on a real phone, so the fix has no before-and-after check on hardware.
 
 ## 6.0 — documented 24 November 2026 (Hong Kong)
 
