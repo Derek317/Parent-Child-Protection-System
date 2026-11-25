@@ -295,6 +295,25 @@ class TwoPhoneRelayTest {
         } finally { GuardEngine.beforeDeliveryWorkerEndsForTest = null; release.countDown() }
     }
 
+    /** A worker of an earlier family that ends after the family changed starts nothing by itself: only a request that was turned away does. */
+    @Test fun aWorkerOfAnEarlierFamilyStartsNothingByItselfWhenItEnds() {
+        val ended = java.util.concurrent.atomic.AtomicInteger(0)
+        val ending = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
+        GuardEngine.beforeDeliveryWorkerEndsForTest = { if (ended.incrementAndGet() == 1) { ending.countDown(); release.await(60, java.util.concurrent.TimeUnit.SECONDS) } }
+        try {
+            GuardEngine.requestFullCapture(ctx) // a record of the earlier family: its worker is held as it ends
+            assertTrue("the earlier worker is ending", ending.await(20, java.util.concurrent.TimeUnit.SECONDS))
+            // The session changes (as a pairing, rotation or reset does) and a record is queued, but nobody asks for delivery.
+            // The counter is bumped directly: every public way to change the session also connects, and a connection asks.
+            val token = GuardEngine.getOrCreateFamilyToken(ctx)
+            GuardEngine::class.java.getDeclaredField("relayGeneration").apply { isAccessible = true; setInt(null, getInt(null) + 1) }
+            FamilyEvidence(ctx).use { it.enqueue(GuardEngine.getChannelTopicForToken(token), "control:leftover:0", "{}", role = "parent", kind = "control") }
+            release.countDown(); settle(3000)
+            assertEquals("the ending worker started no other", 1, ended.get())
+            assertTrue("the queued record was not sent", synchronized(relay) { roomOf(token).published.none { it.second == "control:leftover:0" } })
+        } finally { GuardEngine.beforeDeliveryWorkerEndsForTest = null; release.countDown() }
+    }
+
     /** The parent's "取消並重新配對" and the automatic 10-minute rollback both retire the new family room: a late child gets 410. */
     @Test fun aRolledBackPairingRetiresTheNewRoomSoALateChildStops() {
         for (force in listOf(true, false)) {

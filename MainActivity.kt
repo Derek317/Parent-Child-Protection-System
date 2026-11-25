@@ -183,8 +183,9 @@ object GuardEngine {
     // State transactions only. Never hold this lock during network I/O.
     private val pollLock = Any()
     private val deliveryInFlight = AtomicBoolean(false)
-    /** A request to deliver that found the worker busy: the worker runs it once when it ends. Without it, a record queued for a
-     *  new family while an older worker was ending (a pairing, rotation or reset) waited for a later trigger. */
+    /** A request to deliver, made right after queueing a record, that found the worker busy: the worker runs it once when it
+     *  ends. Without it, a record queued for a new family while an older worker was ending (a pairing, rotation or reset)
+     *  waited for a later trigger. */
     private val deliveryAskedMeanwhile = java.util.concurrent.atomic.AtomicReference<Context?>(null)
     /** Tests only: runs on a delivery worker as it ends, before it gives the delivery slot back. */
     @Volatile internal var beforeDeliveryWorkerEndsForTest: (() -> Unit)? = null
@@ -1340,7 +1341,7 @@ object GuardEngine {
             addCheckpointLog(ctx, "CP3-PAIR", "已固定子女手機金鑰，等待子女手機確認")
             StoredPairing(eventId, session)
         }
-        CloudRelay.connect(ctx); retryPendingAlerts(ctx)
+        CloudRelay.connect(ctx); retryPendingAlerts(ctx, justQueued = true)
         return stored
     }
 
@@ -1815,7 +1816,7 @@ object GuardEngine {
                     completeAlertCallback(onComplete,same && success,if(same)message else "家庭配對已變更，原傳送已停止")
                 }
                 cpLastHttpStatus = "已加密儲存，等待中繼站接收"
-                retryPendingAlerts(ctx)
+                retryPendingAlerts(ctx, justQueued = true)
             } catch (e: Exception) {
                 cpLastHttpStatus = "未能儲存或傳送 · ${e.javaClass.simpleName}"
                 completeAlertCallback(onComplete,false,cpLastHttpStatus)
@@ -1848,7 +1849,7 @@ object GuardEngine {
                 }
             }
             cpLastHttpStatus="指令已加密保留 · 等待中繼確認"
-            retryPendingAlerts(ctx)
+            retryPendingAlerts(ctx, justQueued = true)
         } catch(e:Exception) {
             cpLastHttpStatus="未能保留指令 · ${e.javaClass.simpleName}"
             completeAlertCallback(onComplete,false,cpLastHttpStatus)
@@ -1921,7 +1922,7 @@ object GuardEngine {
         check(editor.commit())
         addCheckpointLog(ctx,"CP3-RESET","子女手機已遠端重設；已停止信任其金鑰，須用 QR 碼重新配對")
     }
-    fun retryPendingAlerts(ctx: Context, force: Boolean = false) {
+    fun retryPendingAlerts(ctx: Context, force: Boolean = false, justQueued: Boolean = false) {
         if (!AppConsent.hasAccepted(ctx) || getRole(ctx)=="unconfigured") return
         try{prepareRelayOutbox(ctx)}catch(_:Exception){
             cpLastHttpStatus="加密佇列需要復原 · 已保留原有片段，請保留 App 資料"
@@ -1932,6 +1933,9 @@ object GuardEngine {
         if (force) FamilyEvidence(ctx).use { it.retryNow(getChannelTopic(ctx)) }
         val app=ctx.applicationContext
         if (!deliveryInFlight.compareAndSet(false, true)) {
+            // Only a caller that has just queued a record leaves a note. The connection's ready hook, timers and screens ask
+            // while a worker runs all the time; those stay as before: turned away.
+            if (!justQueued) return
             deliveryAskedMeanwhile.set(app)
             // The worker may have ended between the two lines: then nobody would read the note, so take the slot here.
             if (!deliveryInFlight.compareAndSet(false, true)) return
