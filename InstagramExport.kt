@@ -307,22 +307,27 @@ internal object InstagramExport {
             val ordered = if (reversed.all { it.ts != null }) reversed.sortedBy { it.ts } else reversed   // sortedBy is stable
             Conversation(people, listed.map(::key), sorted.any { it.json }, ordered)
         }
-        // The teen is the one participant every conversation has in common. A thread with one person (the teen never answered) must not empty that,
-        // so the two-person threads are tried first; only if they settle nothing do all threads count, as before (a lone thread may be the teen's own).
-        fun commonOf(list: List<Conversation>): Set<String> = if (list.size < 2) emptySet() else list.map<Conversation, Set<String>> { it.people.keys }.reduce { a, b -> a intersect b }
-        val common = commonOf(conversations.filter { it.people.size >= 2 }).ifEmpty { commonOf(conversations) }
-        val global = common.singleOrNull()
-        val child = childName?.let(::key)?.takeIf { it.isNotEmpty() }
+        // The teen is in every thread they wrote in, but HTML names only who wrote, so a group the teen never wrote in lacks them.
+        // So the teen is the one person in more threads than anyone else (and in two at least): threads of two or more people first,
+        // then all threads (a lone thread may be the teen's own). A tie is no guess.
+        fun mostShared(list: List<Conversation>): String? {
+            val counts = list.flatMap { it.people.keys }.groupingBy { it }.eachCount()
+            val top = counts.values.maxOrNull() ?: return null
+            return if (top < 2) null else counts.filterValues { it == top }.keys.singleOrNull()
+        }
+        // A stored name found in the file is the teen. It may be a handle that is not the export's display name: then the file decides.
+        val child = childName?.let(::key)?.takeIf { n -> n.isNotEmpty() && conversations.any { n in it.people } }
+        val global = child ?: mostShared(conversations.filter { it.people.size >= 2 }) ?: mostShared(conversations)
         val groupKeys = ArrayList<String>()
         val result = ArrayList<ExportConversation>()
         for (c in conversations) {
-            if (c.people.size != 2) { groupKeys.add("group:" + c.people.keys.sorted().joinToString("|")); continue }
             val teen = when {
                 global != null && global in c.people -> global
-                child != null && child in c.people -> child   // a stored handle may differ from the export's display name: then the JSON list below decides
                 c.json && c.listed.size == 2 && c.listed.all { it in c.people } -> c.listed[1]   // the first-listed participant is the other person
-                else -> throw Failure(ImportResult.TEEN_UNKNOWN)
+                c.people.size == 2 && global == null -> throw Failure(ImportResult.TEEN_UNKNOWN)
+                else -> null   // with the teen known, a thread without them is one they never wrote in
             }
+            if (c.people.size != 2 || teen == null) { groupKeys.add("group:" + c.people.keys.sorted().joinToString("|")); continue }
             val other = c.people.keys.first { it != teen }
             val label = c.people.getValue(other)
             val messages = c.ordered.map { ExportMessage(key(it.sender) == teen, it.text, it.ts, it.timeKey) }

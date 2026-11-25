@@ -46,6 +46,24 @@ class ExportTeenRuleTest {
         assertEquals(setOf("Bea Friend", "Cal Pal"), p.conversations.map { it.label }.toSet())
         assertTrue(p.conversations.all { c -> c.messages.any { it.outgoing } }); assertEquals(1, p.groups)
     }
+    @Test fun aGroupTheTeenNeverWroteInIsSkippedAndDoesNotHideTheTeen() {
+        val bea = "inbox/bea_1/message_1.html" to html(Triple("Bea Friend", "hello", 1), Triple(teen, "hi Bea", 2))
+        val cal = "inbox/cal_2/message_1.html" to html(Triple("Cal Pal", "ready?", 3), Triple(teen, "yes", 4))
+        val dee = "inbox/dee_3/message_1.html" to html(Triple("Dee Mate", "lunch?", 5), Triple(teen, "sure", 6))
+        val club = "inbox/club_4/message_1.html" to html(Triple("Bea Friend", "party at 8", 7), Triple("Cal Pal", "count me in", 8))   // the teen never wrote here
+        val p = parse(zip(bea, cal, dee, club), "export.zip")
+        assertEquals(ImportResult.OK, p.result); assertEquals(1, p.groups)
+        assertEquals(setOf("Bea Friend", "Cal Pal", "Dee Mate"), p.conversations.map { it.label }.toSet())
+        assertTrue(p.conversations.all { c -> c.messages.any { it.outgoing } && c.messages.none { it.text == "party at 8" } })
+        val big = "inbox/club_5/message_1.html" to html(Triple("Bea Friend", "party at 8", 7), Triple("Cal Pal", "count me in", 8), Triple("Dee Mate", "me too", 9))
+        assertEquals(1, parse(zip(bea, cal, dee, big), "export.zip").groups)
+        // A stored name found in the file decides: one chat and a silent two-sender group are enough, and the group is not taken for a chat.
+        val q = parse(zip(bea, club), "export.zip", child = teen)
+        assertEquals(ImportResult.OK, q.result); assertEquals(1, q.groups)
+        assertEquals("Bea Friend", q.conversations.single().label); assertEquals(true, q.conversations.single().messages.first().outgoing)
+        // As many chats with each friend as with the teen: nothing tells who the teen is, so nothing is guessed.
+        assertEquals(ImportResult.TEEN_UNKNOWN, parse(zip(bea, cal, club), "export.zip").result)
+    }
     @Test fun withTwoConversationsOnlyOneOfWhichHasTwoPeopleTheTeenIsStillUnknownInHtml() {
         val export = zip("inbox/bea_1/message_1.html" to html(Triple("Bea Friend", "hello", 1), Triple(teen, "hi", 2)),
             "inbox/stranger_3/message_1.html" to html(Triple("Some Stranger", "hey you", 5)))
