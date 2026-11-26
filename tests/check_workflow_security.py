@@ -188,5 +188,40 @@ class ThirdPartyActionsArePinned(unittest.TestCase):
             self.assertRegex(rest, r'#\s*v\d', f'line {number}: missing tag comment')
 
 
+class ReleaseVersionAndHotfixSafety(unittest.TestCase):
+    @staticmethod
+    def run_with(marker):
+        return next(st['run'] for job in JOBS.values() for st in job.get('steps', []) if marker in st.get('run', ''))
+
+    def version_code(self, version, run):
+        lines = [l.strip() for l in self.run_with('VER_CODE=').splitlines() if l.strip().startswith(('VER_NAME=', 'IFS=. read', 'VER_CODE='))]
+        script = chr(10).join(lines).replace('${{ github.run_number }}', str(run)).replace('VER_NAME=6.0.3', f'VER_NAME={version}', 1)
+        out = subprocess.run(['bash', '-c', script + chr(10) + 'echo "$VER_CODE"'], env={'PATH': '/usr/bin:/bin'}, capture_output=True, text=True, check=True)
+        return int(out.stdout.strip())
+
+    def test_an_older_release_hotfix_never_outranks_a_newer_release(self):
+        self.assertIn('versionName "$VER_NAME"', TEXT)
+        self.assertLess(self.version_code('5.2.9', 999), self.version_code('6.0', 1))
+        self.assertLess(self.version_code('6.0.3', 277), self.version_code('6.0.3', 278))
+        self.assertGreater(self.version_code('6.0.3', 1), 100 + 999)  # above every code of the old 100+run scheme
+
+    def test_a_hotfix_that_does_not_contain_main_does_not_deploy_the_relay(self):
+        steps_ = JOBS['relay-deploy']['steps']
+        self.assertEqual(0, steps_[0].get('with', {}).get('fetch-depth'))
+        deploy = next(st['run'] for st in steps_ if 'npm run deploy' in st.get('run', ''))
+        guard = 'if [[ "$GITHUB_REF" == *-hotfix.* ]] && ! git merge-base --is-ancestor origin/main HEAD; then'
+        self.assertIn(guard, deploy)
+        self.assertLess(deploy.index(guard), deploy.index('npm run deploy'))
+
+    def signing_check(self, ref):
+        script = self.run_with('configured=0').split('unset APK_KEYSTORE_PATH')[0]
+        env = {'PATH': '/usr/bin:/bin', 'GITHUB_REF': ref, 'APK_KEYSTORE_BASE64': '', 'APK_KEYSTORE_PASSWORD': '', 'APK_KEY_ALIAS': '', 'APK_KEY_PASSWORD': ''}
+        return subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True).returncode
+
+    def test_a_tag_without_signing_secrets_fails_instead_of_publishing_no_apk(self):
+        self.assertNotEqual(0, self.signing_check('refs/tags/6.0.3'))
+        self.assertEqual(0, self.signing_check('refs/heads/main'))
+
+
 if __name__ == '__main__':
     unittest.main()

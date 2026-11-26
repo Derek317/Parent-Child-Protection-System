@@ -134,8 +134,10 @@ jobs:
           fi
 
 
-          VER_CODE=$((100 + ${{ github.run_number }}))
-          if [ "$VER_CODE" -le 150 ]; then VER_CODE=151; fi
+          VER_NAME=6.0.3
+          # The code comes from the version first, the run second: a hotfix of an older release never outranks a newer release.
+          IFS=. read -r V_MAJ V_MIN V_PATCH <<< "$VER_NAME"
+          VER_CODE=$(( (V_MAJ * 10000 + V_MIN * 100 + ${V_PATCH:-0}) * 1000 + ${{ github.run_number }} % 1000 ))
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -189,7 +191,7 @@ jobs:
                   minSdk 26
                   targetSdk 34
                   versionCode $VER_CODE
-                  versionName "6.0.3"
+                  versionName "$VER_NAME"
               }
 
               signingConfigs {
@@ -413,6 +415,8 @@ jobs:
     steps:
       - name: Checkout relay source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0  # the hotfix check below needs origin/main and the history
 
       - name: Set up Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -433,7 +437,11 @@ jobs:
           WRANGLER_SEND_METRICS: 'false'
         run: |
           set -euo pipefail
-          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+          if [[ "$GITHUB_REF" == *-hotfix.* ]] && ! git merge-base --is-ancestor origin/main HEAD; then
+            # A hotfix of an older release would put its older relay over main's.
+            echo "::warning title=Relay deploy skipped::This hotfix tag does not contain main, so its relay is not deployed. Checking the existing endpoint instead."
+            echo "The hotfix tag does not contain main; the relay was not deployed. Checking the existing endpoint instead." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
             npm run deploy | tee "$RUNNER_TEMP/relay-deployment.txt"
             python3 - "$RUNNER_TEMP/relay-deployment.txt" <<'PY'
           from pathlib import Path
@@ -526,6 +534,10 @@ jobs:
           done
           if [ "$configured" != 0 ] && [ "$configured" != 4 ]; then
             echo "Configure all four APK signing secrets; partial signing configuration is rejected." >&2
+            exit 1
+          fi
+          if [ "$configured" = 0 ] && [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::A release tag needs the four APK signing secrets; without them the release would publish no APK." >&2
             exit 1
           fi
           unset APK_KEYSTORE_PATH
