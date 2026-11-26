@@ -212,7 +212,7 @@ internal object ScoresUi {
     const val MODEL_FILE = RiskModelSpec.FILE_NAME
     val BYTES_TEXT: String = String.format(Locale.ROOT, "%,d", RiskModelSpec.FILE_BYTES)
     val MODEL_SIZE_TEXT: String = "$BYTES_TEXT 位元組（約 1.03 GB）"
-    const val LIMITS_NOTICE = "分數來自一個用虛構對話、開發者自己的普通聊天及研究資料集 PAN-12（唯一的真實誘騙對話來源）訓練及測試的模型，可能高估，也可能漏掉真正的風險，尤其無法可靠分辨成年人之間的性對話與誘騙。沒有證據顯示它能可靠偵測真正的誘騙。它是一個訊號，不是結論。"
+    const val LIMITS_NOTICE = "分數來自一個用虛構對話、經同意收集的少量真實誘騙對話、開發者自己的普通聊天及研究資料集 PAN-12 訓練及測試的模型，可能高估，也可能漏掉真正的風險，尤其無法可靠分辨成年人之間的性對話與誘騙。沒有證據顯示它能可靠偵測真正的誘騙。它是一個訊號，不是結論。"
     const val NEXT_STEPS = "下一步：先和孩子好好談談。如果你認為孩子有即時危險，請致電 999（香港）。"
     const val NO_MESSAGES = "在這個模式下，你不會收到訊息內容。"
     fun unknownText(n: Int) = "被視為群組聊天而沒有被分析的對話：$n 個。"
@@ -335,7 +335,7 @@ internal object ScoresChildCopy {
         "在哪裡、何時 / Where and when" to "分析在這部手機上進行，只在充電時運行。訊息不會為了分析而傳出這部手機。\nAnalysis runs on this phone, only while it is charging. Messages are not sent anywhere for analysis.",
         "家長會收到 / What your parent receives" to "你聊天對象的帳戶名稱、一個風險分數（或「需要檢視」）及時間；不含訊息文字的提醒；以及分析是開啟、暫停還是已撤回。\nThe account name of who you chat with, a risk score (or \"needs review\") and the time; alerts without message text; and whether analysis is on, paused or withdrawn.",
         "家長不會收到 / What your parent does not receive" to "家長不會收到你的訊息。在這個模式下，新訊息不再傳給家長。\nYour parent does not receive your messages. In this mode new messages are no longer sent to them.",
-        "分數可能出錯 / Scores can be wrong" to "這個模型用虛構的對話、開發者自己的普通聊天，以及研究資料集 PAN-12 的聊天來訓練及測試；PAN-12 是唯一的真實誘騙對話來源。它兩個方向都可能出錯：可能把普通對話評為有風險，也可能漏掉真正的問題，尤其無法可靠分辨成年人之間的性對話與誘騙。沒有證據顯示它能可靠偵測真正的誘騙。分數只是一個訊號。\nThe model was trained and tested on invented chats, the developer's own ordinary chats, and chats from the PAN-12 research collection, its only source of real grooming conversations. It can be wrong in both directions: it can score an ordinary chat as risky and miss a real problem, and it cannot reliably tell sexual conversation between adults from grooming. It is not shown to detect real grooming reliably. A score is only a signal.",
+        "分數可能出錯 / Scores can be wrong" to "這個模型用虛構的對話、經同意收集的少量真實誘騙對話、開發者自己的普通聊天，以及研究資料集 PAN-12 的聊天來訓練及測試。它兩個方向都可能出錯：可能把普通對話評為有風險，也可能漏掉真正的問題，尤其無法可靠分辨成年人之間的性對話與誘騙。沒有證據顯示它能可靠偵測真正的誘騙。分數只是一個訊號。\nThe model was trained and tested on invented chats, a small number of real grooming chats collected with consent, the developer's own ordinary chats, and chats from the PAN-12 research collection. It can be wrong in both directions: it can score an ordinary chat as risky and miss a real problem, and it cannot reliably tell sexual conversation between adults from grooming. It is not shown to detect real grooming reliably. A score is only a signal.",
         "你的控制 / Your controls" to "你可以隨時暫停，家長會被告知。你也可以撤回同意：這部手機上儲存的訊息會被刪除，家長會被告知；已經傳給家長的分數仍留在家長手機。\nYou can pause at any time and your parent is told. You can withdraw: the messages stored on this phone are deleted and your parent is told. Scores already sent stay on your parent's phone.",
         "重要 / Please note" to "本功能未獲 Meta 批准，也不代表已通過法律審核。選擇「暫時不要」不會儲存或分析任何內容，原有的運作方式繼續。\nNot approved by Meta and not legally cleared. Choosing \"Not now\" stores and analyses nothing, and the earlier behaviour continues."
     )
