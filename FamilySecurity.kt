@@ -382,13 +382,6 @@ object FamilySecurity {
      * writes it (ChildSigningKey.publicKey, newSigningIdentity). Padded or unpadded input of the same key gives the same result;
      * null unless the text is a canonical SPKI P-256 key (PairingCrypto.p256PublicKey). */
     fun canonicalKeyText(text: String): String? = PairingCrypto.p256PublicKey(text)?.let { encoder.encodeToString(it.encoded) }
-    private fun canonicalKey(text: String) = requireNotNull(canonicalKeyText(text)) { "Invalid P-256 key text" }
-
-    /** The two wrapper fields for the exact record text [record]; the caller adds `type:"alert"` and `event_id`.
-     * P and K are hashed in their canonical text form whatever form [parentPublicKey] is stored in. */
-    fun signChildRecord(record: String, parentPublicKey: String, child: ChildSigningKey): JSONObject =
-        JSONObject().put("child_signed", record)
-            .put("child_sig", encoder.encodeToString(signChildBytes(childRecordSignedBytes(record, canonicalKey(parentPublicKey), canonicalKey(child.publicKey)), child.alias)))
 
     /** A verified child record. [id] is event_id (alert, captured_message) or command_id (control records); [timeMs] is the field checked for age. */
     data class ChildRecord(val record: JSONObject, val type: String, val id: String, val timeMs: Long)

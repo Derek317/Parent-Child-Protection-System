@@ -103,7 +103,8 @@ class ChildSigningKeyTest {
         val parent = FamilySecurity.newSigningIdentity()
         val key = FamilySecurity.createChildSigningKey(ctx)
         val record = JSONObject().put("type", "alert").put("event_id", UUID.randomUUID().toString()).put("reason", "heartbeat_ok").put("ts_ms", now).toString()
-        val wrapper = FamilySecurity.signChildRecord(record, parent.publicKey, key).put("type", "alert").put("event_id", JSONObject(record).getString("event_id"))
+        // The production wrapper (GuardEngine.signedForParent) with the Keystore signer.
+        val wrapper = ChildRecords.wrapForParent(record, JSONObject(record).getString("event_id"), parent.publicKey, key.publicKey, { FamilySecurity.signChildBytes(it, key.alias) })
         assertEquals(record, wrapper.getString("child_signed"))
         val read = FamilySecurity.readChildRecord(wrapper, key.publicKey, parent.publicKey, now)!!
         assertEquals("alert", read.type); assertEquals(now, read.timeMs); assertEquals(JSONObject(record).getString("event_id"), read.id)

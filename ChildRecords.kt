@@ -6,7 +6,6 @@ import java.util.Base64
 /**
  * Signed child records (design m2-and-multichild, 3.2-3.5): the child-side wrapper and the parent's decision on each decrypted,
  * reassembled frame. Pure: no storage, no UI, no logging; the caller persists the control state and the tamper-notice time.
- * Not wired into any flow yet.
  */
 object ChildRecords {
     /** Content-free local evidence row raised for [GateResult.Tamper], reason `tamper_attempt` (design 3.5). */
