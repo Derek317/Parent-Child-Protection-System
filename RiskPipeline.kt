@@ -430,7 +430,7 @@ internal object RiskLocal {
             if (kind == "unknown" && direction == "incoming") {
                 val author = r.optString("author").trim().removePrefix("@").lowercase(Locale.ROOT)
                 // The child's own handle is not "another person".
-                if (author.isNotEmpty() && !GuardEngine.isSelfSenderLabel(ctx, author) && db.noteRiskAuthor(scope, label, author, now) > 1) {
+                if (author.isNotEmpty() && !GuardEngine.isChildSelfHandle(ctx, author) && db.noteRiskAuthor(scope, label, author, now) > 1) {
                     if (db.excludeRiskThread(scope, label, now)) afterExclusion(ctx, db)
                     return true
                 }

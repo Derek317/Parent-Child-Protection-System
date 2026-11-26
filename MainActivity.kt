@@ -368,13 +368,6 @@ object GuardEngine {
         return MessageDigest.isEqual(bytesA, bytesB)
     }
 
-    fun isSelfSenderLabel(ctx: Context, rawSender: String): Boolean {
-        val norm = rawSender.trim().lowercase(Locale.US).removePrefix("@")
-        if (norm.isEmpty()) return false
-        if (norm == "you" || norm == "你" || norm == "本人" || norm == "me") return true
-        return isChildSelfHandle(ctx, norm)
-    }
-
     // Theme Mode: true = Warm Bright Mode ("Morning Harbor"), false = Warm Dark Mode ("Cozy Lantern")
     /** The user's own choice once made (kept for ever); before that, the phone's dark mode: Clear Sky if dark, Morning sky otherwise. */
     fun isBrightTheme(ctx: Context): Boolean = prefs(ctx).let { if (it.contains("bright_theme")) it.getBoolean("bright_theme", true) else !phoneIsDark(ctx) }
@@ -1528,7 +1521,7 @@ object GuardEngine {
     }
     fun getChildSelfHandle(ctx: Context): String {
         // Older builds inferred the child's identity from a conversation title (the peer).
-        // Discard that unverified cache once; a recipient prefix or own-profile screen can restore it.
+        // Discard that unverified cache once; the own-profile screen can restore it.
         if (prefs(ctx).contains("child_self_handle") && prefs(ctx).getInt("child_self_handle_source_version", 0) < 2) {
             prefs(ctx).edit().remove("child_self_handle").remove("child_self_handle_ts_ms").apply()
         }
@@ -1543,8 +1536,6 @@ object GuardEngine {
             .apply { if (recordTimeMs != null) putLong("child_self_handle_ts_ms", recordTimeMs) }.apply()
         val cleanedTrusted = getTrustedHandles(ctx).filter { it != clean }
         prefs(ctx).edit().putString("trusted_csv", cleanedTrusted.joinToString(",")).apply()
-        val cleanedOffenders = getFlaggedOffenders(ctx).filter { it != clean }
-        prefs(ctx).edit().putString("flagged_offenders_csv", cleanedOffenders.joinToString(",")).apply()
         return true
     }
 
@@ -1564,6 +1555,7 @@ object GuardEngine {
         setChildSelfHandle(ctx, clean)
         addCheckpointLog(ctx, "CP1-ID", "已自動識別子女 IG 帳號")
         if (isChildMode(ctx)) {
+            sendAlertFromChild(ctx, "tamper_attempt", "Account Guard", "子女手機記錄的 Instagram 帳號已變更。", bypassDedupe = true)
             val token = getOrCreateFamilyToken(ctx)
             val topic = getChannelTopicForToken(token)
             val plain = JSONObject().apply {
@@ -1581,7 +1573,7 @@ object GuardEngine {
         val selfHandle = getChildSelfHandle(ctx)
         if (selfHandle.isEmpty()) return false
         val norm = candidate.trim().lowercase(Locale.US).removePrefix("@")
-        return norm == selfHandle || norm.contains("(@$selfHandle)")
+        return norm == selfHandle
     }
 
     private fun storedHandles(ctx: Context, key: String): Set<String> {
@@ -1594,7 +1586,7 @@ object GuardEngine {
 
     fun markSenderAsFlaggedOffender(ctx: Context, sender: String) {
         val clean = sender.trim().lowercase(Locale.US).removePrefix("@")
-        if (clean.isEmpty() || clean in RESERVED_UI_HEADERS || clean == "instagram_dm" || isSelfSenderLabel(ctx, clean)) return
+        if (clean.isEmpty() || clean in RESERVED_UI_HEADERS || clean == "instagram_dm" || isChildSelfHandle(ctx, clean)) return
         val next = getFlaggedOffenders(ctx).toMutableSet()
         if (next.add(clean)) {
             prefs(ctx).edit().putString("flagged_offenders_csv", next.joinToString(",")).apply()
@@ -1604,12 +1596,7 @@ object GuardEngine {
     fun isFlaggedOffender(ctx: Context, rawSender: String): Boolean {
         val offenders = getFlaggedOffenders(ctx)
         if (offenders.isEmpty()) return false
-        val norm = rawSender.trim().lowercase(Locale.US).removePrefix("@")
-        if (norm in offenders) return true
-        for (off in offenders) {
-            if (norm.contains("(@$off)") || norm.startsWith("$off ") || norm.endsWith(" $off")) return true
-        }
-        return false
+        return rawSender.trim().lowercase(Locale.US).removePrefix("@") in offenders
     }
 
     fun getTrustedHandles(ctx: Context): Set<String> = storedHandles(ctx, "trusted_csv")
@@ -1667,7 +1654,7 @@ object GuardEngine {
         if (text.isEmpty()) return null
         if (IGNORED_NOTIFICATIONS.matches(text)) return null
         if (isNonMessageUiString(text)) return null
-        if (isSelfSenderLabel(ctx, senderTitle)) return null
+        if (isChildSelfHandle(ctx, senderTitle)) return null
 
         if (SEXUAL_PATTERN.containsMatchIn(text) || SEXUAL_PATTERN.containsMatchIn(senderTitle)) {
             markSenderAsFlaggedOffender(ctx, senderTitle)
@@ -2503,9 +2490,8 @@ class IgNotificationListener : NotificationListenerService() {
         // Instagram's multi-account prefix names the recipient. A conversation title names the peer.
         val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
         var cleanTitle = rawTitle
+        // The prefix is title text a sender's display name can imitate: never taken as the child's own account.
         if (rawTitle.startsWith("[") && rawTitle.contains("]")) {
-            val recipient = GuardEngine.notificationRecipient(rawTitle)
-            GuardEngine.updateAutoDetectedChildHandle(this, recipient)
             cleanTitle = rawTitle.substringAfter("]").trim().ifEmpty { rawTitle }
         }
 
@@ -2543,12 +2529,10 @@ class IgNotificationListener : NotificationListenerService() {
                     bundleSender = person?.name?.toString()?.trim() ?: ""
                 }
 
-                // Issue #2 Fix: If the latest message in the notification bundle was sent by the child (or matches selfDisplayName / "You" / "你"),
+                // Issue #2 Fix: If the latest message in the notification bundle was sent by the child (the notification's own user Person),
                 // STOP IMMEDIATELY so we never misattribute the child's own sent message to the conversation partner!
                 if (bundleSender.isNotEmpty()) {
-                    if (GuardEngine.isSelfSenderLabel(this, bundleSender) ||
-                        (selfDisplayName.isNotEmpty() && bundleSender.equals(selfDisplayName, ignoreCase = true))
-                    ) {
+                    if (selfDisplayName.isNotEmpty() && bundleSender.equals(selfDisplayName, ignoreCase = true)) {
                         return
                     }
                     resolvedSender = bundleSender
@@ -2565,16 +2549,11 @@ class IgNotificationListener : NotificationListenerService() {
 
         if (resolvedSender.isEmpty()) {
             val candidateHeader = cleanTitle.ifEmpty { convHeader }
-            if (GuardEngine.isSelfSenderLabel(this, candidateHeader)) {
-                return
-            }
+            if (selfDisplayName.isNotEmpty() && candidateHeader.equals(selfDisplayName, ignoreCase = true)) return
             resolvedSender = candidateHeader
         }
 
         if (resolvedMessage.isEmpty() || resolvedSender.isEmpty()) return
-        if (GuardEngine.isSelfSenderLabel(this, resolvedSender)) {
-            return
-        }
 
         val tsSig = "$resolvedSender|$resolvedTime|$resolvedMessage"
         if (!GuardEngine.isNewNotificationMessageTimestamp(tsSig)) {
@@ -2618,7 +2597,8 @@ class IgNotificationListener : NotificationListenerService() {
         val conversationKind=if(extras.containsKey(Notification.EXTRA_IS_GROUP_CONVERSATION)) {
             if(extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION))"group" else "direct"
         } else "unknown"
-        fun own(label:String)=GuardEngine.isSelfSenderLabel(this,label) || self.isNotEmpty() && label.equals(self,true) || account.isNotEmpty() && label.removePrefix("@").equals(account,true)
+        // Only the notification's own user Person decides "self"; a name or title prefix a sender can choose never does.
+        fun own(label:String)=self.isNotEmpty() && label.equals(self,true)
         fun authorOf(b:Bundle):String {
             @Suppress("DEPRECATION")
             val person=if(Build.VERSION.SDK_INT>=28)(b.getParcelable<Parcelable>("sender_person") as? Person)?.name?.toString()?.trim().orEmpty() else ""
@@ -2889,7 +2869,7 @@ class IgAccessibilityService : AccessibilityService() {
                 item.right <= maxRightEdge &&
                 centerX <= maxCenterX &&
                 !GuardEngine.isNonMessageUiString(item.text) &&
-                !GuardEngine.isSelfSenderLabel(this, item.text) &&
+                !GuardEngine.isChildSelfHandle(this, item.text) &&
                 !item.text.trim().removePrefix("@").equals(topHeaderSender, ignoreCase = true)
         }.sortedBy { it.top }
 

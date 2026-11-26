@@ -70,14 +70,14 @@ class ConnectionRegressionTest {
             assertTrue(queued().any{it.optString("sender")=="outsider"})
         }finally{c.destroy()}
     }
-    @Test fun fullCaptureAlsoUsesRecipientPrefixWithoutTreatingPeerAsSelf(){
+    @Test fun fullCaptureNeverTakesTheChildHandleFromATitlePrefixAndKeepsThePeerIncoming(){
         val id=UUID.randomUUID().toString()
         prefs.edit().putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey)
             .putString("capture_policy_id",id).putString("capture_local_ack_id",id).commit()
         val c=Robolectric.buildService(IgNotificationListener::class.java).create()
         try {
             c.get().onNotificationPosted(posted(title="[child_account] Alex Chan"))
-            assertEquals("child_account",GuardEngine.getChildSelfHandle(ctx))
+            assertEquals("A title prefix is text a sender's name can imitate","",GuardEngine.getChildSelfHandle(ctx))
             assertEquals("incoming",queued().single{it.optString("type")=="captured_message"}.getString("direction"))
         }finally{c.destroy()}
     }
