@@ -232,6 +232,22 @@ class DeliveryHealthTest {
         assertEquals("the bad report after the clock was set back raises the notice", 1, notices())
     }
 
+    /** A child clock 3 minutes fast: its verified heartbeat still counts as a sign of life, stored at the parent's now. */
+    @Test fun aHeartbeatDatedMinutesAheadIsRecordedAtNow() {
+        parentWithPinnedChild()
+        val before = System.currentTimeMillis()
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb("00", "0000", "0", ts = before + 3 * 60_000L))))
+        val after = System.currentTimeMillis()
+        val stored = prefs.getLong("parent_last_child_hb_ms", 0L)
+        assertTrue("stored time is the parent's now, not the child's: $stored", stored in before..after)
+    }
+
+    /** A send time more than 24 hours ahead is still not a sign of life. */
+    @Test fun aHeartbeatDated25HoursAheadIsRefused() {
+        GuardEngine.recordChildHeartbeatOnParent(ctx, "summary", System.currentTimeMillis() + 25 * 3_600_000L)
+        assertFalse(GuardEngine.hasChildHeartbeat(ctx))
+    }
+
     /** A child clock wrong by more than the 10-day command window: its heartbeats fall outside the parent's window too, so the parent
      *  stops seeing heartbeats and its existing missing-heartbeat alert fires; each refused record is counted as a quiet drop. */
     @Test fun aChildClockFarOffShowsOnTheParentAsMissingHeartbeats() {

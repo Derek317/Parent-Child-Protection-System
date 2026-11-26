@@ -478,7 +478,8 @@ object GuardEngine {
 
     fun recordChildHeartbeatOnParent(ctx: Context, summary: String, sentAt: Long) {
         val now = System.currentTimeMillis()
-        if (sentAt <= 0 || sentAt > now + 120_000L) return
+        // A child clock ahead still counts, clamped to now below; only more than 24 h ahead is refused (as readChildRecord does).
+        if (sentAt <= 0 || sentAt > now + RiskLimits.REPORT_FUTURE_MS) return
         val timestamp = minOf(sentAt, now)
         if (timestamp <= prefs(ctx).getLong("parent_last_child_hb_ms", 0L)) return
         prefs(ctx).edit().putLong("parent_last_child_hb_ms", timestamp)
