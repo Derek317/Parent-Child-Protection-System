@@ -602,7 +602,7 @@ object GuardEngine {
     /** v2 proofs only for the current family room of a QR pairing (parent: carrying the pinned K; child: signed by K). Every other
      *  room (5.2 pairings, the room left by a rotation, a rendezvous room) keeps v1; a v1 parent never removes the relay's child lock. */
     fun relayAuthorization(ctx:Context,token:String):String = synchronized(pollLock) {
-        FamilyRelay.clockOffsetMs=prefs(ctx).getLong(RELAY_CLOCK_OFFSET,0L)
+        loadRelayClock(ctx)
         val scope=getChannelTopicForToken(token)
         val family=token==getOrCreateFamilyToken(ctx)
         if(isParentMode(ctx)) {
@@ -618,8 +618,11 @@ object GuardEngine {
     }
     /** A refused proof: the relay accepts only times within 2 min of its own. True when its Date header shows this phone's clock (with
      *  the offset already learned) off by more; the offset is then kept for the signers, so the retry is accepted. */
+    /** Puts the saved relay clock offset into the signers; a new process has none in memory until this runs. */
+    fun loadRelayClock(ctx:Context) { FamilyRelay.clockOffsetMs=prefs(ctx).getLong(RELAY_CLOCK_OFFSET,0L) }
     fun noteRelayClock(ctx:Context,serverMs:Long,now:Long=System.currentTimeMillis()):Boolean {
-        if(kotlin.math.abs(serverMs-now-prefs(ctx).getLong(RELAY_CLOCK_OFFSET,0L))<=120_000L)return false
+        // Judged against the offset the refused proof was signed with (memory), not the saved one: a new process may not have loaded it.
+        if(kotlin.math.abs(serverMs-now-FamilyRelay.clockOffsetMs)<=120_000L)return false
         FamilyRelay.clockOffsetMs=serverMs-now
         prefs(ctx).edit().putLong(RELAY_CLOCK_OFFSET,serverMs-now).apply()
         addCheckpointLog(ctx,"CP4-RELAY","手機時間與中繼相差超過 2 分鐘；已按中繼時間校正")

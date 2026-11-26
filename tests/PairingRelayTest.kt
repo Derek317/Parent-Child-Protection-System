@@ -92,6 +92,20 @@ class PairingRelayTest {
         } finally { server.shutdown(); FamilyRelay.clockOffsetMs = 0L }
     }
 
+    /** A new process starts with no offset in memory: a refusal must be judged against the offset the proof was signed with, not the saved one. */
+    @Test fun aSkewedRefusalAfterARestartStillCorrectsTheClock() {
+        val now = System.currentTimeMillis(); val relay = now + 10 * 60_000L
+        try {
+            assertTrue(GuardEngine.noteRelayClock(ctx, relay, now))
+            FamilyRelay.clockOffsetMs = 0L // the process died; the offset is saved but not loaded
+            assertTrue("a proof signed with offset 0 was refused for the clock", GuardEngine.noteRelayClock(ctx, relay, now))
+            assertEquals(relay - now, FamilyRelay.clockOffsetMs)
+            FamilyRelay.clockOffsetMs = 0L
+            GuardEngine.loadRelayClock(ctx)
+            assertEquals("the pairing proof can load the saved offset first", relay - now, FamilyRelay.clockOffsetMs)
+        } finally { FamilyRelay.clockOffsetMs = 0L }
+    }
+
     /** A refusal mark from an earlier attempt goes away once the relay accepts this phone. */
     @Test fun aReadyConnectionClearsAnEarlierKeyRefusal() {
         QrPairing.pairChild(ctx)

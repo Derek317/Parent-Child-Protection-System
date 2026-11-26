@@ -210,7 +210,7 @@ internal class ChildPairingLink(
         val k = key ?: run { machine.cancel(); stop(); return false }
         hello = null; confirmedAt = clock()
         // 409 until the parent has registered the room with K: the relay client retries every 15 s.
-        connect(family) { FamilyRelay.childAuthorizationV2(parentKey, family.scope, family.token, k) }
+        connect(family) { GuardEngine.loadRelayClock(ctx); FamilyRelay.childAuthorizationV2(parentKey, family.scope, family.token, k) }
         onChange()
         return true
     }
