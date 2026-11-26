@@ -187,12 +187,29 @@ class PairingGuardTest {
         GuardEngine::class.java.getDeclaredMethod("purgeChildFamily",android.content.Context::class.java,String::class.java).apply{isAccessible=true}.invoke(GuardEngine,ctx,token)
         assertEquals("the purge itself must empty the scoring store",0,riskRows())
     }
-    @Test fun anOrdinarySignedResetKeepsUnsentRecordsAndTheFamilySecret() {
-        val first=pairedChild();val token=GuardEngine.getOrCreateFamilyToken(ctx);val scope=GuardEngine.getChannelTopicForToken(token)
+    /** A released child keeps nothing of the old family, whether or not the parent deleted the room (purge_family). */
+    private fun assertOldFamilyGone(token:String,scope:String) {
+        assertEquals(0,FamilyEvidence(ctx).use{it.pendingCount(scope)})
+        for(key in listOf("parent_command_public_key","parent_password_verifier","trusted_csv","flagged_offenders_csv","child_self_handle"))assertNull(key,prefs.getString(key,null))
+        assertNotEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
+        assertTrue(GuardEngine.applyPairing(ctx,foreignInvite()))
+    }
+    private fun seedOldFamily():Pair<String,String> {
+        val token=GuardEngine.getOrCreateFamilyToken(ctx);val scope=GuardEngine.getChannelTopicForToken(token)
         FamilyEvidence(ctx).use{it.enqueue(scope,"unsent:0","cipher")}
+        GuardEngine.setTrustedHandles(ctx,listOf("old_friend"));GuardEngine.setChildSelfHandle(ctx,"old_child")
+        prefs.edit().putString("flagged_offenders_csv","old_flag").commit()
+        return token to scope
+    }
+    @Test fun anOrdinarySignedResetAlsoPurgesTheOldFamily() {
+        val first=pairedChild();val (token,scope)=seedOldFamily()
         deliverReset(first,purge=false)
-        assertEquals(1,FamilyEvidence(ctx).use{it.pendingCount(scope)})
-        assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
+        assertOldFamilyGone(token,scope)
+    }
+    @Test fun leavingTheChildRoleLocallyPurgesTheOldFamily() {
+        pairedChild();val (token,scope)=seedOldFamily()
+        GuardEngine.setRole(ctx,"unconfigured")
+        assertOldFamilyGone(token,scope)
     }
     /** The QR join sheet on a paired child (C3): the parent password gates the join press, as the 5.2 re-pair did. */
     @Test fun qrJoinOnAPairedChildStartsOnlyWithTheRightPassword() {

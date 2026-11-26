@@ -985,8 +985,9 @@ object GuardEngine {
     private fun purgeChildFamily(ctx: Context, token: String) {
         // The scoring store (messages, scores, consent receipt, mode state) belongs to this family too; wipe it while the token still resolves its queued reports.
         RiskLocal.resetFamily(ctx)
-        FamilyEvidence(ctx).use { it.discardPending(getChannelTopicForToken(token)) }
+        if (FamilySecurity.validToken(token)) FamilyEvidence(ctx).use { it.discardPending(getChannelTopicForToken(token)) }
         val editor = prefs(ctx).edit()
+        keepReleasedCommandIds(ctx, editor)
         for (key in listOf("family_uuid_token", "parent_command_public_key", "parent_password_verifier", "control_state_json", "last_control_ts_ms",
             "pending_rotation_json", "capture_policy_id", "capture_local_ack_id", "capture_child_ack_id", "capture_sequence",
             "trusted_csv", "flagged_offenders_csv", "child_self_handle", "child_self_handle_ts_ms", "sent_setup_ok", "next_heartbeat_at_ms",
@@ -996,6 +997,16 @@ object GuardEngine {
         relayGeneration++
         CloudRelay.disconnect()
     }
+    /** Relayed command ids (a release among them) hold no secret and outlive a purge for their lifetime: re-paired to the same room,
+     *  the child must not run an old release again. */
+    private fun keepReleasedCommandIds(ctx: Context, editor: android.content.SharedPreferences.Editor) {
+        val kept = releasedCommandIds(ctx)
+        val current = try { JSONObject(prefs(ctx).getString("control_state_json", "{}") ?: "{}").optJSONObject("relayed_ids") } catch (_: Exception) { null }
+        current?.keys()?.forEach { kept.put(it, current.optLong(it)) }
+        for (key in kept.keys().asSequence().toList()) if (kept.optLong(key) < System.currentTimeMillis() - FamilySecurity.RELAYED_COMMAND_LIFETIME_MS) kept.remove(key)
+        editor.putString("released_relayed_ids", kept.toString())
+    }
+    private fun releasedCommandIds(ctx: Context): JSONObject = try { JSONObject(prefs(ctx).getString("released_relayed_ids", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
     fun releaseChildBeforeLeaving(ctx: Context, waitMs: Long, purgeFamily: Boolean = false): ReleaseOutcome {
         releaseOverride?.let { return it(ctx, waitMs) }
         if (!isParentMode(ctx)) return ReleaseOutcome.NOT_SENT
@@ -1046,6 +1057,8 @@ object GuardEngine {
             prefs(ctx).edit().putString("role", role).apply()
             // Leaving the child role (including a remote reset) ends scores-only mode and deletes the scoring store.
             if (previous == "child" && role != "child") { RiskLocal.resetFamily(ctx); forgetChildKey(ctx); prefs(ctx).edit().remove(CHILD_QR_PAIRED).remove(DeliveryHealth.EXPIRED_AT_MS).remove(DeliveryHealth.HEARTBEAT_IDS).apply() }
+            // A released child keeps none of the old family's secrets, lists or queued records (UI role changes all pass through unconfigured).
+            if (previous == "child" && role == "unconfigured") purgeChildFamily(ctx, prefs(ctx).getString("family_uuid_token", "").orEmpty())
         }
         syncChildComponents(ctx)
         // The child role was set or confirmed: install the model included in the app, if any (no-op everywhere else).
@@ -2102,7 +2115,7 @@ object GuardEngine {
             // Ids of commands accepted for days (FamilySecurity.relayedCommandTypes) are kept as long as they can be accepted.
             val relayedIds = state.optJSONObject("relayed_ids") ?: JSONObject().also { state.put("relayed_ids", it) }
             val id = inner.getString("command_id")
-            if (ids.has(id) || relayedIds.has(id)) {
+            if (ids.has(id) || relayedIds.has(id) || releasedCommandIds(ctx).has(id)) {
                 if(controlId.isNotEmpty())FamilyEvidence(ctx).use{it.controlConsumed(getChannelTopicForToken(token),controlId)}
                 return RelayConsumption.CONSUMED
             }
@@ -2196,8 +2209,9 @@ object GuardEngine {
             "remote_reset_child" -> {
                 if (role == "child") {
                     grantTemporaryUnlock(ctx, 10 * 60_000L)
-                    setRole(ctx, "unconfigured")
-                    if (inner.optBoolean("purge_family")) purgeChildFamily(ctx, token)
+                    // Committed first so the purge keeps this release's id (it must never run again after a re-pair to this room).
+                    committedControlState?.let { check(prefs(ctx).edit().putString("control_state_json", it).commit()) }
+                    setRole(ctx, "unconfigured")   // also purges the old family, with or without purge_family
                     addCheckpointLog(ctx, "CP4-RESET", "家長已遠端解除並重設子女手機")
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
