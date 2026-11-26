@@ -60,11 +60,12 @@ object ArchiveMaintenance {
 }
 
 class ArchiveMaintenanceJob : JobService() {
-    private var worker:Thread?=null
+    // One thread per job: the prune job and the heartbeat tick can run side by side.
+    private val workers=HashMap<Int,Thread>()
     private val completion=Handler(Looper.getMainLooper())
 
     override fun onStartJob(params:JobParameters):Boolean {
-        worker=Thread({
+        val worker=Thread({
             val retry=try {
                 if(params.jobId==ArchiveMaintenance.HEARTBEAT_ID)ArchiveMaintenance.backgroundTick(applicationContext)
                 else { ArchiveMaintenance.pruneAll(applicationContext); RiskLocal.remindImportIfDue(applicationContext) }
@@ -72,22 +73,22 @@ class ArchiveMaintenanceJob : JobService() {
             } catch(_:Exception){true}
             val current=Thread.currentThread()
             completion.post {
-                if(worker===current) {
-                    worker=null
-                    jobFinished(params,retry)
-                }
+                val mine=synchronized(workers){(workers[params.jobId]===current).also{if(it)workers.remove(params.jobId)}}
+                if(mine)jobFinished(params,retry)
             }
-        },"Archive maintenance").apply{start()}
+        },"Archive maintenance")
+        synchronized(workers){workers[params.jobId]=worker}
+        worker.start()
         return true
     }
 
     override fun onStopJob(params:JobParameters):Boolean {
-        worker?.interrupt();worker=null
+        synchronized(workers){workers.remove(params.jobId)}?.interrupt()
         return true
     }
 
     override fun onDestroy() {
-        worker?.interrupt();worker=null
+        synchronized(workers){workers.values.toList().also{workers.clear()}}.forEach{it.interrupt()}
         super.onDestroy()
     }
 }

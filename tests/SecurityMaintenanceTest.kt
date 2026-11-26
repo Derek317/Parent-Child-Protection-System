@@ -16,13 +16,22 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
 import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowJobService
+import org.robolectric.util.ReflectionHelpers
 import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[28])
 class SecurityMaintenanceTest {
+    /** Records which job each jobFinished call ends: the stock shadow keeps only one flag. */
+    @Implements(JobService::class)
+    class FinishShadow : ShadowJobService() {
+        @Implementation override fun jobFinished(params: JobParameters, needsReschedule: Boolean) { finished.add(params.jobId); super.jobFinished(params, needsReschedule) }
+        companion object { val finished: MutableList<Int> = java.util.Collections.synchronizedList(ArrayList()) }
+    }
     private val ctx:Application get()=RuntimeEnvironment.getApplication()
     private val day=86_400_000L
     private fun event(id:String,now:Long,text:String="retained private content")=JSONObject()
@@ -125,6 +134,19 @@ class SecurityMaintenanceTest {
             assertTrue(controller.get().onStartJob(Shadow.newInstanceOf(JobParameters::class.java)))
             assertFalse(awaitFinished(controller.get()).isRescheduleNeeded)
             FamilyEvidence(ctx).use {assertNull(it.find("family","expired"))}
+        }finally{controller.destroy()}
+    }
+
+    @Test @Config(shadows=[FinishShadow::class]) fun thePruneAndHeartbeatJobsRunningTogetherEachFinish() {
+        FinishShadow.finished.clear()
+        val controller=Robolectric.buildService(ArchiveMaintenanceJob::class.java).create()
+        try {
+            fun params(id:Int)=Shadow.newInstanceOf(JobParameters::class.java).also{ReflectionHelpers.setField(it,"jobId",id)}
+            assertTrue(controller.get().onStartJob(params(ArchiveMaintenance.HEARTBEAT_ID-1)))
+            assertTrue(controller.get().onStartJob(params(ArchiveMaintenance.HEARTBEAT_ID)))
+            val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5)
+            while(FinishShadow.finished.size<2 && System.nanoTime()<deadline) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(10) }
+            assertEquals(listOf(ArchiveMaintenance.HEARTBEAT_ID-1,ArchiveMaintenance.HEARTBEAT_ID),FinishShadow.finished.sorted())
         }finally{controller.destroy()}
     }
 
