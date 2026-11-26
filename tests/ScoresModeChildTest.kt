@@ -928,6 +928,18 @@ class ScoresModeChildTest {
             assertFalse(c.get().onStartJob(params))
         } finally { RiskRunGuard.leave(); c.destroy() }
     }
+    @Test fun theAfterImportJobAsksForARetryWhileABatchRuns() {
+        val c = org.robolectric.Robolectric.buildService(RiskScoringJob::class.java).create()
+        try {
+            val params = org.robolectric.shadow.api.Shadow.newInstanceOf(android.app.job.JobParameters::class.java)
+            org.robolectric.util.ReflectionHelpers.setField(params, "jobId", RiskScoringSchedule.AFTER_IMPORT_ID)
+            assertTrue(RiskRunGuard.tryEnter(RiskScoringSchedule.PRIMARY_ID))
+            assertTrue(c.get().onStartJob(params))
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            val state = org.robolectric.shadow.api.Shadow.extract<org.robolectric.shadows.ShadowJobService>(c.get())
+            assertTrue(state.isJobFinished); assertTrue(state.isRescheduleNeeded)
+        } finally { RiskRunGuard.leave(); c.destroy() }
+    }
     @Test fun theOngoingNoticeSaysWhetherAnalysisIsOnPausedOrWaiting() {
         fun notice(): String {
             GuardEngine.refreshMonitoringDisclosure(ctx)

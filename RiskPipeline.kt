@@ -1162,7 +1162,11 @@ class RiskScoringJob : JobService() {
 
     override fun onStartJob(params: JobParameters): Boolean {
         // The periodic and fallback jobs never run two batches at once; the second one simply ends.
-        if (!RiskRunGuard.tryEnter(params.jobId)) return false
+        if (!RiskRunGuard.tryEnter(params.jobId)) {
+            if (params.jobId != RiskScoringSchedule.AFTER_IMPORT_ID) return false
+            // The import's one-shot is not lost to the running batch: retry it on the default exponential back-off (30 s, doubling).
+            completion.post { jobFinished(params, true) }; return true
+        }
         ownedJob = params.jobId; stoppedBySystem = false
         Thread({
             try { RiskBatch.run(applicationContext, scorerFactory) { RiskRunGuard.stopRequested() } }
