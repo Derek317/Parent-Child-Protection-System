@@ -257,6 +257,9 @@ object FamilySecurity {
         val ts = JSONObject(envelope.getString("payload")).optLong("ts_ms")
         ts > now + 120_000L && ts <= now + EARLY_COMMAND_BOUND_MS && readCommand(envelope, parentPublicKey, scope, ts) != null
     } catch (_: Exception) { false }
+    /** True when [envelope] is a command signed by [publicKey]: the signature only, no scope or time. */
+    fun signedBy(envelope: JSONObject, publicKey: String): Boolean =
+        try { verifySigned(envelope.getString("payload").toByteArray(Charsets.UTF_8), envelope.getString("signature"), publicKey) } catch (_: Exception) { false }
     /** ECDSA-P256-SHA256 over [signed] with the base64url DER [signature]; false for an invalid key text. May throw on malformed input. */
     private fun verifySigned(signed: ByteArray, signature: String, publicKeyText: String): Boolean =
         validPublicKey(publicKeyText) && Signature.getInstance("SHA256withECDSA").run {

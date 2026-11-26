@@ -398,9 +398,43 @@ object GuardEngine {
         return JSONObject().put("e2ee", b64).toString()
     }
 
-    fun decryptPayload(token: String, wireStr: String): JSONObject? = try {
+    // Audit L3, envelope v2: "IGE2" | record id length | record id | iv | AES-GCM ciphertext, under a per-direction key derived
+    // from the v1 key, with the room, the sender's role and the record id as associated data. Read here; nothing sends it yet:
+    // no phone can tell that its peer reads v2 (6.0 cannot), so every record still leaves as v1 (encryptPayload).
+    private val V2_MAGIC = "IGE2".toByteArray(Charsets.US_ASCII)
+    private val V2_ID = Regex("[A-Za-z0-9:_-]{1,200}")
+    private fun v2Key(token: String, senderRole: String) = SecretKeySpec(PairingCrypto.hkdfSha256(deriveAesKey(token).encoded, ByteArray(0),
+        "igguard-e2ee-v2\n$senderRole".toByteArray(Charsets.UTF_8), 32), "AES")
+    private fun v2Aad(room: String, senderRole: String, recordId: String) = "igguard-e2ee-v2\n$room\n$senderRole\n$recordId".toByteArray(Charsets.UTF_8)
+    /** A v2 envelope from [senderRole] in [room] for the outbox record [recordId] ("event id:part"). */
+    internal fun encryptPayloadV2(token: String, plainJson: String, room: String, senderRole: String, recordId: String): String {
+        require(senderRole in setOf("parent", "child") && V2_ID.matches(recordId))
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, v2Key(token, senderRole), GCMParameterSpec(128, iv))
+        cipher.updateAAD(v2Aad(room, senderRole, recordId))
+        val id = recordId.toByteArray(Charsets.US_ASCII)
+        return JSONObject().put("e2ee", Base64.encodeToString(V2_MAGIC + byteArrayOf(id.size.toByte()) + id + iv + cipher.doFinal(plainJson.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)).toString()
+    }
+    /** v2 for [receiverRole] in [room]: only the peer's direction, and only a record whose event id is the one it was sealed for. */
+    private fun decryptV2(token: String, combined: ByteArray, receiverRole: String, room: String): JSONObject? = try {
+        val length = combined[4].toInt() and 255
+        val recordId = String(combined.copyOfRange(5, 5 + length), Charsets.US_ASCII)
+        val sender = if (receiverRole == "parent") "child" else "parent"
+        require(V2_ID.matches(recordId) && combined.size >= 5 + length + 28)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, v2Key(token, sender), GCMParameterSpec(128, combined.copyOfRange(5 + length, 17 + length)))
+        cipher.updateAAD(v2Aad(room, sender, recordId))
+        JSONObject(String(cipher.doFinal(combined.copyOfRange(17 + length, combined.size)), Charsets.UTF_8))
+            .takeIf { it.optString("event_id") == recordId.substringBeforeLast(':') }
+    } catch (_: Exception) { null }
+
+    /** v1, or v2 when [receiverRole] and [room] are given. A v1 IV may start like v2 by chance: then v1 is tried too. */
+    fun decryptPayload(token: String, wireStr: String, receiverRole: String? = null, room: String? = null): JSONObject? = try {
         val combined = Base64.decode(JSONObject(wireStr).getString("e2ee"), Base64.NO_WRAP)
-        if (combined.size < 28) null
+        val v2 = if (receiverRole != null && room != null && combined.size > 5 && combined.copyOfRange(0, 4).contentEquals(V2_MAGIC)) decryptV2(token, combined, receiverRole, room) else null
+        if (v2 != null) v2
+        else if (combined.size < 28) null
         else {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, deriveAesKey(token), GCMParameterSpec(128, combined.copyOfRange(0, 12)))
@@ -2064,7 +2098,8 @@ object GuardEngine {
 
         val innerStr = outer.optString("message")
         val token = getOrCreateFamilyToken(ctx)
-        val decoded = decryptPayload(token, innerStr) ?: return RelayConsumption.REJECTED
+        val room = try { FamilyRelay.room(relayPublicKey(ctx), getChannelTopicForToken(token)) } catch (_: Exception) { null }
+        val decoded = decryptPayload(token, innerStr, role, room) ?: return RelayConsumption.REJECTED
         // Legacy (the unsigned 5.2 format) only for a family without the sticky FAMILY_QR_ONLY fact. With it and no pinned key (rolled
         // back, cancelled, remotely reset, or any other unpinning) no record is taken, signed or not, until a new QR pairing pins a key.
         // The rollback/reset marks only choose the overview text.
@@ -2084,6 +2119,12 @@ object GuardEngine {
             }
             if(decoded.optBoolean("receipt_requested"))completed.put("receipt_requested",true) else completed
         } else decoded
+        // Audit L3: a v1 envelope has no direction, so a relay can hand the parent its own signed command back. Refused quietly:
+        // only the parent signs commands, so it is never the child tampering.
+        if (role == "parent" && decrypted.optJSONObject("envelope")?.let { FamilySecurity.signedBy(it, parentIdentity(ctx).publicKey) } == true) {
+            if (decoded.optString("type") == "alert_fragment") FamilyEvidence(ctx).use { it.discardFragments(getChannelTopicForToken(token), decoded.optString("event_id")) }
+            return RelayConsumption.REJECTED
+        }
         // Parent: every frame passes the child-record gate first (design 3.3). With a pinned key only a record signed by it goes on;
         // without one (a 5.2 pairing) the unsigned format is processed as before and the child is shown as not verified.
         val now = System.currentTimeMillis()

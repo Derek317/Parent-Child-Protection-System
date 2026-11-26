@@ -364,4 +364,33 @@ class ChildRecordGateTest {
         ArchiveMaintenance.pruneAll(ctx, now + 17 * day)
         assertFalse(seen("a")); assertFalse(seen("b"))
     }
+
+    // ---------------- audit L3: direction and room binding ----------------
+    private val room get() = FamilyRelay.room(parentKey, scope)
+    private fun deliverWire(wire: String) = GuardEngine.processIncomingRelayLine(ctx, JSONObject().put("event", "message")
+        .put("id", UUID.randomUUID().toString()).put("message", wire).toString(), "parent", null)
+
+    /** A v1 envelope has no direction: a relay that hands the parent its own signed command back gets a quiet refusal, no tamper notice. */
+    @Test fun theParentsOwnCommandReflectedByTheRelayIsRefusedQuietly() {
+        val own = FamilySecurity.loadOrCreateParentIdentity(ctx, null, parentKey)
+        val command = JSONObject().put("type", "unlock_code").put("scope", scope).put("code", "123456").put("exp", System.currentTimeMillis() + 60_000L)
+            .put("command_id", UUID.randomUUID().toString()).put("ts_ms", System.currentTimeMillis())
+        assertEquals(RelayConsumption.REJECTED, deliver(Pairing.commandRecord(FamilySecurity.signCommand(command, own.privateKey), command.getString("command_id"))))
+        assertEquals("a reflection is not the child tampering", 0, notices())
+        assertEquals("another key's command still counts as tampering", RelayConsumption.REJECTED,
+            deliver(Pairing.commandRecord(FamilySecurity.signCommand(command, stranger.privateKey), command.getString("command_id"))))
+        assertEquals(1, notices())
+    }
+
+    /** The v2 envelope (per-direction key, room and record id as associated data) is read; a reflected, moved or relabelled one is not. */
+    @Test fun aV2EnvelopeIsReadOnlyFromTheChildForThisRoomAndRecord() {
+        val frame = signed(heartbeat()); val id = frame.getString("event_id") + ":0"
+        assertEquals(RelayConsumption.REJECTED, deliverWire(GuardEngine.encryptPayloadV2(token, frame.toString(), room, "parent", id)))
+        assertEquals(RelayConsumption.REJECTED, deliverWire(GuardEngine.encryptPayloadV2(token, frame.toString(), "a".repeat(64), "child", id)))
+        assertEquals(RelayConsumption.REJECTED, deliverWire(GuardEngine.encryptPayloadV2(token, frame.toString(), room, "child", UUID.randomUUID().toString() + ":0")))
+        assertEquals(0, notices()); assertEquals(0L, lastSeen())
+        assertEquals(RelayConsumption.CONSUMED, deliverWire(GuardEngine.encryptPayloadV2(token, frame.toString(), room, "child", id)))
+        assertTrue("the child's heartbeat counts", lastSeen() > 0L)
+        assertNull("v1 readers without the room never take v2", GuardEngine.decryptPayload(token, GuardEngine.encryptPayloadV2(token, frame.toString(), room, "child", id)))
+    }
 }
