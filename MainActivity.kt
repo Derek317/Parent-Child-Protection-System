@@ -1513,10 +1513,12 @@ object GuardEngine {
         return (prefs(ctx).getString("child_self_handle", "") ?: "").trim().lowercase(Locale.US).removePrefix("@")
     }
 
-    fun setChildSelfHandle(ctx: Context, handle: String): Boolean {
+    /** [recordTimeMs]: parent only, the time of the child record the handle came from, stored in the same write as the handle. */
+    fun setChildSelfHandle(ctx: Context, handle: String, recordTimeMs: Long? = null): Boolean {
         val clean = handle.trim().lowercase(Locale.US).removePrefix("@")
         if (clean.isEmpty() || clean in RESERVED_UI_HEADERS || !VALID_IG_HANDLE_REGEX.matches(clean)) return false
-        prefs(ctx).edit().putString("child_self_handle", clean).putInt("child_self_handle_source_version", 2).apply()
+        prefs(ctx).edit().putString("child_self_handle", clean).putInt("child_self_handle_source_version", 2)
+            .apply { if (recordTimeMs != null) putLong("child_self_handle_ts_ms", recordTimeMs) }.apply()
         val cleanedTrusted = getTrustedHandles(ctx).filter { it != clean }
         prefs(ctx).edit().putString("trusted_csv", cleanedTrusted.joinToString(",")).apply()
         val cleanedOffenders = getFlaggedOffenders(ctx).filter { it != clean }
@@ -1528,9 +1530,7 @@ object GuardEngine {
      *  time, as after an upgrade: taken). Stored clamped to now, as the gate's ordering mark: a record dated ahead cannot pin a handle. */
     private fun applyChildHandleFromRecord(ctx: Context, handle: String, recordTimeMs: Long): Boolean {
         if (prefs(ctx).contains("child_self_handle_ts_ms") && recordTimeMs <= prefs(ctx).getLong("child_self_handle_ts_ms", 0L)) return false
-        if (!setChildSelfHandle(ctx, handle)) return false
-        prefs(ctx).edit().putLong("child_self_handle_ts_ms", minOf(recordTimeMs, System.currentTimeMillis())).apply()
-        return true
+        return setChildSelfHandle(ctx, handle, minOf(recordTimeMs, System.currentTimeMillis()))
     }
 
     // Issue #1 Fix: Child phone automatically detects its own IG handle and syncs it to Parent phone!

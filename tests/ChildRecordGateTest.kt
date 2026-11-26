@@ -252,6 +252,14 @@ class ChildRecordGateTest {
         assertEquals("first_record", GuardEngine.getChildSelfHandle(ctx)); assertTrue(prefs.contains("child_self_handle_ts_ms"))
     }
 
+    /** A new family starts without the old family's handle time, so its first record with a handle is not refused as older. */
+    @Test fun aNewFamilyClearsTheTimeStoredWithTheHandle() {
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(heartbeat(ts = System.currentTimeMillis(), reason = "test_alert").put("child_self_handle", "old_family"))))
+        assertTrue(prefs.contains("child_self_handle_ts_ms"))
+        GuardEngine.setFamilyToken(ctx, UUID.randomUUID().toString())
+        assertFalse(prefs.contains("child_self_handle")); assertFalse(prefs.contains("child_self_handle_ts_ms"))
+    }
+
     /** A 5.2 pairing (no pinned key) sends an unsigned handle sync with ts_ms: the same rule applies to it. */
     @Test fun aLegacyHandleSyncFollowsTheSameOrder() {
         prefs.edit().remove("pinned_child_key").commit()
