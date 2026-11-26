@@ -382,6 +382,10 @@ jobs:
                   maxHeapSize = '1g'
                   // A failed test prints its message, and every test prints when it starts, so a hang shows which test it is in.
                   testLogging { events 'started', 'failed'; exceptionFormat 'full' }
+                  // The names of the failed tests once more as the last lines of the test output, where a pasted log tail shows them.
+                  def failedTests = []
+                  afterTest { d, r -> if (r.resultType == TestResult.ResultType.FAILURE) failedTests << "${d.className} > ${d.name}" }
+                  afterSuite { d, r -> if (!d.parent && failedTests) println "FAILED TESTS:\n" + failedTests.join('\n') }
                   dependsOn 'copyRobolectricJars'
                   systemProperty 'robolectric.offline', 'true'
                   systemProperty 'robolectric.dependency.dir', layout.buildDirectory.dir('robolectric-jars').get().asFile.absolutePath
