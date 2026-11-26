@@ -868,11 +868,21 @@ class ScoresModeChildTest {
             sql.version = 8
         }
         FamilyEvidence(ctx).use { db ->
-            assertEquals(9, db.readableDatabase.version)
+            assertEquals(10, db.readableDatabase.version)
             assertEquals("v8 'counted, not stored' rows are not excluded groups", 0, count("risk_unknown")); assertEquals(0, count("risk_store")); assertEquals(0, count("risk_authors"))
             val columns = db.readableDatabase.rawQuery("PRAGMA table_info(risk_store)", null).use { c -> buildList { while (c.moveToNext()) add(c.getString(1)) } }
             assertTrue(columns.containsAll(listOf("body_hash", "source", "matched")))
         }
+    }
+    @Test fun theFourteenDayCleanupUsesAnIndexOnFreshAndUpgradedStores() {
+        fun plan() = FamilyEvidence(ctx).use { db ->
+            db.readableDatabase.rawQuery("EXPLAIN QUERY PLAN DELETE FROM risk_store WHERE scope=? AND stamp<?", arrayOf(scope, "0")).use { c -> buildList { while (c.moveToNext()) add(c.getString(3)) } }.joinToString()
+        }
+        assertTrue(plan(), plan().contains("INDEX risk_store_stamp "))
+        // A 6.0 / 6.0.2 store: schema 9 without the index.
+        FamilyEvidence(ctx).use { db -> val sql = db.writableDatabase; sql.execSQL("DROP INDEX risk_store_stamp"); sql.version = 9 }
+        FamilyEvidence(ctx).use { db -> assertEquals(10, db.readableDatabase.version) }
+        assertTrue(plan(), plan().contains("INDEX risk_store_stamp "))
     }
     @Test fun agreementToOlderWordingIsAskedForAgainWithoutStoringOrForwardingText() {
         activate(); capture(obs(text(1)))

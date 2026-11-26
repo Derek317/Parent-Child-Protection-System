@@ -300,8 +300,8 @@ class ScoresModeParentTest {
         assertTrue(GuardEngine.sendScoresModePolicy(ctx, false)); assertNotEquals(id, GuardEngine.scoresModePolicy(ctx)!!.policyId)
         assertTrue(GuardEngine.sendScoresModePolicy(ctx, true)); assertNotEquals(id, GuardEngine.scoresModePolicy(ctx)!!.policyId)
     }
-    @Test fun schemaIsVersionNine() {
-        FamilyEvidence(ctx).use { assertEquals(9, it.readableDatabase.version) }
+    @Test fun schemaIsVersionTen() {
+        FamilyEvidence(ctx).use { assertEquals(10, it.readableDatabase.version) }
     }
 
     // ---------- second review ----------
