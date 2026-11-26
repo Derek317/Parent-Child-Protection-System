@@ -134,7 +134,7 @@ export class FamilyRoom extends DurableObject {
       if(auth.role === 'parent')await verifyParentAuthorization(auth, room);
       // Before any room state is read: a child proof that does not verify touches nothing.
       else if (auth.v === 2) await verifyChildAuthorization(auth, room);
-    } catch { return json(401, 'unauthorized'); }
+    } catch (error) { return json(401, error?.message === 'stale_time' ? 'stale_time' : 'unauthorized'); }
     try {
       this.cleanupRegistration();
       if (this.retired()) {

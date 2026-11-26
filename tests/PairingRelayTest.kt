@@ -76,6 +76,17 @@ class PairingRelayTest {
         } finally { server.shutdown() }
     }
 
+    /** Audit M4(c): a relay that names the clock (stale_time, still 401) is believed even when its Date header shows no difference. */
+    @Test fun aStaleTimeRefusalSaysCheckTheTimeNotPairAgain() {
+        QrPairing.pairChild(ctx)
+        val (server, _) = refuse(401, "stale_time", System.currentTimeMillis())
+        try {
+            assertFalse("not a key refusal", GuardEngine.cpChildKeyRefused)
+            assertTrue(GuardEngine.cpLastPollStatus, GuardEngine.cpLastPollStatus.contains("日期和時間"))
+            assertFalse(GuardEngine.cpLastPollStatus.contains("需要重新配對"))
+        } finally { server.shutdown() }
+    }
+
     /** The relay refuses proofs more than 2 min off its clock. That 401 is the phone's clock, not its key: say so and sign with the relay's time. */
     @Test fun a401FromAPhoneClockOffBy10MinSaysCheckTheTimeAndSignsWithTheRelaysTime() {
         val r = QrPairing.pairChild(ctx)

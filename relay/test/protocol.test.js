@@ -85,3 +85,15 @@ test('v2 headers need exactly their own field set', () => {
   assert.throws(() => parseAuthorization(encode({ ...vector.auth, v: 2 })));
   assert.throws(() => parseAuthorization(encode({ ...vector.auth_v2_child, v: 1 })));
 });
+
+test('a genuine proof outside the 2-minute window is refused as stale_time; a forged one never learns about the time', async () => {
+  const { auth_v2_parent: parent, auth_v2_child: child } = vector;
+  for (const offset of [120_001, -120_001]) {
+    await assert.rejects(verifyParentAuthorization(vector.auth, vector.room, vector.auth.ts_ms + offset), { message: 'stale_time' });
+    await assert.rejects(verifyParentAuthorization(parent, vector.room, parent.ts_ms + offset), { message: 'stale_time' });
+    await assert.rejects(verifyChildAuthorization(child, vector.room, child.ts_ms + offset), { message: 'stale_time' });
+    await assert.rejects(verifyParentAuthorization({ ...parent, signature: vector.auth.signature }, vector.room, parent.ts_ms + offset), { message: 'Unauthorized' });
+    await assert.rejects(verifyChildAuthorization({ ...child, signature: vector.auth.signature }, vector.room, child.ts_ms + offset), { message: 'Unauthorized' });
+    await assert.rejects(verifyParentAuthorization(vector.auth, 'b'.repeat(64), vector.auth.ts_ms + offset), { message: 'Unauthorized' });
+  }
+});

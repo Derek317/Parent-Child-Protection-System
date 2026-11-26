@@ -72,18 +72,20 @@ const importKey = encoded => crypto.subtle.importKey('spki', decode64(encoded), 
 const verifySignature = async (key, signature, proof) => {
   if (!await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, rawSignature(signature), encoder.encode(proof))) throw new Error('Unauthorized');
 };
+// Checked only after the signature: only the holder of the key learns that its clock, not its key, was refused (HTTP 401 stale_time).
+const requireFresh = (auth, now) => { if (Math.abs(now - auth.ts_ms) > 120_000) throw new Error('stale_time'); };
 
 export async function verifyParentAuthorization(auth, room, now = Date.now()) {
   if (![1,2].includes(auth.v) || auth.role !== 'parent' || auth.room !== room || !hexPattern.test(room) ||
       !hexPattern.test(auth.capability_hash) || !noncePattern.test(auth.nonce) ||
-      !Number.isSafeInteger(auth.ts_ms) || Math.abs(now - auth.ts_ms) > 120_000 ||
-      await roomId(auth.public_key, auth.scope) !== room) throw new Error('Unauthorized');
+      !Number.isSafeInteger(auth.ts_ms) || await roomId(auth.public_key, auth.scope) !== room) throw new Error('Unauthorized');
   const key = await importKey(auth.public_key);
   const proof = auth.v === 1
     ? ['igguard-relay-auth-v1','parent',room,auth.scope,auth.ts_ms,auth.nonce,auth.capability_hash].join('\n')
     : ['igguard-relay-auth-v2','parent',room,auth.scope,auth.ts_ms,auth.nonce,auth.capability_hash,auth.child_key].join('\n');
   if (auth.v === 2) await importKey(auth.child_key);
   await verifySignature(key, auth.signature, proof);
+  requireFresh(auth, now);
   return auth;
 }
 
@@ -91,10 +93,11 @@ export async function verifyParentAuthorization(auth, room, now = Date.now()) {
 export async function verifyChildAuthorization(auth, room, now = Date.now()) {
   if (auth.v !== 2 || auth.role !== 'child' || auth.room !== room || !hexPattern.test(room) || !scopePattern.test(auth.scope) ||
       typeof auth.capability !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(auth.capability) || !noncePattern.test(auth.nonce) ||
-      !Number.isSafeInteger(auth.ts_ms) || Math.abs(now - auth.ts_ms) > 120_000) throw new Error('Unauthorized');
+      !Number.isSafeInteger(auth.ts_ms)) throw new Error('Unauthorized');
   const key = await importKey(auth.child_key);
   const proof = ['igguard-relay-auth-v2','child',room,auth.scope,auth.ts_ms,auth.nonce,await capabilityHash(auth.capability)].join('\n');
   await verifySignature(key, auth.signature, proof);
+  requireFresh(auth, now);
   return auth;
 }
 
