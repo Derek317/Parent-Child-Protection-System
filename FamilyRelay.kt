@@ -73,20 +73,6 @@ object FamilyRelay {
         return ready.opt("type")=="ready" && (0 until features.length()).any{features.opt(it)=="child_proof"}
     }
 
-    enum class ChildConnectOutcome { PARENT_NOT_REGISTERED, CHILD_KEY_NOT_REGISTERED, UNAUTHORIZED, ROOM_RETIRED, OTHER }
-    /** Classifies a failed child socket upgrade from its HTTP status and the relay body `{"error":{"code":…,"retry_after_ms":…}}`.
-     * 401 and 410 are decided by status alone, as CloudRelay does; the two 409s need the code because they mean different waits. */
-    fun childConnectOutcome(status:Int?,body:String?):ChildConnectOutcome {
-        val code=body?.takeIf{it.length<=8192}?.let{try{JSONObject(it).optJSONObject("error")?.opt("code") as? String}catch(_:Exception){null}}
-        return when {
-            status==401 -> ChildConnectOutcome.UNAUTHORIZED
-            status==410 -> ChildConnectOutcome.ROOM_RETIRED
-            status==409 && code=="parent_not_registered" -> ChildConnectOutcome.PARENT_NOT_REGISTERED
-            status==409 && code=="child_key_not_registered" -> ChildConnectOutcome.CHILD_KEY_NOT_REGISTERED
-            else -> ChildConnectOutcome.OTHER
-        }
-    }
-
     fun socketUrl(endpoint:String,room:String,allowLocal:Boolean=false):String {
         require(room.matches(Regex("[a-f0-9]{64}")))
         val uri=try{URI(endpoint)}catch(_:Exception){throw IllegalArgumentException("Invalid relay endpoint")}
