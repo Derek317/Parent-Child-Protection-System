@@ -48,12 +48,6 @@ internal object RiskPrompt {
     fun render(instruction: String, messages: List<RiskMessage>): String =
         "<|im_start|>system\n$instruction<|im_end|>\n<|im_start|>user\n${user(messages)}<|im_end|>\n" +
             "<|im_start|>assistant\n<think>\n\n</think>\n\n"
-
-    /** Chunks of [RiskModelSpec.WINDOW] counted back from the newest message; the newest chunk comes first. */
-    fun windows(messages: List<RiskMessage>): List<List<RiskMessage>> =
-        (messages.size downTo 1 step RiskModelSpec.WINDOW).map { end ->
-            messages.subList(maxOf(0, end - RiskModelSpec.WINDOW), end)
-        }
 }
 
 /**
@@ -96,8 +90,6 @@ internal object RiskFit {
 
 internal data class RiskWindowScore(val alert: Double, val flagged: Boolean, val answer: String, val reportScore: Double?)
 
-internal data class RiskThreadScore(val score: Double?, val reviewReason: String?, val flagged: Boolean, val alert: Double)
-
 internal object RiskScoring {
     /** [logits] are for the answers 0 1 2 3 U. */
     fun fromLogits(logits: FloatArray): RiskWindowScore {
@@ -118,19 +110,6 @@ internal object RiskScoring {
         val levels = q[0] + q[1] + q[2] + q[3]
         val report = if (best != 4 && levels > 0) 100 * (q[1] + 2 * q[2] + 3 * q[3]) / (3 * levels) else null
         return RiskWindowScore(alert, alert >= 0.5, RiskModelSpec.ANSWERS[best], report)
-    }
-
-    /** [windows] holds one entry per window; null means the window could not be scored (context too long). */
-    fun thread(windows: List<RiskWindowScore?>): RiskThreadScore {
-        require(windows.isNotEmpty())
-        val scored = windows.filterNotNull()
-        val score = scored.mapNotNull { it.reportScore }.maxOrNull()
-        val reason = when {
-            score != null -> null
-            scored.isEmpty() -> "context_too_long"
-            else -> "insufficient_context"
-        }
-        return RiskThreadScore(score, reason, scored.any { it.flagged }, scored.maxOfOrNull { it.alert } ?: 0.0)
     }
 }
 

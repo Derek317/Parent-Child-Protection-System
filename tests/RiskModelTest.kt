@@ -102,38 +102,6 @@ class RiskModelTest {
         assertThrows(IllegalArgumentException::class.java) { RiskScoring.fromLogits(FloatArray(5) { Float.NEGATIVE_INFINITY }) }
     }
 
-    @Test fun windowsCountBackFromTheNewestMessage() {
-        assertEquals(emptyList<List<RiskMessage>>(), RiskPrompt.windows(emptyList()))
-        assertEquals(listOf(1), RiskPrompt.windows(fakes(1)).map { it.size })
-        assertEquals(listOf(30), RiskPrompt.windows(fakes(30)).map { it.size })
-        assertEquals(listOf(30, 1), RiskPrompt.windows(fakes(31)).map { it.size })
-        val all = fakes(65)
-        val windows = RiskPrompt.windows(all)
-        assertEquals(listOf(30, 30, 5), windows.map { it.size })
-        assertEquals(all.subList(35, 65), windows[0])
-        assertEquals(all.subList(5, 35), windows[1])
-        assertEquals(all.subList(0, 5), windows[2])
-    }
-
-    private fun window(alert: Double, report: Double?, flagged: Boolean = false) =
-        RiskWindowScore(alert, flagged, if (report == null) "U" else "1", report)
-
-    @Test fun threadRules() {
-        val low = window(0.1, 10.0)
-        val high = window(0.9, 80.0, flagged = true)
-        val unresolved = window(0.2, null)
-        val both = RiskScoring.thread(listOf(low, high, null))
-        assertTrue(both.flagged)
-        assertEquals(80.0, both.score!!, 0.0)
-        assertEquals(0.9, both.alert, 0.0)
-        assertNull(both.reviewReason)
-        assertFalse(RiskScoring.thread(listOf(low, unresolved)).flagged)
-        assertEquals("insufficient_context", RiskScoring.thread(listOf(unresolved, null)).reviewReason)
-        assertNull(RiskScoring.thread(listOf(unresolved)).score)
-        assertEquals("context_too_long", RiskScoring.thread(listOf(null, null)).reviewReason)
-        assertThrows(IllegalArgumentException::class.java) { RiskScoring.thread(emptyList()) }
-    }
-
     @Test fun modelFileDigestAndMatch() {
         val bytes = "abc".toByteArray()
         val seen = mutableListOf<Long>()
