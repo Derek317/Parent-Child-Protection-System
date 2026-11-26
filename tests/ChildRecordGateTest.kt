@@ -192,6 +192,23 @@ class ChildRecordGateTest {
         assertEquals(2, stored())
     }
 
+    /** A complete genuine multi-part record refused after reassembly (quietly dropped, or a captured message without its policy)
+     *  keeps none of its parts: they would count as unfinished for days and fill the 100-record bound. */
+    @Test fun aCompleteMultiPartRecordThatIsRefusedLeavesNoParts() {
+        fun incomplete() = FamilyEvidence(ctx).use { it.incompleteCount(scope) }
+        val old = heartbeat(ts = System.currentTimeMillis() - 11 * 86_400_000L).put("reason", "test_alert").put("text", "x".repeat(3000))
+        val dropped = AlertFrames.split(signed(old)); assertTrue(dropped.size > 1)
+        for (p in dropped) deliver(p)
+        assertEquals(1, GuardEngine.childQuietDrops(ctx))
+        assertEquals("quietly dropped: no part stays", 0, incomplete())
+        val captured = ConversationCapture.record(CapturedText("stranger", "hello " + "y".repeat(3000), "incoming", author = "stranger"), System.currentTimeMillis(), false, false)
+            .put("policy_id", UUID.randomUUID().toString()).put("child_self_handle", "kid")
+        val refused = AlertFrames.split(signed(captured)); assertTrue(refused.size > 1)
+        for (p in refused) deliver(p)
+        assertEquals("a captured message without its policy: no part stays", 0, incomplete())
+        assertEquals(0, stored()); assertEquals(0, notices())
+    }
+
     private fun relayTakesEverythingQueued() { for (frame in FamilyEvidence(ctx).use { it.due(scope, Long.MAX_VALUE, "parent") }) GuardEngine.recordRelayAcceptance(ctx, scope, frame) }
 
     /** Remote reset of a pinned child: once the relay holds it, K is unpinned and nothing later "from" that child is taken. */

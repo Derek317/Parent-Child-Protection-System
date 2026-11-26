@@ -2059,7 +2059,10 @@ object GuardEngine {
                 if (decoded.optString("type") == "alert_fragment") FamilyEvidence(ctx).use { it.discardFragments(getChannelTopicForToken(token), decoded.optString("event_id")) }
                 noteChildRecordTamper(ctx, onNewAlertForParent, now); return RelayConsumption.REJECTED
             }
-            is ChildRecords.GateResult.QuietDrop -> { check(prefs(ctx).edit().putInt(QUIET_DROPS, childQuietDrops(ctx) + 1).commit()); return RelayConsumption.REJECTED }
+            is ChildRecords.GateResult.QuietDrop -> {
+                if (decoded.optString("type") == "alert_fragment") FamilyEvidence(ctx).use { it.discardFragments(getChannelTopicForToken(token), decoded.optString("event_id")) }
+                check(prefs(ctx).edit().putInt(QUIET_DROPS, childQuietDrops(ctx) + 1).commit()); return RelayConsumption.REJECTED
+            }
             ChildRecords.GateResult.Replay -> {
                 // The signature and the wrapper id were verified before the replay check, so this id is the record's own.
                 val id = decrypted.optString("event_id")
@@ -2195,7 +2198,10 @@ object GuardEngine {
             "alert", "captured_message" -> {
                 if (role == "parent") {
                     if(msgType=="captured_message") {
-                        if(!ConversationCapture.valid(inner) || pendingCapturePolicy(ctx).isEmpty() || inner.optString("policy_id")!=pendingCapturePolicy(ctx))return RelayConsumption.REJECTED
+                        if(!ConversationCapture.valid(inner) || pendingCapturePolicy(ctx).isEmpty() || inner.optString("policy_id")!=pendingCapturePolicy(ctx)) {
+                            if (decoded.optString("type") == "alert_fragment") FamilyEvidence(ctx).use { it.discardFragments(getChannelTopicForToken(token), decoded.optString("event_id")) }
+                            return RelayConsumption.REJECTED
+                        }
                         prefs(ctx).edit().putString("capture_child_ack_id",inner.getString("policy_id")).apply()
                     }
                     val childSelf = inner.optString("child_self_handle")
