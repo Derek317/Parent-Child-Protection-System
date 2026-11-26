@@ -119,7 +119,8 @@ internal object InstagramExport {
         val zip = ZipInputStream(input)
         val buffer = ByteArray(1 shl 14)
         while (true) {
-            val entry = zip.nextEntry ?: break
+            // An entry name that is not valid UTF-8 makes nextEntry throw IllegalArgumentException: bad archive, not a bug.
+            val entry = try { zip.nextEntry } catch (_: IllegalArgumentException) { throw Failure(ImportResult.MALFORMED) } ?: break
             if (++entries > limits.maxEntries) throw Failure(ImportResult.TOO_MANY_ENTRIES)
             val name = entry.name
             if (unsafeName(name)) throw Failure(ImportResult.UNSAFE_ENTRY)

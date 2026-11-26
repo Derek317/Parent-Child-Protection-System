@@ -238,4 +238,12 @@ class InstagramExportTest {
         assertNotEquals(ImportResult.OK, parse(truncated, "e.zip").result)
         assertEquals(ImportResult.MALFORMED, parse("", "message_1.json").result)
     }
+
+    @Test fun zipWithNonUtf8EntryNameIsMalformed() {
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out, java.nio.charset.Charset.forName("GBK")).use { z -> z.putNextEntry(ZipEntry("聊天/message_1.json")); z.write(jsonOf(chat).toByteArray()); z.closeEntry() }
+        val bytes = out.toByteArray()
+        assertEquals("general-purpose flag bit 11 (UTF-8 names) is clear", 0, bytes[7].toInt() and 0x08)
+        assertEquals(ImportResult.MALFORMED, parse(bytes, "e.zip").result)
+    }
 }
