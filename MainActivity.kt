@@ -2079,6 +2079,8 @@ object GuardEngine {
             else -> {}
         }
         val verified = gate as? ChildRecords.GateResult.Verified
+        // A verified record completes the pairing at once: a crash before the final commit must not let the resend, then skipped as stored, undo it.
+        if(verified!=null&&prefs(ctx).contains(PAIRING_PENDING_MS))check(prefs(ctx).edit().remove(PAIRING_PENDING_MS).commit())
         val controlId=if(verified!=null)(if(verified.type in ConversationCapture.contentTypes)"" else "control:"+verified.id)
             else if(decrypted.optBoolean("relay_control"))decrypted.optString("event_id") else ""
         val envelope=if(verified!=null)verified.record else if(controlId.isNotEmpty())decrypted.optJSONObject("envelope") ?: return RelayConsumption.REJECTED else decrypted

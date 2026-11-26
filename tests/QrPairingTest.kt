@@ -192,6 +192,32 @@ class QrPairingTest {
         assertFalse(GuardEngine.childPairingCancelled(ctx)); assertEquals(GuardEngine.ChildTrust.PAIRING, GuardEngine.childTrust(ctx))
     }
 
+    /** A crash after the first verified record was stored but before its commit: the resent record still completes the pairing. */
+    @Test fun aResentFirstRecordAfterACrashBeforeTheCommitStillCompletesThePairing() {
+        parentPhone()
+        val run = parentUpToDigits()
+        assertTrue(run.link.enterDigits((run.child.state as CS.ShowingDigits).digits))
+        val family = run.child.confirm(now + 3_000)!!
+        assertTrue(run.link.accept())
+        val m3 = GuardEngine.decryptPayload(family.token, FamilyEvidence(ctx).use { it.due(family.scope, Long.MAX_VALUE, "parent") }.single().wire)!!
+        val done = run.child.onComplete(m3, now + 4_000)!!
+        val record = JSONObject().put("type", "alert").put("event_id", java.util.UUID.randomUUID().toString()).put("capture_source", "app_or_visible_screen")
+            .put("reason", "pairing_verified").put("sender", "Pixel 7").put("text", "子女手機已用 QR 碼完成配對。").put("ts_ms", System.currentTimeMillis()).put("time", "x")
+            .put("trusted_csv", "").put("child_self_handle", "")
+        val frame = ChildRecords.wrapForParent(record.toString(), record.getString("event_id"), GuardEngine.relayPublicKey(ctx), done.childKey, { FamilySecurity.signChildBytes(it, done.childKeyAlias) }, true)
+        fun deliver() = GuardEngine.processIncomingRelayLine(ctx, JSONObject().put("event", "message").put("id", java.util.UUID.randomUUID().toString())
+            .put("message", GuardEngine.encryptPayload(family.token, frame.toString())).toString(), "parent", null)
+        val pendingMs = prefs.getLong("child_pairing_pending_ms", 0L); val state = prefs.getString("child_record_state_json", null)
+        assertTrue(pendingMs > 0L)
+        assertEquals(RelayConsumption.CONSUMED, deliver())
+        // The crash: the record is in the database, the commit that follows it never happened.
+        prefs.edit().putLong("child_pairing_pending_ms", pendingMs).apply { if (state == null) remove("child_record_state_json") else putString("child_record_state_json", state) }.commit()
+        assertEquals(RelayConsumption.CONSUMED, deliver())
+        assertFalse("the resent verified record completes the pairing", GuardEngine.childPairingPending(ctx))
+        assertFalse(GuardEngine.expireUnconfirmedChildPairing(ctx, now + Pairing.CONFIRM_WINDOW_MS))
+        assertNotNull("the child stays pinned", GuardEngine.pinnedChildKey(ctx))
+    }
+
     @Test fun childEngineStoresAliasParentKeyTokenAndVerifier() {
         val identity = FamilySecurity.newSigningIdentity()
         val r = QrPairing.pairChild(ctx, identity)
