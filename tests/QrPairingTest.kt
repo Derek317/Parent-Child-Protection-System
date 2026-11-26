@@ -94,6 +94,35 @@ class QrPairingTest {
         assertEquals(1, JSONObject(String(java.util.Base64.getUrlDecoder().decode(GuardEngine.relayAuthorization(ctx, oldToken).removePrefix("IGGuard ")))).getInt("v"))
     }
 
+    private fun routes(): List<*> = GuardEngine::class.java.getDeclaredMethod("relayRouteTokens", android.content.Context::class.java)
+        .apply { isAccessible = true }.invoke(GuardEngine, ctx) as List<*>
+    /** Audit M3: pairing another child releases the paired one through its own room. A signed remote reset waits in the old room's
+     *  parent outbox, which stays a delivery route after the switch (v1 proof: the old child's lock stays); the new child never gets it. */
+    @Test fun replacingAPairedChildReleasesItThroughItsOwnRoom() {
+        parentPhone()
+        val first = parentUpToDigits()
+        assertTrue(first.link.enterDigits((first.child.state as CS.ShowingDigits).digits)); first.child.confirm(now + 3_000)!!
+        assertTrue(first.link.accept())
+        prefs.edit().remove("child_pairing_pending_ms").commit()                    // the first child confirmed
+        assertEquals(GuardEngine.ChildTrust.VERIFIED, GuardEngine.childTrust(ctx))
+        val oldToken = GuardEngine.getOrCreateFamilyToken(ctx); val oldScope = GuardEngine.getChannelTopicForToken(oldToken)
+        FamilyEvidence(ctx).use { it.discardPending(oldScope, "parent") }          // its M3 was delivered
+        val second = parentUpToDigits()
+        assertTrue(second.link.enterDigits((second.child.state as CS.ShowingDigits).digits)); val family = second.child.confirm(now + 3_000)!!
+        assertTrue("a release never holds up the new pairing", second.link.accept())
+        val reset = FamilyEvidence(ctx).use { it.due(oldScope, Long.MAX_VALUE, "parent") }.single()
+        val record = GuardEngine.decryptPayload(oldToken, reset.wire)!!
+        assertNotNull("a reset signed by the parent for the old room",
+            Pairing.readCommandRecord(record, "remote_reset_child", GuardEngine.relayPublicKey(ctx), oldScope, System.currentTimeMillis()))
+        assertTrue("the new room never gets it", FamilyEvidence(ctx).use { it.due(family.scope, Long.MAX_VALUE, "parent") }
+            .none { GuardEngine.decryptPayload(family.token, it.wire)?.optString("event_id") == record.optString("event_id") })
+        assertEquals(listOf(family.token, oldToken), routes())
+        assertEquals("the old room keeps v1", 1, JSONObject(String(java.util.Base64.getUrlDecoder().decode(GuardEngine.relayAuthorization(ctx, oldToken).removePrefix("IGGuard ")))).getInt("v"))
+        GuardEngine.recordRelayAcceptance(ctx, oldScope, reset)
+        assertEquals("once the relay holds it, the old room is no longer a route", listOf(family.token), routes())
+        assertEquals(GuardEngine.ChildTrust.PAIRING, GuardEngine.childTrust(ctx))
+    }
+
     @Test fun nothingIsPinnedOnCancelWrongDigitsExpiryOrASecondPhone() {
         parentPhone(); val oldToken = GuardEngine.getOrCreateFamilyToken(ctx)
         // cancel

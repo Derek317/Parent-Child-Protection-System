@@ -292,9 +292,11 @@ object GuardEngine {
     // Parent: the event id of a signed remote reset queued for a pinned child, and the mark set once the relay holds it.
     private const val REMOTE_RESET_EVENT = "child_remote_reset_event"
     private const val CHILD_REMOTE_RESET = "child_remote_reset"
+    /** Parent: tokens of rooms whose child a QR pairing replaced, comma-separated; each is a delivery route while its release waits (audit M3). */
+    private const val RELEASED_FAMILY_TOKENS = "released_family_tokens"
     /** Parent: the last rollback was the parent's own cancel, not the 10-minute expiry (PAIRING_FAILED is set either way). */
     private const val PAIRING_CANCELLED = "child_pairing_cancelled"
-    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, REMOTE_RESET_EVENT, CHILD_REMOTE_RESET, PAIRING_CANCELLED) + DeliveryHealth.PARENT_KEYS
+    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, REMOTE_RESET_EVENT, CHILD_REMOTE_RESET, PAIRING_CANCELLED, RELEASED_FAMILY_TOKENS) + DeliveryHealth.PARENT_KEYS
 
     internal val EMOJI_PALETTE = arrayOf(
         "🐼", "🦁", "🐬", "🦊", "🐨", "🐯", "🦄", "🐝",
@@ -675,8 +677,14 @@ object GuardEngine {
         val current=getOrCreateFamilyToken(ctx)
         val pending=try{JSONObject(prefs(ctx).getString("pending_rotation_json","{}").orEmpty())}catch(_:Exception){JSONObject()}
         val old=pending.optString("old_token")
-        if(isParentMode(ctx) && current==pending.optString("new_token") && FamilySecurity.validToken(old))listOf(current,old).distinct() else listOf(current)
+        val routes=if(isParentMode(ctx) && current==pending.optString("new_token") && FamilySecurity.validToken(old))listOf(current,old).distinct() else listOf(current)
+        (routes+releasedFamilyTokens(ctx)).distinct()
     }
+    /** Parent: rooms of replaced children that still hold something queued for them (their signed release). */
+    private fun releasedFamilyTokens(ctx:Context):List<String> = if(!isParentMode(ctx))emptyList()
+        else prefs(ctx).getString(RELEASED_FAMILY_TOKENS,"").orEmpty().split(',').filter{FamilySecurity.validToken(it) && FamilyEvidence(ctx).use{db->db.pendingCount(getChannelTopicForToken(it))>0}}
+    /** Parent: a QR pairing now replaces a paired child, which completeParentPairing then releases (audit M3). */
+    fun pairingReplacesChild(ctx:Context):Boolean = childTrust(ctx).let{it==ChildTrust.VERIFIED || it==ChildTrust.NOT_VERIFIED}
 
     private val COMMON_PASSWORD_PARTS = listOf("password", "passw0rd", "qwerty", "123456", "abc123", "iloveyou", "igguard")
     /**
@@ -1358,8 +1366,14 @@ object GuardEngine {
             if (FamilySecurity.canonicalKeyText(parentKey) == key) return null
             val eventId = result.complete.optString("event_id")
             if (!eventId.startsWith("control:")) return null
+            // Audit M3: one child per family. The child replaced here gets the signed remote reset in its own room, queued before the
+            // switch (the history move takes only child records); that room stays a delivery route (v1 proof, its child lock kept)
+            // while the reset waits, so a failed send is retried from the outbox and never holds up this pairing.
+            val replaced = if (pairingReplacesChild(ctx)) getOrCreateFamilyToken(ctx) else null
+            if (replaced != null) try { rotateKeyAndNotifyChild(ctx, true) } catch (_: Exception) { addCheckpointLog(ctx, "CP3-PAIR", "未能為被取代的子女手機保留解除指令") }
+            val released = (releasedFamilyTokens(ctx) + listOfNotNull(replaced)).distinct().joinToString(",")
             setFamilyToken(ctx, result.token, preserveFamilyHistory = true, qrOnly = true)
-            val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json")
+            val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json").putString(RELEASED_FAMILY_TOKENS, released)
             for (stale in listOf(PAIRING_FAILED, PAIRING_CANCELLED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted", "capture_child_ack_id") + DeliveryHealth.PARENT_KEYS) editor.remove(stale)
             check(editor.commit())
             relayGeneration++; CloudRelay.disconnect()
@@ -4146,7 +4160,15 @@ class MainActivity : Activity() {
 
     private var parentPairing: ParentPairingLink? = null
     /** P1: a fresh device authentication first, then the QR sheet. */
-    private fun startParentPairing() = requireFreshParentAuth { showParentPairingSheet() }
+    private fun startParentPairing() {
+        if (!GuardEngine.pairingReplacesChild(this)) { requireFreshParentAuth { showParentPairingSheet() }; return }
+        // Audit M3: the new pairing replaces the paired child, which is then released (GuardEngine.completeParentPairing).
+        alert(critical = true).setTitle("取代目前的子女手機？ · Replace the current child phone?")
+            .setMessage("每個家庭只配對一部子女手機。完成新的配對後，目前的子女手機會被解除並停止傳送記錄；它會在下次連線時收到解除指令。\n" +
+                "A family pairs one child phone. Once the new pairing completes, the current child phone will be released and stop sending records; it gets the release when it next connects.")
+            .setNegativeButton("取消 / Cancel", null)
+            .setPositiveButton("繼續配對 / Continue") { _, _ -> requireFreshParentAuth { showParentPairingSheet() } }.show()
+    }
     /** P2-P6 on one sheet. FLAG_SECURE comes from showSheet; this sheet alone also keeps the screen on. Closing it for any reason but the
      *  accept's own authentication prompt ends the pairing and retires its room. */
     private fun showParentPairingSheet() {
