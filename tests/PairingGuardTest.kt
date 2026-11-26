@@ -377,6 +377,81 @@ class PairingGuardTest {
             try{FamilySecurity.loadOrCreateParentIdentity(ctx,null,null);fail("still refused")}catch(_:SecurityException){}
         } finally {c.pause().stop().destroy()}
     }
+    private fun act(a:MainActivity,name:String,vararg args:Any?){MainActivity::class.java.declaredMethods.first{it.name==name && it.parameterCount==args.size}.apply{isAccessible=true}.invoke(a,*args)}
+    private fun pressUnlock(a:MainActivity,text:String):Button{
+        act(a,"navigateTo","unlock")
+        all(a.window.decorView).filterIsInstance<android.widget.EditText>().first().setText(text)
+        return all(a.window.decorView).filterIsInstance<Button>().first{it.text.toString()=="驗證並暫時解鎖"}.also{it.performClick()}
+    }
+    private fun pressRoleSheet(a:MainActivity,text:String):Pair<View,Button>{
+        act(a,"navigateTo","role");act(a,"selectEntryRole","parent");act(a,"continueEntryRole")
+        val sheet=ShadowDialog.getLatestDialog().window!!.decorView
+        all(sheet).filterIsInstance<android.widget.EditText>().first{it.tag=="role_password"}.setText(text)
+        return sheet to all(sheet).filterIsInstance<Button>().first{it.text.toString()=="驗證並繼續"}.also{it.performClick()}
+    }
+    private fun childPairing(a:MainActivity)=MainActivity::class.java.getDeclaredField("childPairing").apply{isAccessible=true}.get(a)
+    /** Locked out: neither password screen starts a check (guard never claimed, so no PBKDF2 thread) or uses an attempt, even with the right password. */
+    @Test fun lockedOutUnlockPageAndRoleSheetStartNoCheckAndUseNoAttempt() {
+        pairedChild()
+        prefs.edit().putLong("pw_lockout_until_ms",System.currentTimeMillis()+5*60_000L).putInt("pw_failed_count",3).commit()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            val unlock=pressUnlock(a,"ParentPrivate928!")
+            assertFalse("no check claimed by the unlock page",GuardEngine.passwordCheckRunning.get())
+            assertTrue(unlock.isEnabled);assertEquals("驗證並暫時解鎖",unlock.text.toString())
+            assertTrue("says it is locked",all(a.window.decorView).filterIsInstance<android.widget.TextView>().any{it.text.toString().startsWith("請等 ")})
+            val (sheet,verify)=pressRoleSheet(a,"ParentPrivate928!")
+            assertFalse("no check claimed by the role sheet",GuardEngine.passwordCheckRunning.get())
+            assertTrue(verify.isEnabled);assertEquals("驗證並繼續",verify.text.toString())
+            assertTrue("says it is locked",all(sheet).filterIsInstance<android.widget.TextView>().any{it.text.toString().startsWith("輸入已鎖定")})
+            repeat(100){org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();Thread.sleep(20)} // a started check would have finished
+            assertFalse("the right password was never checked",GuardEngine.isTemporarilyUnlocked(ctx));assertEquals("child",GuardEngine.getRole(ctx))
+            assertEquals("no attempt used, none cleared",3,prefs.getInt("pw_failed_count",0));assertTrue("still locked",GuardEngine.checkPasswordLockoutRemainingSec(ctx)>0)
+        } finally {c.pause().stop().destroy()}
+    }
+    /** While the unlock page's check runs, a second press there, the role sheet and the QR Join are refused by the guard. */
+    @Test fun whileTheUnlockPageChecksEveryOtherPasswordPressIsRefused() {
+        pairedChild()
+        val parent=FamilySecurity.newSigningIdentity()
+        val qr=QrPairing.bareParent(parent).start(parent.publicKey,System.currentTimeMillis()).qrText
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            val unlock=pressUnlock(a,"WrongPassword928!") // pending: the main looper is paused
+            assertTrue(GuardEngine.passwordCheckRunning.get())
+            unlock.performClick()
+            assertTrue("a second press on the page is refused",shows(a.window.decorView,PASSWORD_CHECK_BUSY))
+            val (sheet,_)=pressRoleSheet(a,"ParentPrivate928!")
+            assertTrue("the role sheet is refused",shows(sheet,PASSWORD_CHECK_BUSY))
+            ShadowDialog.getShownDialogs().forEach{it.dismiss()}
+            val (box,join)=joinSheet(a,qr);box.setText("ParentPrivate928!");join.performClick()
+            assertTrue("the QR Join is refused",shows(ShadowDialog.getLatestDialog().window!!.decorView,PASSWORD_CHECK_BUSY));assertNull(childPairing(a))
+            assertEquals("no attempt counted yet",0,prefs.getInt("pw_failed_count",0))
+            settle{!GuardEngine.passwordCheckRunning.get()}
+            assertEquals("only the first unlock attempt",1,prefs.getInt("pw_failed_count",0))
+            assertFalse(GuardEngine.isTemporarilyUnlocked(ctx));assertEquals("child",GuardEngine.getRole(ctx));assertNull(childPairing(a))
+        } finally {c.pause().stop().destroy()}
+    }
+    /** While the role sheet's check runs, a second press there, the unlock page and the QR Join are refused by the guard. */
+    @Test fun whileTheRoleSheetChecksEveryOtherPasswordPressIsRefused() {
+        pairedChild()
+        val parent=FamilySecurity.newSigningIdentity()
+        val qr=QrPairing.bareParent(parent).start(parent.publicKey,System.currentTimeMillis()).qrText
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            val (sheet,verify)=pressRoleSheet(a,"WrongPassword928!") // pending: the main looper is paused
+            assertTrue(GuardEngine.passwordCheckRunning.get())
+            verify.performClick()
+            assertTrue("a second press on the sheet is refused",shows(sheet,PASSWORD_CHECK_BUSY))
+            pressUnlock(a,"ParentPrivate928!")
+            assertTrue("the unlock page is refused",shows(a.window.decorView,PASSWORD_CHECK_BUSY))
+            val (box,join)=joinSheet(a,qr);box.setText("ParentPrivate928!");join.performClick()
+            assertTrue("the QR Join is refused",shows(ShadowDialog.getLatestDialog().window!!.decorView,PASSWORD_CHECK_BUSY));assertNull(childPairing(a))
+            assertEquals("no attempt counted yet",0,prefs.getInt("pw_failed_count",0))
+            settle{!GuardEngine.passwordCheckRunning.get()}
+            assertEquals("only the first role-sheet attempt",1,prefs.getInt("pw_failed_count",0))
+            assertFalse(GuardEngine.isTemporarilyUnlocked(ctx));assertEquals("child",GuardEngine.getRole(ctx));assertNull(childPairing(a))
+        } finally {c.pause().stop().destroy()}
+    }
     // ---- F9(b): one rate-limited alert, however often another app fires the link ----
     private fun fire(a:MainActivity,i:FamilySecurity.Invite)=MainActivity::class.java.getDeclaredMethod("onNewIntent",Intent::class.java).apply{isAccessible=true}.invoke(a,Intent(Intent.ACTION_VIEW,link(i)))
     @Test fun repeatedLinksAtALockedChildRaiseOneRateLimitedAlert() {
