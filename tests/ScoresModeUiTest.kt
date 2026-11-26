@@ -230,6 +230,13 @@ class ScoresParentUiTest {
         val c = launch()
         try { page(c); assertTrue(UiSupport.texts(c.get().window.decorView).any { it.contains("7 個") && it.contains("被視為群組聊天") }) } finally { c.pause().stop().destroy() }
     }
+    @Test fun aLowerScoreWithTheSameRunTimeReplacesTheHigherOne() {
+        // The child sends each thread's best score over 14 days with its latest run time: when the high score ages out, the time stays.
+        val at = System.currentTimeMillis() - 3000
+        report(rows = listOf(row("bea", 80.0, at)))
+        report(rows = listOf(row("bea", 20.0, at)))
+        assertEquals(20.0, FamilyEvidence(ctx).use { it.riskScores(scope) }.single().score)
+    }
     @Test fun overviewRowOpensThePage() {
         enable(); report(rows = listOf(row("amy", 80.0, System.currentTimeMillis() - 1000)))
         val c = launch()
