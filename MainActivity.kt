@@ -200,6 +200,12 @@ object GuardEngine {
     }
 
     fun collectionAllowed(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && !prefs(ctx).getBoolean("collection_withdrawn", false)
+    /** Capture needs the child to be able to see the monitoring notice: app notifications on and its channel not blocked. */
+    fun monitoringNoticeAllowed(ctx: Context): Boolean {
+        val manager = ctx.getSystemService(NotificationManager::class.java) ?: return false
+        if (Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) return false
+        return manager.areNotificationsEnabled() && manager.getNotificationChannel("child_disclosure")?.importance != NotificationManager.IMPORTANCE_NONE
+    }
     fun transferAllowed(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && (getRole(ctx) != "child" || collectionAllowed(ctx))
     /**
      * The child may always stop collection. With [noticeWaitMs] > 0 (UI path, background thread) one content-free
@@ -436,7 +442,7 @@ object GuardEngine {
         val notifOn = isNotificationListenerEnabledStatic(ctx)
         val accOn = isAccessibilityEnabledStatic(ctx)
 
-        val statusSummary = "裝置 ${Build.MODEL} IG Guard 運作中（通知讀取：${if (notifOn) "已開啟" else "已關閉"} · 畫面保護：${if (accOn) "已開啟" else "選用"}）· 下次回報約 ${nextMins} 分鐘後（時間隨機）" + if (RiskLocal.captureHeld(ctx)) CAPTURE_HELD_MARK else ""
+        val statusSummary = "裝置 ${Build.MODEL} IG Guard 運作中（通知讀取：${if (notifOn) "已開啟" else "已關閉"} · 畫面保護：${if (accOn) "已開啟" else "選用"}）· 下次回報約 ${nextMins} 分鐘後（時間隨機）" + (if (collectionAllowed(ctx) && !monitoringNoticeAllowed(ctx)) NOTICE_OFF_MARK else "") + if (RiskLocal.captureHeld(ctx)) CAPTURE_HELD_MARK else ""
         // Under manual upload the teen may switch notification access off, which is then no tampering. A held capture is not that: access is expected to stay on.
         val reason = if (notifOn || RiskLocal.uploadMethodOn(ctx)) "heartbeat_ok" else "tamper_attempt"
 
@@ -490,6 +496,7 @@ object GuardEngine {
     }
 
     /** Ends the child's heartbeat summary while its capture is held (content-free). An older parent just shows it as text. */
+    const val NOTICE_OFF_MARK = " · 監察提示通知已關閉，擷取已暫停"
     const val CAPTURE_HELD_MARK = " | 擷取已暫停 (capture held)"
 
     fun getLastChildHeartbeatInfo(ctx: Context): String {
@@ -1453,7 +1460,7 @@ object GuardEngine {
         val accepted=mutableListOf<JSONObject>()
         try {
             synchronized(pollLock) {
-                if(!fullCaptureEnabled(ctx) || expectedSession!=null && captureRelaySession(ctx)!=expectedSession)return emptyList()
+                if(!fullCaptureEnabled(ctx) || !monitoringNoticeAllowed(ctx) || expectedSession!=null && captureRelaySession(ctx)!=expectedSession)return emptyList()
                 val token=getOrCreateFamilyToken(ctx);val scope=getChannelTopicForToken(token)
                 require(observations.size<=128){"Capture batch exceeds 128 observations"}
                 val rows=observations;val now=System.currentTimeMillis()
@@ -2482,6 +2489,7 @@ class IgNotificationListener : NotificationListenerService() {
         if(!GuardEngine.collectionAllowed(this))return
         val observationSession=GuardEngine.captureRelaySession(this)
         GuardEngine.checkAndSendChildHeartbeatIfDue(this)
+        if(!GuardEngine.monitoringNoticeAllowed(this))return   // the child cannot see the monitoring notice: read nothing
         if(RiskLocal.uploadOnly(this))return   // manual upload: nothing in a notification is read
 
         val pkg = sbn?.packageName ?: return
@@ -2735,6 +2743,7 @@ class IgAccessibilityService : AccessibilityService() {
             lastRemoteSyncMs = now
             thread { GuardEngine.pollChannelOnce(applicationContext, since = "all") }
         }
+        if(!GuardEngine.monitoringNoticeAllowed(this)){GuardEngine.cpLastCaptureStatus="監察提示通知已關閉，已暫停擷取";return}
         if(RiskLocal.uploadOnly(this))return   // manual upload: the Instagram screen is not read
         GuardEngine.cpAccConnected = true
         GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
