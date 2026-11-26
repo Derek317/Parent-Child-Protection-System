@@ -177,30 +177,6 @@ object FamilySecurity {
         }
     }
 
-    /** Explicit compromise recovery: verify a staged key before switching the durable active identity. */
-    fun createFreshParentIdentity(ctx: Context): SigningIdentity = synchronized(identityLock) {
-        identityOperation {
-            val store = parentStore()
-            val marker = identityMarker(ctx)
-            val previous = if (markerExists(marker)) marker.openRead().use { it.readBytes().toString(Charsets.UTF_8) } else null
-            val alias = "$PARENT_ALIAS.${UUID.randomUUID()}"
-            check(!store.containsAlias(alias))
-            try {
-                generateParentKey(alias)
-                val fresh = storedParentIdentity(store, alias, null)
-                recordIdentity(marker, "$alias\n${fresh.publicKey}")
-                fresh
-            } catch (e: Exception) {
-                try {
-                    if (previous == null) marker.delete()
-                    else recordIdentity(marker, previous)
-                    store.deleteEntry(alias)
-                } catch (cleanup: Exception) { e.addSuppressed(cleanup) }
-                throw e
-            }
-        }
-    }
-
     /** Only for an explicit local reset; ordinary load/sign failures must retain the identity. */
     fun deleteParentIdentity(ctx: Context) = synchronized(identityLock) {
         identityOperation {

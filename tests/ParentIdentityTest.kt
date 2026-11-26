@@ -30,6 +30,8 @@ class ParentIdentityTest {
 
     private fun load(legacy: String? = null, expected: String? = null) = FamilySecurity.loadOrCreateParentIdentity(ctx, legacy, expected)
     private fun delete() = FamilySecurity.deleteParentIdentity(ctx)
+    // The production recovery path (MainActivity): stage a key, then activate it after the family change is journalled.
+    private fun fresh() = FamilySecurity.stageFreshParentIdentity(ctx).also { FamilySecurity.activateParentIdentity(ctx, it) }
     private fun sign(bytes: ByteArray, reference: String) = FamilySecurity.signBytes(bytes, reference)
     private fun rejects(action: () -> Unit) {
         try { action(); fail("Unavailable or untrusted identity must fail closed") } catch (_: SecurityException) { }
@@ -209,7 +211,7 @@ class ParentIdentityTest {
 
     @Test fun freshRecoverySwitchesActiveIdentityAfterVerificationAndRetainsOldKey() {
         val old = load()
-        val fresh = FamilySecurity.createFreshParentIdentity(ctx)
+        val fresh = fresh()
         assertNotEquals(old.publicKey, fresh.publicKey)
         assertNotEquals(old.privateKey, fresh.privateKey)
         assertEquals(fresh, load(expected = fresh.publicKey))
@@ -223,7 +225,7 @@ class ParentIdentityTest {
         val old = load()
         val before = TestKeyStore.privateKeys.toMap()
         TestKeyStore.failEcGeneration = true
-        try { rejects { FamilySecurity.createFreshParentIdentity(ctx) } }
+        try { rejects { fresh() } }
         finally { TestKeyStore.failEcGeneration = false }
         assertEquals(before, TestKeyStore.privateKeys)
         assertEquals(old, load(expected = old.publicKey))
@@ -234,7 +236,7 @@ class ParentIdentityTest {
         val old = load()
         val before = TestKeyStore.privateKeys.toMap()
         TestKeyStore.failEcSigning = true
-        try { rejects { FamilySecurity.createFreshParentIdentity(ctx) } }
+        try { rejects { fresh() } }
         finally { TestKeyStore.failEcSigning = false }
         assertEquals(before, TestKeyStore.privateKeys)
         assertEquals(old, load(expected = old.publicKey))
@@ -242,7 +244,7 @@ class ParentIdentityTest {
 
     @Test fun missingActiveRecoveryKeyNeverFallsBackToRetiredIdentity() {
         val old = load()
-        val fresh = FamilySecurity.createFreshParentIdentity(ctx)
+        val fresh = fresh()
         store().deleteEntry(fresh.privateKey.removePrefix("android-keystore:"))
         rejects { load(expected = fresh.publicKey) }
         rejects { load() }
@@ -251,7 +253,7 @@ class ParentIdentityTest {
 
     @Test fun explicitDeletionRemovesActiveAndRetiredParentIdentities() {
         val old = load()
-        val fresh = FamilySecurity.createFreshParentIdentity(ctx)
+        val fresh = fresh()
         delete()
         rejects { sign(byteArrayOf(1), old.privateKey) }
         rejects { sign(byteArrayOf(1), fresh.privateKey) }

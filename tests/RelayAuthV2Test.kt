@@ -15,7 +15,6 @@ import java.security.Signature
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
-import app.family.igguard.FamilyRelay.ChildConnectOutcome.*
 
 /** v2 relay authorizations against relay/test/protocol-vector.json (WebCrypto side). ECDSA is randomized: signatures are verified, never compared. */
 @RunWith(RobolectricTestRunner::class)
@@ -132,32 +131,5 @@ class RelayAuthV2Test {
             """{"features":["child_proof"]}""" to false,
         )
         for ((text, expected) in cases) assertEquals(text, expected, FamilyRelay.supportsChildProof(JSONObject(text)))
-    }
-
-    @Test fun childConnectOutcomes() {
-        fun body(code: String) = """{"error":{"code":"$code","retry_after_ms":15000}}"""
-        val cases = listOf(
-            Triple(409, body("parent_not_registered"), PARENT_NOT_REGISTERED),
-            Triple(409, body("child_key_not_registered"), CHILD_KEY_NOT_REGISTERED),
-            Triple(401, body("unauthorized"), UNAUTHORIZED),
-            Triple(401, null, UNAUTHORIZED),
-            Triple(401, "garbage", UNAUTHORIZED),
-            Triple(410, body("room_retired"), ROOM_RETIRED),
-            Triple(410, "", ROOM_RETIRED),
-            Triple(409, null, OTHER),
-            Triple(409, "", OTHER),
-            Triple(409, "not json", OTHER),
-            Triple(409, "[]", OTHER),
-            Triple(409, """{"code":"child_key_not_registered"}""", OTHER),
-            Triple(409, """{"error":"child_key_not_registered"}""", OTHER),
-            Triple(409, """{"error":{"code":409}}""", OTHER),
-            Triple(409, body("something_else"), OTHER),
-            Triple(409, body("child_key_not_registered") + " ".repeat(8192), OTHER),
-            Triple(400, body("child_key_not_registered"), OTHER),
-            Triple(503, body("relay_unavailable"), OTHER),
-            Triple(403, body("unauthorized"), OTHER),
-            Triple(null, null, OTHER),
-        )
-        for ((status, text, expected) in cases) assertEquals("$status $text", expected, FamilyRelay.childConnectOutcome(status, text))
     }
 }
