@@ -519,6 +519,21 @@ class ScoresModeChildTest {
         assertTrue(outcome == RiskBatch.Outcome.SESSION_CHANGED || outcome == RiskBatch.Outcome.INACTIVE)
         assertEquals(0, count("risk_results")); assertEquals(0, count("risk_store"))
     }
+    @Test fun aScoreFinishedWhenAndroidStopsTheJobIsKeptButNeverAPartialOrVoidedOne() {
+        activate(); capture(obs(text(1), conversation = "first"), obs(text(2), conversation = "second"))
+        var stop = false
+        val result = runBatch(FakeScorer(onScore = { stop = true })) { stop }
+        assertEquals(RiskBatch.Outcome.STOPPED, result.outcome); assertEquals(1, result.scored)
+        assertEquals(1, count("risk_results")); assertEquals(1, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
+        // A call that threw has no score to keep.
+        stop = false
+        assertEquals(RiskBatch.Outcome.STOPPED, runBatch(FakeScorer(onScore = { stop = true; error("invented failure") })) { stop }.outcome)
+        assertEquals(1, count("risk_results"))
+        // A pause during the call still voids the score, even when Android stops the job at the same time.
+        stop = false
+        assertEquals(RiskBatch.Outcome.STOPPED, runBatch(FakeScorer(onScore = { stop = true; RiskLocal.pause(ctx) })) { stop }.outcome)
+        assertEquals(1, count("risk_results"))
+    }
     @Test fun anInstructionThatDoesNotMatchTheShippedHashIsNeverUsed() {
         val shipped = ctx.resources.openRawResource(R.raw.risk_instruction_v1).readBytes()
         assertNotNull(RiskBatch.checkedInstruction(shipped)); assertNull(RiskBatch.checkedInstruction(shipped + 10))

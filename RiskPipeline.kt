@@ -1052,6 +1052,12 @@ internal object RiskBatch {
                     }
                     // A pause, withdrawal or session change during the (uninterruptible) scorer call discards the result.
                     val after = halt()
+                    // Android stopping the job does not void a score the call finished; a pause, withdrawal or session change still does.
+                    if (after == Outcome.STOPPED && !threw && GuardEngine.captureRelaySession(app) == session && RiskLocal.active(app) &&
+                        FamilyEvidence(app).use { it.saveRiskResult(scope, thread, seq, score, reason, System.currentTimeMillis()) }) {
+                        scored++
+                        if (score == null) review++
+                    }
                     if (after != null) { outcome = after; break }
                     // A first throw at this sequence stores nothing, so a passing failure does not leave the thread unscored;
                     // a second throw in a row stores it, so a thread that always throws costs at most two calls per sequence.
