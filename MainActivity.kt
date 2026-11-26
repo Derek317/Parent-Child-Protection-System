@@ -5384,7 +5384,7 @@ class MainActivity : Activity() {
             choice.addView(label(ScoresUi.METHOD_TITLE, 15f, t.textPrimary, true, bottomPad = 6))
             for (m in listOf(ScoresMethod.UPLOAD, ScoresMethod.CAPTURE)) {
                 val selected = m == method
-                choice.addView(choiceButton(ScoresUi.methodName(m), selected, t) {
+                choice.addView(choiceButton(ScoresUi.chooserLabel(m), selected, t) {
                     method = m; acked = false; draw()
                 }.apply { tag = "scores_method_$m" })
             }

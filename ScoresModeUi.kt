@@ -310,6 +310,8 @@ internal object ScoresUi {
     const val METHOD_UPLOAD = "手動上載 / Manual upload"
     const val METHOD_CAPTURE = "自動擷取 / Automatic capture"
     fun methodName(method: String) = if (method == ScoresMethod.UPLOAD) METHOD_UPLOAD else METHOD_CAPTURE
+    /** Manual upload uses only Instagram's own export tool, so the chooser recommends it; status lines keep the plain name. */
+    fun chooserLabel(method: String) = if (method == ScoresMethod.UPLOAD) "手動上載（建議）/ Manual upload (recommended)" else METHOD_CAPTURE
     const val METHOD_UPLOAD_BODY = "子女自己從 Instagram 下載資料（「匯出你的資訊」），再在自己的手機匯入。本 App 不讀取 Instagram 的通知或畫面，所以沒有即時的關鍵字提醒，也沒有陌生人提醒。你仍然只會收到分數。\nYour child downloads their own data from Instagram (\"Export your information\") and imports it on their own phone. This app reads nothing from Instagram notifications or screens, so there are no real-time keyword alerts and no unapproved-contact alerts. You still receive scores only."
     const val METHOD_CAPTURE_BODY = "本 App 讀取子女手機上的 Instagram 通知及對話畫面（現有方式）。你仍然只會收到分數。\nThis app reads Instagram notifications and conversation screens on your child's phone (the current way). You still receive scores only."
     /** The warning, word for word as Derek read it (docs/superpowers/specs/2026-11-20-collection-method-design.md). */
