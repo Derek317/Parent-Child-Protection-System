@@ -197,6 +197,19 @@ class DeliveryHealthTest {
         deliver(signed(hb("00", "0000", "0"))); assertFalse(prefs.contains(DeliveryHealth.FIRST_BAD_MS))
     }
 
+    /** Any heartbeat that is not bad ends the run, not only a clear one: a single bad heartbeat hours later starts a new run. */
+    @Test fun aNotBadHeartbeatEndsTheBadRun() {
+        parentWithPinnedChild()                                                       // never connected 15 minutes: only the 3-hour bound
+        val start = System.currentTimeMillis(); var t = start
+        GuardEngine.deliveryClock = { t }
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb("04", "0200", "0"))))  // bad: the run starts
+        t += 60_000L
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb("02", "0030", "0"))))  // neither bad nor clear
+        t = start + DeliveryHealth.LONG_BAD_MS + 60_000L
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(hb("04", "0200", "0"))))  // one bad heartbeat, 3 hours later
+        assertEquals("a new run raises nothing yet", 0, notices())
+    }
+
     @Test fun theNoticeStateGoesWithTheRoleOrTheFamily() {
         parentWithPinnedChild()
         fun dirty() = prefs.edit().apply { DeliveryHealth.PARENT_KEYS.forEach { k -> putLong(k, 1L) } }.commit()

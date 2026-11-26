@@ -2262,7 +2262,8 @@ object GuardEngine {
         if (sentAt <= prefs(ctx).getLong(DeliveryHealth.LAST_SENT_MS, 0L)) return
         check(prefs(ctx).edit().putLong(DeliveryHealth.LAST_SENT_MS, sentAt).commit())
         if (report.clear) { check(prefs(ctx).edit().remove(DeliveryHealth.NOTICE_MS).remove(DeliveryHealth.FIRST_BAD_MS).commit()); return }
-        if (!report.bad) return
+        // Any heartbeat that is not bad ends the bad run (a later bad one starts a new 3 hours); only a clear one resets the timer.
+        if (!report.bad) { check(prefs(ctx).edit().remove(DeliveryHealth.FIRST_BAD_MS).commit()); return }
         val firstBad = prefs(ctx).getLong(DeliveryHealth.FIRST_BAD_MS, 0L)
         if (firstBad == 0L) check(prefs(ctx).edit().putLong(DeliveryHealth.FIRST_BAD_MS, now).commit())
         val since = parentRelayReadySince
