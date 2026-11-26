@@ -203,6 +203,8 @@ class ReleaseVersionAndHotfixSafety(unittest.TestCase):
         self.assertIn('versionName "$VER_NAME"', TEXT)
         self.assertLess(self.version_code('5.2.9', 999), self.version_code('6.0', 1))
         self.assertLess(self.version_code('6.0.3', 277), self.version_code('6.0.3', 278))
+        self.assertLess(self.version_code('6.0.3', 999), self.version_code('6.0.3', 1000))  # a hotfix built after run 999 still upgrades
+        self.assertLess(self.version_code('20.99.99', 9999), 2_100_000_000)  # Android's versionCode limit
         self.assertGreater(self.version_code('6.0.3', 1), 100 + 999)  # above every code of the old 100+run scheme
 
     def test_a_hotfix_that_does_not_contain_main_does_not_deploy_the_relay(self):

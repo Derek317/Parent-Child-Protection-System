@@ -137,7 +137,7 @@ jobs:
           VER_NAME=6.0.3
           # The code comes from the version first, the run second: a hotfix of an older release never outranks a newer release.
           IFS=. read -r V_MAJ V_MIN V_PATCH <<< "$VER_NAME"
-          VER_CODE=$(( (V_MAJ * 10000 + V_MIN * 100 + ${V_PATCH:-0}) * 1000 + ${{ github.run_number }} % 1000 ))
+          VER_CODE=$(( (V_MAJ * 10000 + V_MIN * 100 + ${V_PATCH:-0}) * 10000 + ${{ github.run_number }} % 10000 ))
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
