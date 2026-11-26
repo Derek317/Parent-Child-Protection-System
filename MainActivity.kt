@@ -706,7 +706,8 @@ object GuardEngine {
 
     private const val LOCKOUT_MS = 10 * 60_000L
     private const val UNLOCK_CODE_MS = 15 * 60_000L
-    private const val CLOCK_BACK_TOLERANCE_MS = 5 * 60_000L
+    // The same 2 minutes as FamilySecurity.validCommand: a rollback that makes signed commands look early is reported.
+    private const val CLOCK_BACK_TOLERANCE_MS = 120_000L
     private const val CLOCK_ALERT_WINDOW_MS = 60 * 60_000L
 
     /** Remaining wrong-password lockout. Counted on the monotonic clock, so wall-clock changes cannot skip it;

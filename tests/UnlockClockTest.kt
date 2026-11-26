@@ -143,6 +143,13 @@ class UnlockClockTest {
         GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
         assertEquals(1,queuedAlerts().count{it.optString("reason")=="tamper_attempt"})
     }
+    /** Audit M4(b): parent commands are refused beyond 2 minutes of clock difference, so a 3-minute rollback must already alert. */
+    @Test fun aRollbackBeyondTheCommandToleranceAlerts() {
+        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
+        advance(10*minute);wall-=3*minute
+        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
+        assertEquals(1,queuedAlerts().count{it.optString("reason")=="tamper_attempt"})
+    }
     @Test fun smallClockCorrectionsAndForwardJumpsDoNotAlert() {
         GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
         advance(10*minute);wall-=2*minute
