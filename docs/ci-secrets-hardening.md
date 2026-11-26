@@ -10,16 +10,16 @@ Replace `OWNER/REPO` below with `Derek317/Parent-Child-Protection-System`.
 | --- | --- | --- | --- |
 | Any other branch | No | Built and tested, **never signed**, no secrets in any step | `ig-guard-unsigned-apk`, kept 7 days |
 | `main` | Yes, in environment `relay-prod` | Signed in environment `release` | `ig-guard-signed-apk`, kept 7 days |
-| Release tag (`4.9`, `4.9.1`, `4.9-beta.N`, `4.8-hotfix.N`) | Only `4.8-hotfix.N` | Signed in environment `release`, then published | `ig-guard-signed-apk`, kept 7 days, plus the GitHub release |
+| Release tag (`4.9`, `4.9.1`, `4.9-beta.N`, `4.8-hotfix.N`) | Only hotfix tags (`4.8-hotfix.N`, `6.0.2-hotfix.N`) | Signed in environment `release`, then published | `ig-guard-signed-apk`, kept 7 days, plus the GitHub release |
 
 Other tag names (for example `foo`) are treated like a branch: unsigned, nothing published. The tag patterns are the ones in `scripts/publish-release.sh`.
 
 ## Step 1. Create the two environments
 
 1. In the repository open **Settings → Environments → New environment**.
-2. Create **`relay-prod`**. Under **Deployment branches and tags** choose **Selected branches and tags** and add: branch `main`, tag `4.8-hotfix.*`. Tick **Required reviewers** and add yourself (and one other trusted person if you have one). Optionally tick **Prevent self-review** if there are two reviewers.
+2. Create **`relay-prod`**. Under **Deployment branches and tags** choose **Selected branches and tags** and add: branch `main`, tag `*-hotfix.*` (before 6.0.3 this was `4.8-hotfix.*`; with the old pattern GitHub refuses the deploy of any other hotfix tag). Tick **Required reviewers** and add yourself (and one other trusted person if you have one). Optionally tick **Prevent self-review** if there are two reviewers.
 3. Create **`release`**. Add deployment rules: branch `main`, tags `[0-9]*.[0-9]*` (this covers `4.9`, `4.9.1`, `4.9-beta.3` and `4.8-hotfix.4`; GitHub tag patterns are simple globs, so the workflow, not this pattern, enforces the exact format). Tick **Required reviewers**.
-4. Once reviewers are set, **every push to `main` needs two approvals**: one for `relay-prod` (the deploy) and one for `release` (the signing build). A release tag needs one (`release`), or two for a `4.8-hotfix.N` tag. Approving is the point: nothing signs or deploys unless a person says yes.
+4. Once reviewers are set, **every push to `main` needs two approvals**: one for `relay-prod` (the deploy) and one for `release` (the signing build). A release tag needs one (`release`), or two for a hotfix tag. Approving is the point: nothing signs or deploys unless a person says yes.
 5. **A rejected approval is not a clean stop for tags.** GitHub reports a rejected deployment as a failed job, and the release job deliberately still publishes the documented notes-only release when the build fails (see `docs/releases/4.7.md`). So rejecting the `release` approval on a release tag can publish release notes without an APK (never an APK). I could not find documentation of a separate result for a rejected deployment, so this is documented rather than prevented. The tag ruleset in Step 3 is what stops unwanted tags.
 6. A release-looking tag on any commit still gets a signed build and release, and a tag run executes the workflow file from that commit. The tag ruleset and the environment reviewer are the only defence; read the workflow at the tagged commit before approving.
 7. The workflow also names a third environment, `ci-unprotected`, on other refs. GitHub creates it automatically on first use. Leave it empty: no secrets, no rules. Never add secrets to it.

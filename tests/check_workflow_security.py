@@ -13,7 +13,7 @@ JOBS = WORKFLOW['jobs']
 # Actions that could not be resolved to a commit SHA must be listed here (and in the report). None today.
 UNPINNED_ALLOWED = set()
 PROTECTED = "needs.plan.outputs.protected == 'true'"
-DEPLOY = "github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/4.8-hotfix.')"
+DEPLOY = "needs.plan.outputs.protected == 'true' && (github.ref == 'refs/heads/main' || contains(github.ref, '-hotfix.'))"
 
 
 def steps(job):
@@ -133,6 +133,8 @@ class DeploymentIsolation(unittest.TestCase):
         deploy = JOBS['relay-deploy']
         self.assertEqual('relay-prod', deploy['environment'])
         self.assertEqual(DEPLOY, deploy['if'].replace('${{ ', '').replace(' }}', '').strip())
+        # The deploy rule leans on the plan job's tag check, so a tag such as foo-hotfix.x never deploys.
+        self.assertIn('plan', deploy['needs'])
 
     def test_live_smoke_runs_only_where_deploy_runs(self):
         for name, job in JOBS.items():
