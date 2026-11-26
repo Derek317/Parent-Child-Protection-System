@@ -2102,7 +2102,9 @@ object GuardEngine {
         val envelope=if(verified!=null)verified.record else if(controlId.isNotEmpty())decrypted.optJSONObject("envelope") ?: return RelayConsumption.REJECTED else decrypted
         val inner = if (verified != null) verified.record else if (envelope.has("payload")) {
             if (role != "child") return RelayConsumption.REJECTED
-            FamilySecurity.readCommand(envelope, prefs(ctx).getString("parent_command_public_key", "") ?: "", getChannelTopicForToken(token), System.currentTimeMillis()) ?: return RelayConsumption.REJECTED
+            val parentKey = prefs(ctx).getString("parent_command_public_key", "") ?: ""
+            FamilySecurity.readCommand(envelope, parentKey, getChannelTopicForToken(token), System.currentTimeMillis())
+                ?: return if (FamilySecurity.commandAhead(envelope, parentKey, getChannelTopicForToken(token), System.currentTimeMillis())) RelayConsumption.CLOCK_BEHIND else RelayConsumption.REJECTED
         } else {
             if (envelope.optString("type") in FamilySecurity.controlTypes) return RelayConsumption.REJECTED
             if(controlId.isNotEmpty() && (role!="parent" || envelope.optString("type") !in setOf("capture_ack","sync_child_handle","scores_mode_report")))return RelayConsumption.REJECTED

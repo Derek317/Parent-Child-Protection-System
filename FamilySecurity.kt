@@ -249,6 +249,14 @@ object FamilySecurity {
         if (text.length > 16_384 || !verifySigned(text.toByteArray(Charsets.UTF_8), envelope.getString("signature"), parentPublicKey)) null
         else JSONObject(text).takeIf { validCommand(it, scope, now) }
     } catch (_: Exception) { null }
+    /** A command dated up to this far ahead of the phone's clock is left at the relay instead of refused (audit M4(a)). */
+    const val EARLY_COMMAND_BOUND_MS = 24 * 60 * 60_000L
+    /** True for a command [readCommand] refused only because it is dated beyond the 2-minute tolerance but at most
+     *  [EARLY_COMMAND_BOUND_MS] ahead of [now]: correctly signed and valid at its own time, so this phone's clock is behind. */
+    fun commandAhead(envelope: JSONObject, parentPublicKey: String, scope: String, now: Long): Boolean = try {
+        val ts = JSONObject(envelope.getString("payload")).optLong("ts_ms")
+        ts > now + 120_000L && ts <= now + EARLY_COMMAND_BOUND_MS && readCommand(envelope, parentPublicKey, scope, ts) != null
+    } catch (_: Exception) { false }
     /** ECDSA-P256-SHA256 over [signed] with the base64url DER [signature]; false for an invalid key text. May throw on malformed input. */
     private fun verifySigned(signed: ByteArray, signature: String, publicKeyText: String): Boolean =
         validPublicKey(publicKeyText) && Signature.getInstance("SHA256withECDSA").run {

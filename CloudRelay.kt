@@ -15,7 +15,8 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import kotlin.random.Random
 
-enum class RelayConsumption { CONSUMED, REJECTED, RETRY }
+/** CLOCK_BEHIND: a signed parent command dated ahead of this phone's clock; like RETRY it is left at the relay for redelivery. */
+enum class RelayConsumption { CONSUMED, REJECTED, RETRY, CLOCK_BEHIND }
 
 /** One authenticated session; SQLite on the phones owns unconfirmed evidence. */
 object CloudRelay {
@@ -323,6 +324,7 @@ object CloudRelay {
                         val outer=JSONObject().put("event","message").put("id",message.getString("delivery_id")).put("message",message.getString("wire"))
                         val result=GuardEngine.processIncomingRelayLine(ctx,outer.toString(),origin.first,parentAlert,token,origin.third)
                         if(result==RelayConsumption.RETRY){fail("本機尚未完成儲存 · 中繼記錄保留並重試");return}
+                        if(result==RelayConsumption.CLOCK_BEHIND){fail("家長指令的時間比此手機快超過 2 分鐘 · 請檢查手機的日期和時間 · 指令保留在中繼，稍後重試");return}
                         // A committed rotation/reset may change the current session; consume on THIS old socket first.
                         if(message.getBoolean("buffered"))ws.send(JSONObject().put("type","consume").put("id",message.getString("id")).put("digest",message.getString("digest")).toString())
                         if(!current())stop()
