@@ -13,6 +13,8 @@ export IG_GUARD_BUILD="$build_dir"
 export IG_GUARD_TEST_HOME="${IG_GUARD_TEST_HOME:-/workspace/.android-dev/test-home}"
 export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$IG_GUARD_TEST_HOME/.android}"
 mkdir -p "$build_dir" "$IG_GUARD_TEST_HOME" "$ANDROID_USER_HOME"
+# Drop what the last run copied, so a source or test removed from the repo is not still compiled from the build dir.
+rm -rf -- "${build_dir:?}"/app/src "${build_dir:?}"/*.kt "${build_dir:?}"/ui-res "${build_dir:?}"/native
 python3 - <<'PY'
 from pathlib import Path
 import os,re,shutil

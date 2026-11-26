@@ -126,4 +126,21 @@ Path('observed.json').write_text(json.dumps({'key': key}))
     def test_unreadable_file_is_rejected_before_gradle(self):
         self.rejected('APK_KEYSTORE_BASE64', base64.b64encode(b'not a keystore').decode(), '[SIGNING_STORE]')
 
+class LocalRunner(unittest.TestCase):
+    def test_copied_sources_from_an_earlier_run_are_removed_and_nothing_else(self):
+        script = (REPO / 'tests/run_android.sh').read_text()
+        clean = [line for line in script.splitlines() if line.startswith('rm -rf') and 'build_dir' in line]
+        self.assertEqual(1, len(clean))
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            stale = [out / 'app/src/test/java/Gone.kt', out / 'Gone.kt', out / 'ui-res/values/gone.xml', out / 'native/risk/gone.cpp']
+            kept = [out / 'build/keep.txt', out / 'app/build.gradle', out / 'settings.gradle']
+            for path in stale + kept:
+                path.parent.mkdir(parents=True, exist_ok=True); path.write_text('x')
+            subprocess.run(['bash', '-c', clean[0]], env={**os.environ, 'build_dir': tmp}, check=True)
+            self.assertEqual([], [p for p in stale if p.exists()])
+            self.assertEqual(kept, [p for p in kept if p.exists()])
+        # An empty build_dir must stop the script instead of deleting from /.
+        self.assertNotEqual(0, subprocess.run(['bash', '-c', 'build_dir=; ' + clean[0]], capture_output=True).returncode)
+
 if __name__ == '__main__': unittest.main()
