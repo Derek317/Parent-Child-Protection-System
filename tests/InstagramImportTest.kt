@@ -455,26 +455,22 @@ class InstagramImportTest {
     }
     @Test fun theSessionLockIsFreeWhileImportedMessagesAreSealed() {
         activate(ScoresMethod.UPLOAD); GuardEngine.setChildSelfHandle(ctx, teen)
-        val sealing = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
-        val held = java.util.concurrent.atomic.AtomicBoolean()
-        var result: ImportResult? = null
-        val importer = Thread { result = import(json(chat).toByteArray(), "message_1.json").result }
-        // Holds the first Keystore load made to seal an imported message (Keystore work is slow on a real phone).
+        // The lock the Pause, Withdraw and Accept buttons take on the main thread; read directly so nothing has to block.
+        val sessionLock = GuardEngine::class.java.getDeclaredField("pollLock").apply { isAccessible = true }.get(null)
+        val sealed = java.util.concurrent.atomic.AtomicInteger(); val underLock = java.util.concurrent.atomic.AtomicInteger()
+        val importer = Thread.currentThread()
+        // Every Keystore load made while sealing an imported message (slow on a real phone) must happen outside the session lock.
         TestKeyStore.onLoad = {
-            if (Thread.currentThread() === importer && Thread.currentThread().stackTrace.any { it.className == FamilyEvidence::class.java.name && it.methodName in setOf("storeRiskMessage", "sealRiskMessage") }
-                && held.compareAndSet(false, true)) { sealing.countDown(); release.await(20, java.util.concurrent.TimeUnit.SECONDS) }
+            if (Thread.currentThread() === importer && Thread.currentThread().stackTrace.any { it.className == FamilyEvidence::class.java.name && it.methodName in setOf("storeRiskMessage", "sealRiskMessage") }) {
+                sealed.incrementAndGet(); if (Thread.holdsLock(sessionLock)) underLock.incrementAndGet()
+            }
         }
         try {
-            importer.start()
-            assertTrue("the import never sealed a message", sealing.await(20, java.util.concurrent.TimeUnit.SECONDS))
-            // The lock the Pause, Withdraw and Accept buttons take on the main thread must not wait for the import's sealing.
-            val button = Thread { GuardEngine.withSessionLock { } }.apply { start(); join(3_000) }
-            val free = !button.isAlive
-            release.countDown(); importer.join(20_000); button.join(20_000)
-            assertTrue("the session lock was held while messages were sealed", free)
-            assertEquals(ImportResult.OK, result)
+            assertEquals(ImportResult.OK, import(json(chat).toByteArray(), "message_1.json").result)
+            assertTrue("the import never sealed a message", sealed.get() > 0)
+            assertEquals("Keystore loads made under the session lock while sealing", 0, underLock.get())
             assertEquals(4, count("risk_store"))
-        } finally { TestKeyStore.onLoad = {}; release.countDown() }
+        } finally { TestKeyStore.onLoad = {} }
     }
     @Test fun importedTextIsNeverLoggedAndNeverQueuedForTheRelay() {
         activate(ScoresMethod.UPLOAD)
