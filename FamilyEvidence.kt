@@ -690,7 +690,8 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             for(row in report.conversations) {
                 val key=scoreLabelKey(scope,row.label)
                 val old=db.rawQuery("SELECT scored_at,first_reached_50 FROM risk_scores WHERE scope=? AND label_index=?",arrayOf(scope,key)).use{if(it.moveToFirst())it.getLong(0) to (if(it.isNull(1))null else it.getLong(1)) else null}
-                if(old!=null && row.scoredAt<=old.first)continue
+                // Same run time may carry a lower score: the child sends the best of 14 days, and the high one can age out. Only older is skipped.
+                if(old!=null && row.scoredAt<old.first)continue
                 val tomb=db.rawQuery("SELECT deleted_at,notified_at FROM risk_tombstones WHERE scope=? AND label_index=?",arrayOf(scope,key)).use{if(it.moveToFirst())it.getLong(0) to (if(it.isNull(1))null else it.getLong(1)) else null}
                 if(tomb!=null && row.scoredAt<=tomb.first)continue
                 var first=old?.second ?: tomb?.second

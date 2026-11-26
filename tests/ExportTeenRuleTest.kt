@@ -54,18 +54,44 @@ class ExportTeenRuleTest {
         val cal = "inbox/cal_2/message_1.html" to html(Triple("Cal Pal", "ready?", 3), Triple(teen, "yes", 4))
         val dee = "inbox/dee_3/message_1.html" to html(Triple("Dee Mate", "lunch?", 5), Triple(teen, "sure", 6))
         val club = "inbox/club_4/message_1.html" to html(Triple("Bea Friend", "party at 8", 7), Triple("Cal Pal", "count me in", 8))   // the teen never wrote here
-        val p = parse(zip(bea, cal, dee, club), "export.zip")
+        // A guessed teen missing from a two-sender thread may be a guess gone wrong: that thread could be a chat, so nothing is guessed.
+        assertEquals(ImportResult.TEEN_UNKNOWN, parse(zip(bea, cal, dee, club), "export.zip").result)
+        val big = "inbox/club_5/message_1.html" to html(Triple("Bea Friend", "party at 8", 7), Triple("Cal Pal", "count me in", 8), Triple("Dee Mate", "me too", 9))
+        val p = parse(zip(bea, cal, dee, big), "export.zip")
         assertEquals(ImportResult.OK, p.result); assertEquals(1, p.groups)
         assertEquals(setOf("Bea Friend", "Cal Pal", "Dee Mate"), p.conversations.map { it.label }.toSet())
         assertTrue(p.conversations.all { c -> c.messages.any { it.outgoing } && c.messages.none { it.text == "party at 8" } })
-        val big = "inbox/club_5/message_1.html" to html(Triple("Bea Friend", "party at 8", 7), Triple("Cal Pal", "count me in", 8), Triple("Dee Mate", "me too", 9))
-        assertEquals(1, parse(zip(bea, cal, dee, big), "export.zip").groups)
         // A stored name found in the file decides: one chat and a silent two-sender group are enough, and the group is not taken for a chat.
         val q = parse(zip(bea, club), "export.zip", child = teen)
         assertEquals(ImportResult.OK, q.result); assertEquals(1, q.groups)
         assertEquals("Bea Friend", q.conversations.single().label); assertEquals(true, q.conversations.single().messages.first().outgoing)
         // As many chats with each friend as with the teen: nothing tells who the teen is, so nothing is guessed.
         assertEquals(ImportResult.TEEN_UNKNOWN, parse(zip(bea, cal, club), "export.zip").result)
+    }
+    @Test fun aFriendInMoreThreadsThanTheTeenIsNotTakenForTheTeen() {
+        // No folder name matches (names the folder cannot show), and a friend is in two silent groups: she is in more threads than the teen.
+        val me = "小明"; val mei = "阿美"; val hua = "小華"; val wei = "大偉"
+        val export = zip(
+            "inbox/mei_1/message_1.html" to html(Triple(mei, "hi", 1), Triple(me, "hey", 2)),
+            "inbox/hua_2/message_1.html" to html(Triple(hua, "yo", 3), Triple(me, "yo", 4)),
+            "inbox/party_3/message_1.html" to html(Triple(mei, "party", 5), Triple(hua, "in", 6)),
+            "inbox/lunch_4/message_1.html" to html(Triple(mei, "lunch", 7), Triple(wei, "ok", 8)))
+        assertEquals(ImportResult.TEEN_UNKNOWN, parse(export, "export.zip").result)
+        // The stored name decides instead.
+        val q = parse(export, "export.zip", child = me)
+        assertEquals(ImportResult.OK, q.result); assertEquals(2, q.groups)
+        assertTrue(q.conversations.all { c -> c.messages.any { it.outgoing } })
+    }
+    @Test fun aJsonGroupWithTwoSendersIsStillSkippedWhenTheTeenIsGuessedByCount() {
+        // No folder matches and no stored name: the teen is guessed by count. The group lists three members, so it is a group, not a chat.
+        val export = zip(
+            "inbox/bea_1/message_1.json" to json(listOf("Bea Friend", teen), Triple("Bea Friend", "hello", 1), Triple(teen, "hi Bea", 2)),
+            "inbox/cal_2/message_1.json" to json(listOf("Cal Pal", teen), Triple("Cal Pal", "ready?", 3), Triple(teen, "yes", 4)),
+            "inbox/club_3/message_1.json" to json(listOf("Bea Friend", "Cal Pal", teen), Triple("Bea Friend", "party at 8", 5), Triple("Cal Pal", "count me in", 6)))
+        val p = parse(export, "export.zip")
+        assertEquals(ImportResult.OK, p.result); assertEquals(1, p.groups)
+        assertEquals(setOf("Bea Friend", "Cal Pal"), p.conversations.map { it.label }.toSet())
+        assertTrue(p.conversations.all { c -> c.messages.any { it.outgoing } && c.messages.none { it.text == "party at 8" } })
     }
     @Test fun theFolderNamedAfterTheOtherPersonTellsTheTeen() {
         // One chat where both wrote, and a group the teen never wrote in where the friend is busier than the teen.
