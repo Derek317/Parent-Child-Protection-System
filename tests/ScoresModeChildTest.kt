@@ -884,7 +884,7 @@ class ScoresModeChildTest {
         }
         prefs.edit().remove("scores_report_due").commit()
         FamilyEvidence(ctx).use { db ->
-            assertEquals(10, db.readableDatabase.version)
+            assertEquals(11, db.readableDatabase.version)
             assertTrue("the schema 10 index", stampIndexed(db))
             assertEquals("v8 'counted, not stored' rows are not excluded groups", 0, count("risk_unknown")); assertEquals(0, count("risk_store")); assertEquals(0, count("risk_authors"))
             assertTrue("the parent is told at the next report", prefs.getBoolean("scores_report_due", false))
@@ -905,7 +905,7 @@ class ScoresModeChildTest {
         assertTrue(before.toString(), before.getValue("risk_store") > 0 && before.getValue("risk_unknown") > 0 && before.getValue("risk_authors") > 0)
         FamilyEvidence(ctx).use { db -> val sql = db.writableDatabase; sql.execSQL("DROP INDEX risk_store_stamp"); sql.version = 9 }
         prefs.edit().remove("scores_report_due").commit()
-        FamilyEvidence(ctx).use { db -> assertEquals(10, db.readableDatabase.version); assertTrue("the schema 10 index", stampIndexed(db)) }
+        FamilyEvidence(ctx).use { db -> assertEquals(11, db.readableDatabase.version); assertTrue("the schema 10 index", stampIndexed(db)) }
         assertEquals("every risk row kept", before, tables.associateWith { count(it) })
         assertFalse("nothing to tell the parent", prefs.getBoolean("scores_report_due", false))
     }
@@ -916,7 +916,7 @@ class ScoresModeChildTest {
         assertTrue(plan(), plan().contains("INDEX risk_store_stamp "))
         // A 6.0 / 6.0.2 store: schema 9 without the index.
         FamilyEvidence(ctx).use { db -> val sql = db.writableDatabase; sql.execSQL("DROP INDEX risk_store_stamp"); sql.version = 9 }
-        FamilyEvidence(ctx).use { db -> assertEquals(10, db.readableDatabase.version) }
+        FamilyEvidence(ctx).use { db -> assertEquals(11, db.readableDatabase.version) }
         assertTrue(plan(), plan().contains("INDEX risk_store_stamp "))
     }
     @Test fun agreementToOlderWordingIsAskedForAgainWithoutStoringOrForwardingText() {

@@ -307,4 +307,61 @@ class ChildRecordGateTest {
         GuardEngine.rotateKeyAndNotifyChild(ctx, true); relayTakesEverythingQueued()
         assertFalse(GuardEngine.childRemotelyReset(ctx)); assertEquals(GuardEngine.ChildTrust.NOT_VERIFIED, GuardEngine.childTrust(ctx))
     }
+
+    // ---------- replay ids (seen) pruned by the nightly cleanup ----------
+    private val day = 86_400_000L
+    private fun putSeen(id: String, storedAt: Long?) = FamilyEvidence(ctx).use {
+        it.writableDatabase.execSQL("INSERT INTO seen(scope,id,stored_at) VALUES(?,?,?)", arrayOf(scope, id, storedAt))
+    }
+    private fun seen(id: String) = FamilyEvidence(ctx).use { it.hasSeen(scope, id) }
+
+    @Test fun aReplayOfAnIdPrunedFromSeenIsStillRefusedByTheRecordWindow() {
+        prefs.edit().putBoolean("family_qr_only", true).commit()
+        val now = System.currentTimeMillis()
+        // Received 17 days ago, then deleted: its record time was at most 24 h ahead of the parent's clock then.
+        val record = heartbeat(now - 17 * day + RiskLimits.REPORT_FUTURE_MS, "stranger_message")
+        putSeen(record.getString("event_id"), now - 17 * day)
+        ArchiveMaintenance.pruneAll(ctx, now)
+        assertFalse("pruned after twice the record window", seen(record.getString("event_id")))
+        assertEquals(RelayConsumption.REJECTED, deliver(signed(record)))
+        assertEquals("the replay is not stored", 0, stored())
+    }
+    @Test fun theNightlyPruneDropsOnlyOldIdsWithoutARecordAndOnlyOnAQrOnlyParent() {
+        val now = System.currentTimeMillis()
+        // A 5.2 pairing (no key, no QR-only fact): seen is its only replay guard, so nothing is pruned.
+        prefs.edit().remove("pinned_child_key").commit()
+        putSeen("legacy", now - 40 * day)
+        ArchiveMaintenance.pruneAll(ctx, now)
+        assertTrue(seen("legacy"))
+        // A child phone keeps its discard tombstones.
+        prefs.edit().putBoolean("family_qr_only", true).commit(); pin(); GuardEngine.setRole(ctx, "child")
+        ArchiveMaintenance.pruneAll(ctx, now)
+        assertTrue(seen("legacy"))
+        GuardEngine.setRole(ctx, "parent")
+        val kept = heartbeat(reason = "stranger_message")
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(kept)))
+        FamilyEvidence(ctx).use { it.writableDatabase.execSQL("UPDATE seen SET stored_at=? WHERE id=?", arrayOf(now - 40 * day, kept.getString("event_id"))) }
+        putSeen("old", now - 17 * day); putSeen("recent", now - 15 * day); putSeen("unstamped", null)
+        ArchiveMaintenance.pruneAll(ctx, now)
+        assertFalse(seen("legacy")); assertFalse(seen("old"))
+        assertTrue(seen("recent")); assertTrue("an id with a stored record stays", seen(kept.getString("event_id")))
+        // An id without a time gets the time of the first cleanup that sees it, never an earlier one.
+        ArchiveMaintenance.pruneAll(ctx, now + 15 * day); assertTrue(seen("unstamped"))
+        ArchiveMaintenance.pruneAll(ctx, now + 17 * day); assertFalse(seen("unstamped"))
+    }
+    @Test fun anUpgradeFromSchemaTenKeepsEveryReplayIdAndPrunesNoneEarly() {
+        prefs.edit().putBoolean("family_qr_only", true).commit()
+        val now = System.currentTimeMillis()
+        FamilyEvidence(ctx).use { db ->
+            val sql = db.writableDatabase
+            sql.execSQL("DROP TABLE seen"); sql.execSQL("CREATE TABLE seen(scope TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(scope,id))")
+            sql.execSQL("INSERT INTO seen VALUES(?,'a'),(?,'b')", arrayOf(scope, scope))
+            sql.version = 10
+        }
+        FamilyEvidence(ctx).use { db -> assertEquals(11, db.readableDatabase.version) }
+        ArchiveMaintenance.pruneAll(ctx, now); ArchiveMaintenance.pruneAll(ctx, now + 15 * day)
+        assertTrue(seen("a")); assertTrue(seen("b"))
+        ArchiveMaintenance.pruneAll(ctx, now + 17 * day)
+        assertFalse(seen("a")); assertFalse(seen("b"))
+    }
 }

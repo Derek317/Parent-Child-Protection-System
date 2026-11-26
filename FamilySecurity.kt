@@ -412,6 +412,8 @@ object FamilySecurity {
     private val childRecordId = Regex("[A-Za-z0-9:_-]{1,160}")
     private const val CHILD_RECORD_MAX = 1_048_576 // AlertFrames' transport bound: captured messages and scores reports exceed 16 KiB
     private const val CHILD_CONTROL_MAX = 16_384
+    /** How far back an alert or captured message may be dated; FamilyEvidence prunes a parent's replay ids by it. */
+    const val CONTENT_RECORD_WINDOW_MS = 8 * 86_400_000L
 
     /** Signature, type, id and time only; replay and ordering state stay with the caller. Null on any deviation. */
     fun readChildRecord(wrapper: JSONObject, childPublicKey: String, parentPublicKey: String, now: Long): ChildRecord? =
@@ -440,7 +442,7 @@ object FamilySecurity {
         val timeField = when (type) { "scores_mode_report" -> "sent_at_ms"; "captured_message" -> "captured_at_ms"; else -> "ts_ms" }
         val time = when (val value = record.opt(timeField)) { is Int -> value.toLong(); is Long -> value; else -> return rejected(ChildRecordRejection.MALFORMED_RECORD) }
         val maxAge = when (type) {
-            "alert", "captured_message" -> 8 * 86_400_000L
+            "alert", "captured_message" -> CONTENT_RECORD_WINDOW_MS
             "scores_mode_report" -> RiskLimits.REPORT_HORIZON_MS
             else -> 86_400_000L
         }
