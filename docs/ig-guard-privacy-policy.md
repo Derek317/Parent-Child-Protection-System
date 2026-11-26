@@ -1,6 +1,6 @@
 # IG Guard Privacy Policy
 
-Updated: **26 November 2026 (Hong Kong)**. This notice describes **IG Guard 6.0.2**, bundled Terms revision **2026-11-26-v9**. See the [release notes and known limits](releases/6.0.2.md). Safe Guard operates the project and can be reached at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
+Updated: **26 November 2026 (Hong Kong)**. This notice describes **IG Guard 6.0.3**, bundled Terms revision **2026-11-26-v9**. See the [release notes and known limits](releases/6.0.3.md). Safe Guard operates the project and can be reached at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
 
 ## Initial choice on each phone
 

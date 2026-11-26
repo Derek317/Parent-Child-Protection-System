@@ -1,6 +1,6 @@
 # IG Guard Data Deletion Instructions
 
-Updated: **26 November 2026 (Hong Kong)**. These steps describe **IG Guard 6.0.2**, bundled Terms revision **2026-11-26-v9**. See the [release notes and known limits](releases/6.0.2.md). Safe Guard handles privacy requests at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
+Updated: **26 November 2026 (Hong Kong)**. These steps describe **IG Guard 6.0.3**, bundled Terms revision **2026-11-26-v9**. See the [release notes and known limits](releases/6.0.3.md). Safe Guard handles privacy requests at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
 
 ## Declining initial terms is separate from deletion
 
