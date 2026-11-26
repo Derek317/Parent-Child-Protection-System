@@ -143,4 +143,19 @@ class LocalRunner(unittest.TestCase):
         # An empty build_dir must stop the script instead of deleting from /.
         self.assertNotEqual(0, subprocess.run(['bash', '-c', 'build_dir=; ' + clean[0]], capture_output=True).returncode)
 
+class DependencyVerification(unittest.TestCase):
+    def test_every_dependency_is_pinned_by_sha256_for_local_runs_and_linux_ci(self):
+        import xml.etree.ElementTree as ET
+        ns = {'v': 'https://schema.gradle.org/dependency-verification'}
+        root = ET.parse(REPO / 'gradle/verification-metadata.xml').getroot()
+        self.assertEqual('true', root.find('v:configuration/v:verify-metadata', ns).text)
+        artifacts = root.findall('v:components/v:component/v:artifact', ns)
+        self.assertGreater(len(artifacts), 100)
+        self.assertTrue(all(a.find('v:sha256', ns) is not None for a in artifacts))
+        names = {a.get('name') for a in artifacts}
+        # aapt2 is published per OS: the metadata generated on Windows must also list what CI's Linux runners fetch.
+        for name in [n for n in names if n.endswith('-windows.jar')]:
+            self.assertIn(name.replace('-windows.jar', '-linux.jar'), names)
+        self.assertIn("out/'gradle/verification-metadata.xml'", (REPO / 'tests/run_android.sh').read_text())
+
 if __name__ == '__main__': unittest.main()

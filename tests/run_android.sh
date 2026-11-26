@@ -32,6 +32,9 @@ shutil.copyfile(repo/'scripts/relay-config.py',out/'scripts/relay-config.py')
 for name in ('zxing-core.sha256','zxing-core-3.5.3.jar'): shutil.copyfile(repo/'third_party'/name,out/'third_party'/name)
 (out/'relay').mkdir(exist_ok=True)
 shutil.copyfile(repo/'relay/endpoint.json',out/'relay/endpoint.json')
+# Gradle checks every downloaded dependency against these SHA-256 values, as CI does.
+(out/'gradle').mkdir(exist_ok=True)
+shutil.copyfile(repo/'gradle/verification-metadata.xml',out/'gradle/verification-metadata.xml')
 shutil.copytree(repo/'ui-res',out/'ui-res',dirs_exist_ok=True)
 shutil.copytree(repo/'native/risk',out/'native/risk',dirs_exist_ok=True)
 PY
