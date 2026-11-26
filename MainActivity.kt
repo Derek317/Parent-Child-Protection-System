@@ -482,9 +482,10 @@ object GuardEngine {
         if (sentAt <= 0 || sentAt > now + RiskLimits.REPORT_FUTURE_MS) return
         val timestamp = minOf(sentAt, now)
         if (timestamp <= prefs(ctx).getLong("parent_last_child_hb_ms", 0L)) return
+        // Only a heartbeat that is not itself overdue re-arms the offline alert; a child clock >100 min slow would re-fire it every time.
         prefs(ctx).edit().putLong("parent_last_child_hb_ms", timestamp)
             .putString("parent_last_child_hb_text", "${nowDateTimeStr()} — $summary")
-            .putBoolean("parent_hb_missing_alerted", false).apply()
+            .apply { if (now - timestamp <= 100 * 60_000L) putBoolean("parent_hb_missing_alerted", false) }.apply()
     }
 
     /** Ends the child's heartbeat summary while its capture is held (content-free). An older parent just shows it as text. */

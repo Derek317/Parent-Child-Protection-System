@@ -275,6 +275,19 @@ class DeliveryHealthTest {
         assertTrue("the parent's missing-heartbeat alert fires", GuardEngine.shouldFireHeartbeatMissingAlert(ctx))
     }
 
+    /** A child clock more than 100 minutes slow: each newer heartbeat is still already overdue, so it must not re-arm the alert. */
+    @Test fun aSlowChildClockRaisesTheOfflineAlertOnceNotAfterEveryHeartbeat() {
+        val now = System.currentTimeMillis()
+        GuardEngine.recordChildHeartbeatOnParent(ctx, "summary", now - 120 * 60_000L)
+        assertTrue(GuardEngine.shouldFireHeartbeatMissingAlert(ctx))
+        GuardEngine.recordChildHeartbeatOnParent(ctx, "summary", now - 110 * 60_000L)
+        assertFalse("an already-overdue heartbeat does not re-arm the alert", GuardEngine.shouldFireHeartbeatMissingAlert(ctx))
+        GuardEngine.recordChildHeartbeatOnParent(ctx, "summary", now - 60_000L)
+        assertFalse(GuardEngine.isChildHeartbeatOverdue(ctx))
+        prefs.edit().putLong("parent_last_child_hb_ms", now - 101 * 60_000L).commit()
+        assertTrue("a fresh heartbeat re-arms it", GuardEngine.shouldFireHeartbeatMissingAlert(ctx))
+    }
+
     /** A signed scores report as a QR-paired child queues it (control record, receipt requested); [model] "other" is refused by the parser. */
     private fun scoresReport(sentAt: Long, model: String = "valid", rows: Int = 0): Pair<String, JSONObject> {
         val id = UUID.randomUUID().toString()
