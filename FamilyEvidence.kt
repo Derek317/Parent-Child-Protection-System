@@ -24,12 +24,14 @@ data class RetentionPreview(val retentionDays:Int,val legacyCount:Int,val legacy
     val expiredCount:Int,val pendingExpiredCount:Int,val preservedCount:Int)
 
 /** Content is encrypted; scopes, opaque IDs, timestamps, reasons and workflow flags remain clear. */
-class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 10), java.io.Closeable {
+class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "family_evidence.db", null, 11), java.io.Closeable {
     companion object {
         private val openLock=Any()
         private const val DAY=86_400_000L
         private const val PENDING_TTL=3*DAY
         @Volatile internal var contentLookups=0 // test-only: per-row body/payload fetches
+        /** A parent's replay id outlives its record's acceptance window (record time up to 24 h ahead, 8 days back) with room to spare. */
+        private const val SEEN_KEEP=2*FamilySecurity.CONTENT_RECORD_WINDOW_MS
     }
     private val app=ctx.applicationContext
     private val privateColumns=listOf("sender","conversation_key","conversation_label","account_label","body","payload")
@@ -88,7 +90,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("CREATE INDEX evidence_advice ON evidence(scope,reason,help_seen,stamp DESC,id DESC)")
         db.execSQL("CREATE INDEX evidence_saved ON evidence(scope,saved,stamp DESC)")
         // Content-free tombstones prevent deleted records being resurrected by a cached relay replay.
-        db.execSQL("CREATE TABLE seen(scope TEXT NOT NULL,id TEXT NOT NULL,PRIMARY KEY(scope,id))")
+        db.execSQL("CREATE TABLE seen(scope TEXT NOT NULL,id TEXT NOT NULL,stored_at INTEGER,PRIMARY KEY(scope,id))")
         db.execSQL("CREATE TABLE outbox(scope TEXT NOT NULL,id TEXT NOT NULL,event_id TEXT NOT NULL,wire TEXT NOT NULL,receipt INTEGER NOT NULL DEFAULT 0,accepted INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,retry_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id))")
         db.execSQL("CREATE TABLE fragments(scope TEXT NOT NULL,id TEXT NOT NULL,part INTEGER NOT NULL,parts INTEGER NOT NULL,digest TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(scope,id,part))")
         upgradeConversationSchema(db)
@@ -119,6 +121,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         }
         if(oldVersion<6)retentionSchema(db)
         if(oldVersion<10)riskSchema(db)   // 10: the risk_store(scope,stamp) index for the 14-day cleanup
+        if(oldVersion<11)addColumn(db,"seen","stored_at","INTEGER")   // 11: NULL until the first cleanup that may prune it stamps it
         if(oldVersion<9) {
             // Before schema 9 a thread was keyed by account, label and kind and risk_unknown meant "counted, not stored".
             // From 9 a thread is keyed by its label alone and risk_unknown means "set aside as a group", so nothing carries over.
@@ -186,7 +189,9 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     /** When [id] was first queued here (its lifetime started then), or null. */
     fun enqueuedAt(scope:String,id:String):Long? = readableDatabase.rawQuery("SELECT expires FROM outbox_lifetimes WHERE scope=? AND id=?",arrayOf(scope,id))
         .use{if(it.moveToFirst())it.getLong(0)-PENDING_TTL else null}
-    fun pruneExpired(scope:String,now:Long=System.currentTimeMillis()):Int {
+    /** [pruneSeen]: only for a parent of a QR-only family, where every record is signed and refused once older than its window.
+     * A 5.2 pairing has no such time check and a child's seen rows are discard tombstones: neither may ever be pruned. */
+    fun pruneExpired(scope:String,now:Long=System.currentTimeMillis(),pruneSeen:Boolean=false):Int {
         val db=writableDatabase;db.beginTransaction()
         try {
             // Child: a record that waited for a parent receipt and leaves by its deadline was never confirmed delivered (heartbeats aside).
@@ -194,10 +199,10 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             val undelivered=db.rawQuery("SELECT DISTINCT o.event_id FROM outbox o JOIN outbox_lifetimes l ON l.scope=o.scope AND l.id=o.event_id WHERE o.scope=? AND o.role='child' AND o.receipt=1 AND l.expires<=?",arrayOf(scope,now.toString()))
                 .use{c->buildList{while(c.moveToNext())add(c.getString(0))}}.any{it !in heartbeats}
             if(undelivered)check(LocalVault.preferences(app).edit().putLong(DeliveryHealth.EXPIRED_AT_MS,now).commit())
-            db.execSQL("INSERT OR IGNORE INTO seen SELECT scope,id FROM evidence WHERE scope=? AND expires<=?",arrayOf(scope,now))
-            db.execSQL("INSERT OR IGNORE INTO seen SELECT scope,id FROM fragments WHERE scope=? AND expires<=?",arrayOf(scope,now))
+            db.execSQL("INSERT OR IGNORE INTO seen(scope,id) SELECT scope,id FROM evidence WHERE scope=? AND expires<=?",arrayOf(scope,now))
+            db.execSQL("INSERT OR IGNORE INTO seen(scope,id) SELECT scope,id FROM fragments WHERE scope=? AND expires<=?",arrayOf(scope,now))
             db.execSQL("INSERT OR IGNORE INTO capture_seen SELECT scope,id FROM outbox_lifetimes WHERE scope=? AND expires<=?",arrayOf(scope,now))
-            db.execSQL("INSERT OR IGNORE INTO seen SELECT l.scope,l.id FROM outbox_lifetimes l WHERE l.scope=? AND l.expires<=? AND NOT EXISTS(SELECT 1 FROM evidence e WHERE e.scope=l.scope AND e.id=l.id)",arrayOf(scope,now))
+            db.execSQL("INSERT OR IGNORE INTO seen(scope,id) SELECT l.scope,l.id FROM outbox_lifetimes l WHERE l.scope=? AND l.expires<=? AND NOT EXISTS(SELECT 1 FROM evidence e WHERE e.scope=l.scope AND e.id=l.id)",arrayOf(scope,now))
             db.execSQL("UPDATE outbox_lifetimes SET expires=MIN(expires,?) WHERE scope=? AND id IN (SELECT id FROM evidence WHERE scope=? AND expires<=? UNION SELECT id FROM fragments WHERE scope=? AND expires<=?)",arrayOf(now,scope,scope,now,scope,now))
             db.execSQL("UPDATE outbox_lifetimes SET blocked=1 WHERE scope=? AND expires<=?",arrayOf(scope,now))
             val evidence=db.delete("evidence","scope=? AND expires<=?",arrayOf(scope,now.toString()))
@@ -207,6 +212,11 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.execSQL("DELETE FROM outbox_lifetimes WHERE scope=? AND expires<=? AND NOT EXISTS(SELECT 1 FROM outbox o WHERE o.scope=outbox_lifetimes.scope AND o.event_id=outbox_lifetimes.id) AND EXISTS(SELECT 1 FROM capture_seen c WHERE c.scope=outbox_lifetimes.scope AND c.id=outbox_lifetimes.id)",arrayOf(scope,now))
             val windows=db.delete("capture_windows",if(evidence+fragments+outbox>0)"scope=?" else "scope=? AND updated<=?",
                 if(evidence+fragments+outbox>0)arrayOf(scope) else arrayOf(scope,(now-PENDING_TTL).toString()))
+            if(pruneSeen) {
+                // Stamped no earlier than stored; an id with a record stays so append never meets a row it cannot insert.
+                db.execSQL("UPDATE seen SET stored_at=? WHERE scope=? AND stored_at IS NULL",arrayOf(now,scope))
+                db.execSQL("DELETE FROM seen WHERE scope=? AND stored_at<? AND NOT EXISTS(SELECT 1 FROM evidence e WHERE e.scope=seen.scope AND e.id=seen.id)",arrayOf(scope,now-SEEN_KEEP))
+            }
             pruneRisk(db,scope,now)
             db.setTransactionSuccessful();return evidence+fragments+outbox+windows
         }finally{db.endTransaction()}

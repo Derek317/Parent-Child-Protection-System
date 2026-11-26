@@ -382,13 +382,6 @@ object FamilySecurity {
      * writes it (ChildSigningKey.publicKey, newSigningIdentity). Padded or unpadded input of the same key gives the same result;
      * null unless the text is a canonical SPKI P-256 key (PairingCrypto.p256PublicKey). */
     fun canonicalKeyText(text: String): String? = PairingCrypto.p256PublicKey(text)?.let { encoder.encodeToString(it.encoded) }
-    private fun canonicalKey(text: String) = requireNotNull(canonicalKeyText(text)) { "Invalid P-256 key text" }
-
-    /** The two wrapper fields for the exact record text [record]; the caller adds `type:"alert"` and `event_id`.
-     * P and K are hashed in their canonical text form whatever form [parentPublicKey] is stored in. */
-    fun signChildRecord(record: String, parentPublicKey: String, child: ChildSigningKey): JSONObject =
-        JSONObject().put("child_signed", record)
-            .put("child_sig", encoder.encodeToString(signChildBytes(childRecordSignedBytes(record, canonicalKey(parentPublicKey), canonicalKey(child.publicKey)), child.alias)))
 
     /** A verified child record. [id] is event_id (alert, captured_message) or command_id (control records); [timeMs] is the field checked for age. */
     data class ChildRecord(val record: JSONObject, val type: String, val id: String, val timeMs: Long)
@@ -412,6 +405,8 @@ object FamilySecurity {
     private val childRecordId = Regex("[A-Za-z0-9:_-]{1,160}")
     private const val CHILD_RECORD_MAX = 1_048_576 // AlertFrames' transport bound: captured messages and scores reports exceed 16 KiB
     private const val CHILD_CONTROL_MAX = 16_384
+    /** How far back an alert or captured message may be dated; FamilyEvidence prunes a parent's replay ids by it. */
+    const val CONTENT_RECORD_WINDOW_MS = 8 * 86_400_000L
 
     /** Signature, type, id and time only; replay and ordering state stay with the caller. Null on any deviation. */
     fun readChildRecord(wrapper: JSONObject, childPublicKey: String, parentPublicKey: String, now: Long): ChildRecord? =
@@ -440,7 +435,7 @@ object FamilySecurity {
         val timeField = when (type) { "scores_mode_report" -> "sent_at_ms"; "captured_message" -> "captured_at_ms"; else -> "ts_ms" }
         val time = when (val value = record.opt(timeField)) { is Int -> value.toLong(); is Long -> value; else -> return rejected(ChildRecordRejection.MALFORMED_RECORD) }
         val maxAge = when (type) {
-            "alert", "captured_message" -> 8 * 86_400_000L
+            "alert", "captured_message" -> CONTENT_RECORD_WINDOW_MS
             "scores_mode_report" -> RiskLimits.REPORT_HORIZON_MS
             else -> 86_400_000L
         }

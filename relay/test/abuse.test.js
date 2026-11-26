@@ -39,7 +39,7 @@ test('the schema appears only after a verified parent registration', async () =>
   } finally { await mf.dispose(); }
 });
 
-test('daily budget limits only ordinary data; no other class or direction is ever blocked by it', async () => {
+test('the daily data budget limits only ordinary data; no other class or direction is blocked by that budget', async () => {
   const mf = runtime();
   try {
     const f = family(), initial = await connection(mf, f); initial.close();
