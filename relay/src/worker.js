@@ -36,9 +36,16 @@ export default {
     const match = /^\/v1\/rooms\/([a-f0-9]{64})$/.exec(url.pathname);
     if (!match || url.search) return json(404, 'not_found');
     if (request.method !== 'DELETE' && (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')) return json(426, 'websocket_required');
+    // Verified here, before any Durable Object exists for the room: everything that needs no room state. A parent proof binds its
+    // key to the room id; a v2 child proof is signed by its child key. A v1 child proof carries only a capability, which only the
+    // room can check: for it this checks the shape and the room id, so it can still instantiate a room (rate limited at the edge).
     try {
-      parseAuthorization(request.headers.get('Authorization'));
-    } catch { return json(401, 'unauthorized'); }
+      const auth = parseAuthorization(request.headers.get('Authorization'));
+      if (auth.room !== match[1] || (request.method === 'DELETE' && auth.role !== 'parent')) return json(401, 'unauthorized');
+      if (auth.role === 'parent') await verifyParentAuthorization(auth, match[1]);
+      else if (auth.v === 2) await verifyChildAuthorization(auth, match[1]);
+      else if (typeof auth.capability !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(auth.capability)) return json(401, 'unauthorized');
+    } catch (error) { return json(401, error?.message === 'stale_time' ? 'stale_time' : 'unauthorized'); }
     try {
       return await env.FAMILIES.get(env.FAMILIES.idFromName(match[1])).fetch(request);
     } catch { return json(503, 'relay_unavailable'); }
