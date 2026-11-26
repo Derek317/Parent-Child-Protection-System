@@ -7,7 +7,7 @@ import unittest
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
-TEXT = (REPO / '.github/workflows/build-apk.yml').read_text()
+TEXT = (REPO / '.github/workflows/build-apk.yml').read_text(encoding='utf-8')
 WORKFLOW = yaml.safe_load(TEXT)
 JOBS = WORKFLOW['jobs']
 # Actions that could not be resolved to a commit SHA must be listed here (and in the report). None today.
@@ -94,7 +94,7 @@ class ReleaseCarriesTheModel(unittest.TestCase):
     def test_model_url_is_defined_once_and_matches_the_pinned_file_name(self):
         url = JOBS['build']['env']['MODEL_URL']
         self.assertEqual('https://github.com/Derek317/Parent-Child-Protection-System/releases/download/model-beacon/', url.rsplit('/', 1)[0] + '/')
-        name = re.search(r'const\s+val\s+FILE_NAME\s*=\s*"([^"]+)"', (REPO / 'RiskModel.kt').read_text()).group(1)
+        name = re.search(r'const\s+val\s+FILE_NAME\s*=\s*"([^"]+)"', (REPO / 'RiskModel.kt').read_text(encoding='utf-8')).group(1)
         self.assertEqual(name, url.rsplit('/', 1)[1])
         self.assertEqual(1, TEXT.count('releases/download/model-beacon'))
 
@@ -149,7 +149,7 @@ class DeploymentIsolation(unittest.TestCase):
 
     def test_hotfix_steps_say_to_rerun_a_superseded_deploy(self):
         # The shared deploy group keeps one pending run: a newer push cancels a queued hotfix deploy.
-        doc = (REPO / 'docs/cloudflare-relay-setup.md').read_text()
+        doc = (REPO / 'docs/cloudflare-relay-setup.md').read_text(encoding='utf-8')
         self.assertRegex(doc, r'hotfix tag.s `relay-deploy` was cancelled or superseded.*re-run that tag.s workflow')
 
     def test_release_requires_successful_tests_and_deploy_and_not_always(self):
@@ -211,7 +211,8 @@ class ReleaseVersionAndHotfixSafety(unittest.TestCase):
         steps_ = JOBS['relay-deploy']['steps']
         self.assertEqual(0, steps_[0].get('with', {}).get('fetch-depth'))
         deploy = next(st['run'] for st in steps_ if 'npm run deploy' in st.get('run', ''))
-        guard = 'if [[ "$GITHUB_REF" == *-hotfix.* ]] && ! git merge-base --is-ancestor origin/main HEAD; then'
+        # Every deploy (main or hotfix): a re-run of an older main run must not put its older relay back either.
+        guard = 'if ! git merge-base --is-ancestor origin/main HEAD; then'
         self.assertIn(guard, deploy)
         self.assertLess(deploy.index(guard), deploy.index('npm run deploy'))
 
