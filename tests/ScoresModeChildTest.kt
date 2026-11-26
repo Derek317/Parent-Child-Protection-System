@@ -867,12 +867,32 @@ class ScoresModeChildTest {
             sql.execSQL("CREATE TABLE store_v8 AS SELECT ${columns.joinToString(",")} FROM risk_store"); sql.execSQL("DROP TABLE risk_store"); sql.execSQL("ALTER TABLE store_v8 RENAME TO risk_store")
             sql.version = 8
         }
+        prefs.edit().remove("scores_report_due").commit()
         FamilyEvidence(ctx).use { db ->
             assertEquals(10, db.readableDatabase.version)
+            assertTrue("the schema 10 index", stampIndexed(db))
             assertEquals("v8 'counted, not stored' rows are not excluded groups", 0, count("risk_unknown")); assertEquals(0, count("risk_store")); assertEquals(0, count("risk_authors"))
+            assertTrue("the parent is told at the next report", prefs.getBoolean("scores_report_due", false))
             val columns = db.readableDatabase.rawQuery("PRAGMA table_info(risk_store)", null).use { c -> buildList { while (c.moveToNext()) add(c.getString(1)) } }
             assertTrue(columns.containsAll(listOf("body_hash", "source", "matched")))
         }
+    }
+    private fun stampIndexed(db: FamilyEvidence) = db.readableDatabase.rawQuery("SELECT 1 FROM sqlite_master WHERE type='index' AND name='risk_store_stamp'", null).use { it.moveToFirst() }
+    /** A 6.0 / 6.0.2 store (schema 9) keeps every risk row on the upgrade to 10 and gets the index; only the 7..8 rule clears rows. */
+    @Test fun anUpgradeFromAVersionNineDatabaseKeepsItsRiskRows() {
+        val now = System.currentTimeMillis()
+        FamilyEvidence(ctx).use { db ->
+            db.storeRiskMessage(scope, "m1", "k", "friend", "incoming", "x", now, 1, 1, now)
+            db.noteRiskUnknown(scope, "set aside", now); db.noteRiskAuthor(scope, "k", "anna", now)
+        }
+        val tables = listOf("risk_store", "risk_threads", "risk_results", "risk_unknown", "risk_authors")
+        val before = tables.associateWith { count(it) }
+        assertTrue(before.toString(), before.getValue("risk_store") > 0 && before.getValue("risk_unknown") > 0 && before.getValue("risk_authors") > 0)
+        FamilyEvidence(ctx).use { db -> val sql = db.writableDatabase; sql.execSQL("DROP INDEX risk_store_stamp"); sql.version = 9 }
+        prefs.edit().remove("scores_report_due").commit()
+        FamilyEvidence(ctx).use { db -> assertEquals(10, db.readableDatabase.version); assertTrue("the schema 10 index", stampIndexed(db)) }
+        assertEquals("every risk row kept", before, tables.associateWith { count(it) })
+        assertFalse("nothing to tell the parent", prefs.getBoolean("scores_report_due", false))
     }
     @Test fun theFourteenDayCleanupUsesAnIndexOnFreshAndUpgradedStores() {
         fun plan() = FamilyEvidence(ctx).use { db ->
