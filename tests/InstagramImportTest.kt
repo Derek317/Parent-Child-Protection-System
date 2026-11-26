@@ -453,6 +453,29 @@ class InstagramImportTest {
             assertEquals(name, 0, count("risk_store"))
         }
     }
+    @Test fun theSessionLockIsFreeWhileImportedMessagesAreSealed() {
+        activate(ScoresMethod.UPLOAD); GuardEngine.setChildSelfHandle(ctx, teen)
+        val sealing = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
+        val held = java.util.concurrent.atomic.AtomicBoolean()
+        var result: ImportResult? = null
+        val importer = Thread { result = import(json(chat).toByteArray(), "message_1.json").result }
+        // Holds the first Keystore load made to seal an imported message (Keystore work is slow on a real phone).
+        TestKeyStore.onLoad = {
+            if (Thread.currentThread() === importer && Thread.currentThread().stackTrace.any { it.className == FamilyEvidence::class.java.name && it.methodName in setOf("storeRiskMessage", "sealRiskMessage") }
+                && held.compareAndSet(false, true)) { sealing.countDown(); release.await(20, java.util.concurrent.TimeUnit.SECONDS) }
+        }
+        try {
+            importer.start()
+            assertTrue("the import never sealed a message", sealing.await(20, java.util.concurrent.TimeUnit.SECONDS))
+            // The lock the Pause, Withdraw and Accept buttons take on the main thread must not wait for the import's sealing.
+            val button = Thread { GuardEngine.withSessionLock { } }.apply { start(); join(3_000) }
+            val free = !button.isAlive
+            release.countDown(); importer.join(20_000); button.join(20_000)
+            assertTrue("the session lock was held while messages were sealed", free)
+            assertEquals(ImportResult.OK, result)
+            assertEquals(4, count("risk_store"))
+        } finally { TestKeyStore.onLoad = {}; release.countDown() }
+    }
     @Test fun importedTextIsNeverLoggedAndNeverQueuedForTheRelay() {
         activate(ScoresMethod.UPLOAD)
         val messages = listOf(M(friend, "$secret one", 1), M(teen, "$secret two", 2))

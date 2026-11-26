@@ -57,8 +57,10 @@ class TestKeyStore : KeyStoreSpi() {
         /** Whether each EC generation asked for StrongBox; [failStrongBox] makes such a request fail as a phone without it does. */
         val strongBoxRequests = java.util.Collections.synchronizedList(mutableListOf<Boolean>())
         var failStrongBox = false
+        /** Runs on every Keystore load, on the calling thread: a test can hold Keystore work there. */
+        @Volatile var onLoad: () -> Unit = {}
     }
-    override fun engineLoad(stream: InputStream?, password: CharArray?) { check(!failReads) { "Synthetic unavailable Keystore" } }
+    override fun engineLoad(stream: InputStream?, password: CharArray?) { check(!failReads) { "Synthetic unavailable Keystore" }; onLoad() }
     override fun engineStore(stream: OutputStream?, password: CharArray?) = throw UnsupportedOperationException()
     override fun engineGetKey(alias: String, password: CharArray?): Key? = privateKeys[alias] ?: keys[alias]
     override fun engineContainsAlias(alias: String): Boolean = keys.containsKey(alias) || privateKeys.containsKey(alias)

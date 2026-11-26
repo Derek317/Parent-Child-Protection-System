@@ -531,10 +531,16 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
      * capture (the newest such row, so an older, distinct "ok" stays) (the notification row is dropped, the screen row's position is kept), and a notification arriving after the
      * screen read is dropped if an unclaimed screen row matches. So "ok","ok" stays two messages.
      */
-    fun storeRiskMessage(scope:String,id:String,threadKey:String,label:String,direction:String,text:String,stamp:Long,sortStamp:Long,sortOrder:Long,now:Long,source:String=""):Boolean {
+    /** A risk message with its Keystore work done (blind indexes and sealed text), so a caller can do it before taking a lock. */
+    class SealedRiskMessage internal constructor(val thread:String,val bodyHash:String,val label:String,val body:String)
+    fun sealRiskMessage(scope:String,id:String,threadKey:String,label:String,text:String):SealedRiskMessage = SealedRiskMessage(index(scope,"conversation",threadKey),
+        index(scope,"risk_body",text),seal(scope,"risk_store",id,"label",label),seal(scope,"risk_store",id,"body",text))
+    fun storeRiskMessage(scope:String,id:String,threadKey:String,label:String,direction:String,text:String,stamp:Long,sortStamp:Long,sortOrder:Long,now:Long,source:String=""):Boolean =
+        storeRiskMessage(scope,id,direction,sealRiskMessage(scope,id,threadKey,label,text),stamp,sortStamp,sortOrder,now,source)
+    fun storeRiskMessage(scope:String,id:String,direction:String,sealed:SealedRiskMessage,stamp:Long,sortStamp:Long,sortOrder:Long,now:Long,source:String=""):Boolean {
         require(direction in setOf("incoming","outgoing"))
-        val db=writableDatabase;val thread=index(scope,"conversation",threadKey)
-        val bodyHash=index(scope,"risk_body",text)
+        val db=writableDatabase;val thread=sealed.thread
+        val bodyHash=sealed.bodyHash
         var matched=0
         if(source=="visible_dm") {
             val claim=db.rawQuery("SELECT seq FROM risk_store WHERE scope=? AND thread_index=? AND direction=? AND body_hash=? AND source='notification' AND stamp<=? ORDER BY stamp DESC LIMIT 1",
@@ -547,7 +553,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         }
         val row=ContentValues().apply {
             put("scope",scope);put("id",id);put("thread_index",thread);put("direction",direction)
-            put("label",seal(scope,"risk_store",id,"label",label));put("body",seal(scope,"risk_store",id,"body",text))
+            put("label",sealed.label);put("body",sealed.body)
             put("stamp",stamp);put("sort_stamp",sortStamp);put("sort_order",sortOrder);put("body_hash",bodyHash);put("source",source);put("matched",matched)
         }
         val inserted=db.insertWithOnConflict("risk_store",null,row,SQLiteDatabase.CONFLICT_IGNORE)!=-1L

@@ -429,18 +429,24 @@ internal object InstagramImport {
             val scope = GuardEngine.getChannelTopic(app)
             var stored = 0
             var conversations = 0
+            // Sealing is Keystore work per message: done before the session lock, so Pause, Withdraw and Accept never wait on a long import.
+            val prepared = FamilyEvidence(app).use { db -> parsed.conversations.map { c ->
+                val recent = c.messages.filter { it.ts != null && it.ts >= cutoff }.takeLast(RiskLimits.MESSAGES)
+                // The id is the time read to the minute, so JSON, HTML and any language give one id (undated messages were dropped above).
+                val ids = ids(c.key, recent) { Math.floorDiv(it.ts!!, 60_000L).toString() }
+                Triple(c, recent, ids) to recent.mapIndexed { i, m -> db.sealRiskMessage(scope, ids[i], c.key, c.label, m.text) }
+            } }
             // The parse can be long: a wipe, pause, withdrawal or method change meanwhile must win, so permission is checked again under the session lock.
-            val stillAllowed = GuardEngine.withSessionLock { if (!allowed(app)) false else {
+            // The scope is checked again too: the messages were sealed and indexed for it before the lock.
+            val stillAllowed = GuardEngine.withSessionLock { if (!allowed(app) || GuardEngine.getChannelTopic(app) != scope) false else {
             FamilyEvidence(app).use { db ->
                 val sql = db.writableDatabase
                 sql.beginTransaction()
                 try {
-                    for (c in parsed.conversations) {
-                        val recent = c.messages.filter { it.ts != null && it.ts >= cutoff }.takeLast(RiskLimits.MESSAGES)
+                    for ((conversation, sealed) in prepared) {
+                        val (c, recent, ids) = conversation
                         if (recent.isEmpty()) continue
                         conversations++
-                        // The id is the time read to the minute, so JSON, HTML and any language give one id (undated messages were dropped above).
-                        val ids = ids(c.key, recent) { Math.floorDiv(it.ts!!, 60_000L).toString() }
                         // 6.0 and earlier keyed the id by the time as the file wrote it, and the thread by the name: such a row is replaced, not kept beside the new one.
                         val legacyKey = c.label.trim().removePrefix("@").lowercase(Locale.ROOT)
                         val before = ids(legacyKey, recent) { it.timeKey }
@@ -451,7 +457,7 @@ internal object InstagramImport {
                         for ((i, m) in recent.withIndex()) {
                             val direction = if (m.outgoing) "outgoing" else "incoming"
                             val stamp = minOf(m.ts!!, now)
-                            if (db.storeRiskMessage(scope, ids[i], c.key, c.label, direction, m.text, stamp, stamp, i.toLong(), now)) { added = true; if (!replaced[i]) stored++ }
+                            if (db.storeRiskMessage(scope, ids[i], direction, sealed[i], stamp, stamp, i.toLong(), now)) { added = true; if (!replaced[i]) stored++ }
                         }
                         // The thread's next score replaces its earlier ones; until it is written, the earlier score stands.
                         if (added) db.rescoreRiskThread(scope, c.key)
