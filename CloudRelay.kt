@@ -219,7 +219,10 @@ object CloudRelay {
                         if(socket!==ws){response?.close();return@execute}
                         val code=response?.code
                         val delay=if(code in listOf(401,403))300_000L else response?.header("Retry-After")?.toLongOrNull()?.times(1000)
+                        // A 401 can be this phone's clock, not its key: the relay refuses proofs more than 2 min off its own time.
+                        val clockOff=code==401 && response?.headers?.getDate("Date")?.let{GuardEngine.noteRelayClock(ctx,it.time)}==true
                         when {
+                            clockOff && route==null -> fail("手機時間與中繼相差超過 2 分鐘 · 請檢查手機的日期和時間 · 已按中繼時間重試",5_000L,exact=true)
                             route!=null && code in listOf(401,403,410) -> {stop();route.onRefused(code!!)}
                             (route!=null || keyedChild) && code==409 -> fail("正在等待家長手機完成配對 · 15 秒後重試",PAIRING_RETRY_MS,exact=true)
                             // Its key is not the one registered for this locked room: nothing is wiped, the person is told.
@@ -286,6 +289,7 @@ object CloudRelay {
                     "ready" -> {
                         require(message.optInt("protocol")==1)
                         ready=true;clearCooldown()
+                        if(route==null)GuardEngine.cpChildKeyRefused=false
                         if(parentFamily)GuardEngine.parentRelayReady(true)
                         state("加密中繼已連線 · 家長收妥需另行確認")
                         if(route!=null){route.onReady(message);sendNext();return}

@@ -15,6 +15,8 @@ object FamilyRelay {
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
     private fun encoded(bytes:ByteArray) = encoder.encodeToString(bytes)
+    /** The relay's clock minus this phone's, learned from a refused proof's Date header (GuardEngine.noteRelayClock); 0 when they agree. */
+    @Volatile var clockOffsetMs = 0L
     private fun hash(text:String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it.toInt() and 255)}
 
     fun room(publicKey:String,scope:String):String {
@@ -27,7 +29,7 @@ object FamilyRelay {
     }
     fun capabilityHash(capability:String):String = hash(capability)
 
-    fun parentAuthorization(identity:FamilySecurity.SigningIdentity,scope:String,token:String,now:Long=System.currentTimeMillis(),nonce:String=UUID.randomUUID().toString()):String {
+    fun parentAuthorization(identity:FamilySecurity.SigningIdentity,scope:String,token:String,now:Long=System.currentTimeMillis()+clockOffsetMs,nonce:String=UUID.randomUUID().toString()):String {
         val room=room(identity.publicKey,scope)
         val capabilityHash=capabilityHash(childCapability(token))
         val proof=listOf("igguard-relay-auth-v1","parent",room,scope,now.toString(),nonce,capabilityHash).joinToString("\n")
@@ -42,7 +44,7 @@ object FamilyRelay {
 
     /** A v2 parent proof registers or replaces the room's child key. [childKey] is the child's P-256 SPKI text; it is sent unpadded,
      * the form the relay compares byte for byte with the child's own v2 proof. The signature is DER (base64url), as in v1. */
-    fun parentAuthorizationV2(identity:FamilySecurity.SigningIdentity,scope:String,token:String,childKey:String,now:Long=System.currentTimeMillis(),nonce:String=UUID.randomUUID().toString()):String {
+    fun parentAuthorizationV2(identity:FamilySecurity.SigningIdentity,scope:String,token:String,childKey:String,now:Long=System.currentTimeMillis()+clockOffsetMs,nonce:String=UUID.randomUUID().toString()):String {
         require(PairingCrypto.validP256Key(childKey)) { "Invalid child key" }
         val room=room(identity.publicKey,scope)
         val capabilityHash=capabilityHash(childCapability(token))
@@ -55,7 +57,7 @@ object FamilyRelay {
     }
     /** A v2 child proof: the v1 capability plus a signature by [child]'s Keystore key over the room, time, nonce and sha256(capability).
      * [sign] returns a DER ECDSA-P256-SHA256 signature; it is injectable only so JVM vectors can sign with a raw test key. */
-    fun childAuthorizationV2(publicKey:String,scope:String,token:String,child:FamilySecurity.ChildSigningKey,now:Long=System.currentTimeMillis(),
+    fun childAuthorizationV2(publicKey:String,scope:String,token:String,child:FamilySecurity.ChildSigningKey,now:Long=System.currentTimeMillis()+clockOffsetMs,
         nonce:String=UUID.randomUUID().toString(),sign:(ByteArray)->ByteArray={FamilySecurity.signChildBytes(it,child.alias)}):String {
         val room=room(publicKey,scope)
         val capability=childCapability(token)

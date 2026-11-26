@@ -284,6 +284,7 @@ object GuardEngine {
     private const val CHILD_QR_PAIRED = "child_qr_paired"
     private const val PINNED_CHILD_KEY = "pinned_child_key"
     private const val PAIRING_PENDING_MS = "child_pairing_pending_ms"
+    private const val RELAY_CLOCK_OFFSET = "relay_clock_offset_ms"
     private const val PAIRING_FAILED = "child_pairing_failed"
     private const val CHILD_RECORD_STATE = "child_record_state_json"
     private const val TAMPER_NOTICE_MS = "child_tamper_notice_ms"
@@ -601,6 +602,7 @@ object GuardEngine {
     /** v2 proofs only for the current family room of a QR pairing (parent: carrying the pinned K; child: signed by K). Every other
      *  room (5.2 pairings, the room left by a rotation, a rendezvous room) keeps v1; a v1 parent never removes the relay's child lock. */
     fun relayAuthorization(ctx:Context,token:String):String = synchronized(pollLock) {
+        FamilyRelay.clockOffsetMs=prefs(ctx).getLong(RELAY_CLOCK_OFFSET,0L)
         val scope=getChannelTopicForToken(token)
         val family=token==getOrCreateFamilyToken(ctx)
         if(isParentMode(ctx)) {
@@ -613,6 +615,15 @@ object GuardEngine {
             if(family && alias!=null)FamilyRelay.childAuthorizationV2(relayPublicKey(ctx),scope,token,FamilySecurity.loadChildSigningKey(ctx,alias))
             else FamilyRelay.childAuthorization(relayPublicKey(ctx),scope,token)
         }
+    }
+    /** A refused proof: the relay accepts only times within 2 min of its own. True when its Date header shows this phone's clock (with
+     *  the offset already learned) off by more; the offset is then kept for the signers, so the retry is accepted. */
+    fun noteRelayClock(ctx:Context,serverMs:Long,now:Long=System.currentTimeMillis()):Boolean {
+        if(kotlin.math.abs(serverMs-now-prefs(ctx).getLong(RELAY_CLOCK_OFFSET,0L))<=120_000L)return false
+        FamilyRelay.clockOffsetMs=serverMs-now
+        prefs(ctx).edit().putLong(RELAY_CLOCK_OFFSET,serverMs-now).apply()
+        addCheckpointLog(ctx,"CP4-RELAY","手機時間與中繼相差超過 2 分鐘；已按中繼時間校正")
+        return true
     }
     /** Child: K's alias after a completed QR pairing; null for a 5.2 pairing (records keep the unsigned 5.2 format). */
     fun childKeyAlias(ctx:Context):String? = prefs(ctx).getString(CHILD_KEY_ALIAS,null)?.takeIf{isChildMode(ctx)}

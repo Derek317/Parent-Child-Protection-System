@@ -27,7 +27,7 @@ class PairingRelayTest {
     @Before fun reset() {
         prefs.edit().clear().commit(); ctx.deleteDatabase("family_evidence.db")
         TestKeyStore.privateKeys.clear(); TestKeyStore.certificates.clear()
-        GuardEngine.cpChildKeyRefused = false
+        GuardEngine.cpChildKeyRefused = false; FamilyRelay.clockOffsetMs = 0L
     }
     private fun waitUntil(condition: () -> Boolean) { var n = 0; while (!condition() && n++ < 60) Thread.sleep(100) }
     private fun header(request: okhttp3.mockwebserver.RecordedRequest) =
@@ -36,9 +36,11 @@ class PairingRelayTest {
         val room = FamilyRelay.room(GuardEngine.relayPublicKey(ctx), GuardEngine.getChannelTopic(ctx))
         return ctx.getSharedPreferences("ig_guard_prefs", android.content.Context.MODE_PRIVATE).getLong("relay_cooldown_child_$room", 0) - System.currentTimeMillis()
     }
-    private fun refuse(status: Int, code: String): Pair<MockWebServer, okhttp3.mockwebserver.RecordedRequest> {
+    private fun httpDate(ms: Long) = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneOffset.UTC))
+    private fun refuse(status: Int, code: String, serverDate: Long? = null): Pair<MockWebServer, okhttp3.mockwebserver.RecordedRequest> {
         val server = MockWebServer()
-        server.enqueue(MockResponse().setResponseCode(status).setHeader("Retry-After", "15").setBody("{\"error\":{\"code\":\"$code\",\"retry_after_ms\":15000}}"))
+        server.enqueue(MockResponse().setResponseCode(status).setHeader("Retry-After", "15").setBody("{\"error\":{\"code\":\"$code\",\"retry_after_ms\":15000}}")
+            .apply { if (serverDate != null) setHeader("Date", httpDate(serverDate)) })
         server.start()
         val connection = CloudRelay.Connection(ctx, GuardEngine.captureRelaySession(ctx), GuardEngine.getOrCreateFamilyToken(ctx), server.url("/").toString())
         connection.start()
@@ -63,13 +65,48 @@ class PairingRelayTest {
 
     @Test fun a401ToAKeyedChildSaysPairAgainAndWipesNothing() {
         val r = QrPairing.pairChild(ctx)
-        val (server, _) = refuse(401, "unauthorized")
+        // The relay's clock agrees with the phone's: a genuine key refusal.
+        val (server, _) = refuse(401, "unauthorized", System.currentTimeMillis())
         try {
             assertTrue(GuardEngine.cpChildKeyRefused)
+            assertEquals(0L, FamilyRelay.clockOffsetMs)
             assertTrue(GuardEngine.cpLastPollStatus.contains("需要重新配對"))
             assertEquals(r.token, GuardEngine.getOrCreateFamilyToken(ctx)); assertEquals(r.childKeyAlias, GuardEngine.childKeyAlias(ctx))
             assertEquals("child", GuardEngine.getRole(ctx))
         } finally { server.shutdown() }
+    }
+
+    /** The relay refuses proofs more than 2 min off its clock. That 401 is the phone's clock, not its key: say so and sign with the relay's time. */
+    @Test fun a401FromAPhoneClockOffBy10MinSaysCheckTheTimeAndSignsWithTheRelaysTime() {
+        val r = QrPairing.pairChild(ctx)
+        val (server, request) = refuse(401, "unauthorized", System.currentTimeMillis() + 10 * 60_000L)
+        try {
+            assertTrue("the refused proof used the phone's own clock", kotlin.math.abs(header(request).getLong("ts_ms") - System.currentTimeMillis()) < 60_000L)
+            assertFalse("not a key refusal", GuardEngine.cpChildKeyRefused)
+            assertTrue(GuardEngine.cpLastPollStatus, GuardEngine.cpLastPollStatus.contains("時間"))
+            assertFalse(GuardEngine.cpLastPollStatus.contains("需要重新配對"))
+            assertTrue("retried soon, not after 5 min: ${cooldownLeft()}", cooldownLeft() <= 15_000L)
+            val proof = JSONObject(String(java.util.Base64.getUrlDecoder().decode(GuardEngine.relayAuthorization(ctx, r.token).removePrefix("IGGuard "))))
+            assertTrue("the next proof carries the relay's time", kotlin.math.abs(proof.getLong("ts_ms") - (System.currentTimeMillis() + 10 * 60_000L)) < 60_000L)
+            assertEquals(r.childKeyAlias, GuardEngine.childKeyAlias(ctx)); assertEquals("child", GuardEngine.getRole(ctx))
+        } finally { server.shutdown(); FamilyRelay.clockOffsetMs = 0L }
+    }
+
+    /** A refusal mark from an earlier attempt goes away once the relay accepts this phone. */
+    @Test fun aReadyConnectionClearsAnEarlierKeyRefusal() {
+        QrPairing.pairChild(ctx)
+        GuardEngine.cpChildKeyRefused = true
+        val server = MockWebServer()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send(JSONObject().put("type", "ready").put("protocol", 1).toString()) }
+        }))
+        server.start()
+        val connection = CloudRelay.Connection(ctx, GuardEngine.captureRelaySession(ctx), GuardEngine.getOrCreateFamilyToken(ctx), server.url("/").toString())
+        try {
+            connection.start()
+            waitUntil { !GuardEngine.cpChildKeyRefused }
+            assertFalse(GuardEngine.cpChildKeyRefused)
+        } finally { connection.close(); server.shutdown() }
     }
 
     @Test fun anOldPairingKeepsV1AndItsOrdinaryBackoff() {
