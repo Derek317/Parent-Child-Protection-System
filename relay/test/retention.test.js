@@ -79,7 +79,7 @@ test('idle registration expiry purges data and retires the room for good', async
     assert.equal((await connection(mf, f, 'child')).response.status, 410);
     assert.equal((await sql(mf, f.room, 'SELECT COUNT(*) AS n FROM parent_inbox'))[0].n, 0);
     assert.equal((await connection(mf, f)).response.status, 410);
-    // No passage of time reopens a retired room: the old key and capability stay refused.
+    // No passage of time short of a year (RETIRED_TTL, test/worker.test.js) reopens a retired room: the old key and capability stay refused.
     await sql(mf, f.room, "UPDATE metadata SET value=? WHERE key IN ('revoked_until','retired')", String(Date.now() - 1));
     assert.equal((await connection(mf, f, 'child')).response.status, 410);
     assert.equal((await connection(mf, f)).response.status, 410);
