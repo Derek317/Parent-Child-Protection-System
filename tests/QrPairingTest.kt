@@ -56,6 +56,19 @@ class QrPairingTest {
         assertEquals(oldToken, GuardEngine.getOrCreateFamilyToken(ctx))
     }
 
+    /** The old child's capture confirmation does not carry over to a new QR pairing; the parent's own policy stays. */
+    @Test fun aNewQrPairingForgetsTheOldChildsCaptureConfirmation() {
+        parentPhone()
+        prefs.edit().putString("capture_policy_id", "policy-1").putString("capture_child_ack_id", "policy-1").commit()
+        assertTrue(GuardEngine.parentFullCaptureConfirmed(ctx))
+        val run = parentUpToDigits()
+        assertTrue(run.link.enterDigits((run.child.state as CS.ShowingDigits).digits))
+        run.child.confirm(now + 3_000)!!
+        assertTrue(run.link.accept())
+        assertFalse("two-way capture is not confirmed for the new child", GuardEngine.parentFullCaptureConfirmed(ctx))
+        assertEquals("policy-1", GuardEngine.pendingCapturePolicy(ctx))
+    }
+
     @Test fun parentEnginePinsTheChildKeyReplacesTheTokenAndQueuesM3InTheNewRoom() {
         parentPhone(); val oldToken = GuardEngine.getOrCreateFamilyToken(ctx)
         val run = parentUpToDigits()

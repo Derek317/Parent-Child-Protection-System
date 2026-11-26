@@ -1345,7 +1345,7 @@ object GuardEngine {
             if (!eventId.startsWith("control:")) return null
             setFamilyToken(ctx, result.token, preserveFamilyHistory = true, qrOnly = true)
             val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json")
-            for (stale in listOf(PAIRING_FAILED, PAIRING_CANCELLED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted") + DeliveryHealth.PARENT_KEYS) editor.remove(stale)
+            for (stale in listOf(PAIRING_FAILED, PAIRING_CANCELLED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted", "capture_child_ack_id") + DeliveryHealth.PARENT_KEYS) editor.remove(stale)
             check(editor.commit())
             relayGeneration++; CloudRelay.disconnect()
             val session = captureRelaySession(ctx)
