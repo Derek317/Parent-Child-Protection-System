@@ -82,6 +82,17 @@ class ExportTeenRuleTest {
         assertEquals(ImportResult.OK, q.result); assertEquals(2, q.groups)
         assertTrue(q.conversations.all { c -> c.messages.any { it.outgoing } })
     }
+    @Test fun aJsonGroupWithTwoSendersIsStillSkippedWhenTheTeenIsGuessedByCount() {
+        // No folder matches and no stored name: the teen is guessed by count. The group lists three members, so it is a group, not a chat.
+        val export = zip(
+            "inbox/bea_1/message_1.json" to json(listOf("Bea Friend", teen), Triple("Bea Friend", "hello", 1), Triple(teen, "hi Bea", 2)),
+            "inbox/cal_2/message_1.json" to json(listOf("Cal Pal", teen), Triple("Cal Pal", "ready?", 3), Triple(teen, "yes", 4)),
+            "inbox/club_3/message_1.json" to json(listOf("Bea Friend", "Cal Pal", teen), Triple("Bea Friend", "party at 8", 5), Triple("Cal Pal", "count me in", 6)))
+        val p = parse(export, "export.zip")
+        assertEquals(ImportResult.OK, p.result); assertEquals(1, p.groups)
+        assertEquals(setOf("Bea Friend", "Cal Pal"), p.conversations.map { it.label }.toSet())
+        assertTrue(p.conversations.all { c -> c.messages.any { it.outgoing } && c.messages.none { it.text == "party at 8" } })
+    }
     @Test fun theFolderNamedAfterTheOtherPersonTellsTheTeen() {
         // One chat where both wrote, and a group the teen never wrote in where the friend is busier than the teen.
         val chat = "inbox/annlee_1234567890/message_1.html" to html(Triple("Ann Lee", "you there?", 1), Triple(teen, "yes", 2), Triple("Ann Lee", "call me", 3))
