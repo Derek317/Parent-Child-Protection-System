@@ -847,7 +847,7 @@ object GuardEngine {
         val editor=prefs(ctx).edit().putString("family_uuid_token",fresh).putString("parent_signing_public",identity.publicKey).putBoolean(FAMILY_QR_ONLY,true)
         for(key in listOf("parent_signing_private","pending_rotation_json","evidence_transition_json","control_state_json","last_control_ts_ms",
             "capture_policy_id","capture_local_ack_id","capture_child_ack_id","capture_sequence","parent_master_password","parent_share_verifier",
-            "parent_password_verifier","parent_command_public_key","trusted_csv","flagged_offenders_csv","child_self_handle","sent_setup_ok",
+            "parent_password_verifier","parent_command_public_key","trusted_csv","flagged_offenders_csv","child_self_handle","child_self_handle_ts_ms","sent_setup_ok",
             "parent_last_child_hb_ms","parent_last_child_hb_text","parent_hb_missing_alerted","weekly_stats_json","parent_alerts_json",
             "synced_15m_code","synced_15m_exp","unlock_until_ms","synced_15m_rt","synced_15m_start_rt","synced_15m_boot",
             "unlock_until_rt","unlock_start_rt","unlock_boot","pw_lockout_rt","pw_lockout_start_rt","pw_lockout_boot")+parentChildKeys)editor.remove(key)
@@ -974,7 +974,7 @@ object GuardEngine {
         val editor = prefs(ctx).edit()
         for (key in listOf("family_uuid_token", "parent_command_public_key", "parent_password_verifier", "control_state_json", "last_control_ts_ms",
             "pending_rotation_json", "capture_policy_id", "capture_local_ack_id", "capture_child_ack_id", "capture_sequence",
-            "trusted_csv", "flagged_offenders_csv", "child_self_handle", "sent_setup_ok", "next_heartbeat_at_ms",
+            "trusted_csv", "flagged_offenders_csv", "child_self_handle", "child_self_handle_ts_ms", "sent_setup_ok", "next_heartbeat_at_ms",
             "synced_15m_code", "synced_15m_exp", "synced_15m_rt", "synced_15m_start_rt", "synced_15m_boot", CHILD_QR_PAIRED)) editor.remove(key)
         check(editor.commit())
         forgetChildKey(ctx)
@@ -1140,7 +1140,7 @@ object GuardEngine {
                         "pw_lockout_rt", "pw_lockout_start_rt", "pw_lockout_boot",
                         "capture_policy_id","capture_local_ack_id","capture_child_ack_id","capture_sequence",
                         "parent_master_password", "parent_share_verifier", "parent_password_verifier", "parent_command_public_key", "trusted_csv", "flagged_offenders_csv",
-                        "child_self_handle", "pw_failed_count", "pw_lockout_until_ms", "sent_setup_ok", "next_heartbeat_at_ms", "checkpoint_logs") + parentChildKeys) editor.remove(key)
+                        "child_self_handle", "child_self_handle_ts_ms", "pw_failed_count", "pw_lockout_until_ms", "sent_setup_ok", "next_heartbeat_at_ms", "checkpoint_logs") + parentChildKeys) editor.remove(key)
                     // A new family never keeps the previous family's child key; a QR pairing stores its own after this.
                     forgetChildKey(ctx)
                     editor.remove(CHILD_QR_PAIRED)
@@ -1508,19 +1508,29 @@ object GuardEngine {
         // Older builds inferred the child's identity from a conversation title (the peer).
         // Discard that unverified cache once; a recipient prefix or own-profile screen can restore it.
         if (prefs(ctx).contains("child_self_handle") && prefs(ctx).getInt("child_self_handle_source_version", 0) < 2) {
-            prefs(ctx).edit().remove("child_self_handle").apply()
+            prefs(ctx).edit().remove("child_self_handle").remove("child_self_handle_ts_ms").apply()
         }
         return (prefs(ctx).getString("child_self_handle", "") ?: "").trim().lowercase(Locale.US).removePrefix("@")
     }
 
-    fun setChildSelfHandle(ctx: Context, handle: String) {
+    fun setChildSelfHandle(ctx: Context, handle: String): Boolean {
         val clean = handle.trim().lowercase(Locale.US).removePrefix("@")
-        if (clean.isEmpty() || clean in RESERVED_UI_HEADERS || !VALID_IG_HANDLE_REGEX.matches(clean)) return
+        if (clean.isEmpty() || clean in RESERVED_UI_HEADERS || !VALID_IG_HANDLE_REGEX.matches(clean)) return false
         prefs(ctx).edit().putString("child_self_handle", clean).putInt("child_self_handle_source_version", 2).apply()
         val cleanedTrusted = getTrustedHandles(ctx).filter { it != clean }
         prefs(ctx).edit().putString("trusted_csv", cleanedTrusted.joinToString(",")).apply()
         val cleanedOffenders = getFlaggedOffenders(ctx).filter { it != clean }
         prefs(ctx).edit().putString("flagged_offenders_csv", cleanedOffenders.joinToString(",")).apply()
+        return true
+    }
+
+    /** Parent: a child record's handle is taken only if the record is newer than the one that set the stored handle (no stored
+     *  time, as after an upgrade: taken). Stored clamped to now, as the gate's ordering mark: a record dated ahead cannot pin a handle. */
+    private fun applyChildHandleFromRecord(ctx: Context, handle: String, recordTimeMs: Long): Boolean {
+        if (prefs(ctx).contains("child_self_handle_ts_ms") && recordTimeMs <= prefs(ctx).getLong("child_self_handle_ts_ms", 0L)) return false
+        if (!setChildSelfHandle(ctx, handle)) return false
+        prefs(ctx).edit().putLong("child_self_handle_ts_ms", minOf(recordTimeMs, System.currentTimeMillis())).apply()
+        return true
     }
 
     // Issue #1 Fix: Child phone automatically detects its own IG handle and syncs it to Parent phone!
@@ -2148,8 +2158,7 @@ object GuardEngine {
             "sync_child_handle" -> {
                 if (role == "parent") {
                     val detected = inner.optString("child_self_handle")
-                    if (detected.isNotEmpty()) {
-                        setChildSelfHandle(ctx, detected)
+                    if (detected.isNotEmpty() && applyChildHandleFromRecord(ctx, detected, msgTs)) {
                         addCheckpointLog(ctx, "CP4-ID", "已從子女手機同步子女 IG 帳號")
                         ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                     }
@@ -2204,11 +2213,10 @@ object GuardEngine {
                     val inserted = recordParentAlert(ctx, inner, "relay:$msgId")
                     sendDeliveryReceipt(ctx,inner.optString("event_id"),inner.optBoolean("receipt_requested"))
                     if (!inserted) return RelayConsumption.CONSUMED
-                    // Only a newly stored record: a resent older one must not set the handle back.
+                    // Only a newly stored record, and only one newer than the record that set the stored handle.
+                    // A captured message's ts_ms is the message's own time; its handle was read at captured_at_ms (the gate's time field).
                     val childSelf = inner.optString("child_self_handle")
-                    if (childSelf.isNotEmpty()) {
-                        setChildSelfHandle(ctx, childSelf)
-                    }
+                    if (childSelf.isNotEmpty()) applyChildHandleFromRecord(ctx, childSelf, if (msgType == "captured_message") inner.optLong("captured_at_ms") else msgTs)
                     val reason = inner.optString("reason")
                     // A sign of life: a verified record, or any record of a child without a pinned key (5.2 pairing, not verified).
                     if (reason in setOf("heartbeat_ok", "pairing_verified", "tamper_attempt", "test_alert") && (verified != null || pinned == null)) {

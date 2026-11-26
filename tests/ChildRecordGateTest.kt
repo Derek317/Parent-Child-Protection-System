@@ -221,6 +221,47 @@ class ChildRecordGateTest {
         assertEquals(2, stored())
     }
 
+    private fun handleSync(name: String, ts: Long) = JSONObject().put("type", "sync_child_handle").put("child_self_handle", name).put("ts_ms", ts).put("time", "x")
+        .put("scope", scope).put("command_id", UUID.randomUUID().toString())
+
+    /** An older record arriving for the first time after a newer one (alert or signed handle sync) does not set the handle back. */
+    @Test fun anOlderRecordArrivingAfterANewerOneDoesNotSetTheChildHandleBack() {
+        val now = System.currentTimeMillis()
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(heartbeat(ts = now - 2_000, reason = "test_alert").put("child_self_handle", "first"))))
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(heartbeat(ts = now - 1_000, reason = "test_alert").put("child_self_handle", "newer"))))
+        assertEquals("a newer record still updates", "newer", GuardEngine.getChildSelfHandle(ctx))
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(heartbeat(ts = now - 5_000, reason = "test_alert").put("child_self_handle", "older"))))
+        assertEquals("newer", GuardEngine.getChildSelfHandle(ctx)); assertEquals(3, stored())
+        // A signed handle sync is ordered only against other syncs by the gate; against the alert's time it is older.
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(handleSync("older_sync", now - 3_000))))
+        assertEquals("newer", GuardEngine.getChildSelfHandle(ctx))
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(handleSync("newest_sync", now))))
+        assertEquals("newest_sync", GuardEngine.getChildSelfHandle(ctx))
+        // A captured message of an old chat message: its handle was read at capture time (captured_at_ms), not at ts_ms.
+        val policy = UUID.randomUUID().toString(); prefs.edit().putString("capture_policy_id", policy).commit()
+        val captured = ConversationCapture.record(CapturedText("stranger", "hello", "incoming", author = "stranger", messageTime = now - 86_400_000L), now + 1, false, false)
+            .put("policy_id", policy).put("child_self_handle", "captured_now")
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(captured)))
+        assertEquals("captured_now", GuardEngine.getChildSelfHandle(ctx))
+    }
+
+    /** After an upgrade the handle has no stored time: the first record with a handle is taken, whatever its time. */
+    @Test fun aStoredHandleWithoutItsTimeIsReplacedByTheFirstRecordWithAHandle() {
+        GuardEngine.setChildSelfHandle(ctx, "from_before"); assertFalse(prefs.contains("child_self_handle_ts_ms"))
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(heartbeat(ts = System.currentTimeMillis() - 86_400_000L, reason = "test_alert").put("child_self_handle", "first_record"))))
+        assertEquals("first_record", GuardEngine.getChildSelfHandle(ctx)); assertTrue(prefs.contains("child_self_handle_ts_ms"))
+    }
+
+    /** A 5.2 pairing (no pinned key) sends an unsigned handle sync with ts_ms: the same rule applies to it. */
+    @Test fun aLegacyHandleSyncFollowsTheSameOrder() {
+        prefs.edit().remove("pinned_child_key").commit()
+        val now = System.currentTimeMillis()
+        assertEquals(RelayConsumption.CONSUMED, deliver(legacyControl(JSONObject().put("type", "sync_child_handle").put("child_self_handle", "newer").put("ts_ms", now).put("time", "x"))))
+        assertEquals("newer", GuardEngine.getChildSelfHandle(ctx))
+        assertEquals(RelayConsumption.CONSUMED, deliver(legacyControl(JSONObject().put("type", "sync_child_handle").put("child_self_handle", "older").put("ts_ms", now - 60_000).put("time", "x"))))
+        assertEquals("newer", GuardEngine.getChildSelfHandle(ctx))
+    }
+
     private fun relayTakesEverythingQueued() { for (frame in FamilyEvidence(ctx).use { it.due(scope, Long.MAX_VALUE, "parent") }) GuardEngine.recordRelayAcceptance(ctx, scope, frame) }
 
     /** Remote reset of a pinned child: once the relay holds it, K is unpinned and nothing later "from" that child is taken. */
