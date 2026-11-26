@@ -54,6 +54,25 @@ class RelayRetirementTest {
             assertFalse("not described as a connection problem",lastMessage.contains("連線"))
         }
     }
+    /** A slow room deletion (up to 15 s each, 8 at app start) must not hold the single relay thread that sends and receives. */
+    @Test fun aHeldRoomDeletionDoesNotBlockTheRelayThread(){
+        val arrived=CountDownLatch(1);val release=CountDownLatch(1)
+        MockWebServer().use{server->
+            server.dispatcher=object:okhttp3.mockwebserver.Dispatcher(){
+                override fun dispatch(request:okhttp3.mockwebserver.RecordedRequest):MockResponse{arrived.countDown();release.await(20,TimeUnit.SECONDS);return MockResponse().setResponseCode(204)}
+            }
+            server.start()
+            val done=CountDownLatch(1)
+            try {
+                CloudRelay.retireRoom(ctx,server.url("/").toString().trimEnd('/')){_,_->done.countDown()}
+                assertTrue("DELETE in flight",arrived.await(5,TimeUnit.SECONDS))
+                val relay=CloudRelay::class.java.getDeclaredField("executor").apply{isAccessible=true}.get(CloudRelay) as java.util.concurrent.ScheduledExecutorService
+                // Every send and receive is a task on this executor (publish, incoming, reconnect).
+                relay.submit{}.get(2,TimeUnit.SECONDS)
+            } finally {release.countDown()}
+            assertTrue("retirement still completes",done.await(15,TimeUnit.SECONDS))
+        }
+    }
     @Test fun otherFailuresSayPlainlyThatTheRelayDidNotConfirm(){
         MockWebServer().use{server->server.enqueue(MockResponse().setResponseCode(503));server.start()
             assertFalse(retire(server.url("/").toString().trimEnd('/')))

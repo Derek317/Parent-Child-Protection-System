@@ -8,6 +8,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -27,6 +28,8 @@ object CloudRelay {
     /** The relay base URL; tests point both phones at a local fake relay (debug builds allow http to localhost). */
     @Volatile internal var endpoint:String=BuildConfig.RELAY_BASE_URL
     private val executor=ScheduledThreadPoolExecutor(1){task->Thread(task,"ig-guard-relay").apply{isDaemon=true}}.apply{removeOnCancelPolicy=true}
+    /** Room deletions (up to 15 s each) run here, one at a time in call order, so they never hold up sending and receiving. */
+    private val retirer=Executors.newSingleThreadExecutor{task->Thread(task,"ig-guard-relay-retire").apply{isDaemon=true}}
     private val client=OkHttpClient.Builder().connectTimeout(8,TimeUnit.SECONDS).readTimeout(0,TimeUnit.SECONDS)
         .pingInterval(60,TimeUnit.SECONDS).build()
     private var active:Connection?=null
@@ -53,7 +56,7 @@ object CloudRelay {
             val url=socket.replaceFirst("wss://","https://").replaceFirst("ws://","http://")
             request=Request.Builder().url(url).delete().header("Authorization",GuardEngine.relayAuthorization(ctx,token ?: origin.second)).build()
         } catch(_:Exception){onResult(null,"未能準備中繼刪除請求；目前配對保留。");return}
-        executor.execute {
+        retirer.execute {
             if(GuardEngine.captureRelaySession(ctx)!=origin){onResult(null,"配對已變更，刪除請求已停止。");return@execute}
             try {
                 client.newBuilder().readTimeout(12,TimeUnit.SECONDS).callTimeout(15,TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
