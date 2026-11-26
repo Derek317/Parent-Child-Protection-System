@@ -349,7 +349,8 @@ internal object InstagramExport {
             val teen = when {
                 global != null && global in c.people -> global
                 c.json && c.listed.size == 2 && c.listed.all { it in c.people } -> c.listed[1]   // the first-listed participant is the other person
-                c.people.size == 2 && global == null -> throw Failure(ImportResult.TEEN_UNKNOWN)
+                // A guess by count missing from a two-person thread may be a busy friend: that thread could be a chat, so no guess.
+                c.people.size == 2 && (global == null || byFolder == null && child == null) -> throw Failure(ImportResult.TEEN_UNKNOWN)
                 else -> null   // with the teen known, a thread without them is one they never wrote in
             }
             // One other person: a one-to-one chat, all incoming if the teen never answered. A lone sender with the teen unknown may be the teen.
