@@ -147,6 +147,11 @@ class DeploymentIsolation(unittest.TestCase):
         self.assertEqual('ig-guard-relay-deploy', JOBS['relay-deploy']['concurrency']['group'])
         self.assertFalse(JOBS['relay-deploy']['concurrency']['cancel-in-progress'])
 
+    def test_hotfix_steps_say_to_rerun_a_superseded_deploy(self):
+        # The shared deploy group keeps one pending run: a newer push cancels a queued hotfix deploy.
+        doc = (REPO / 'docs/cloudflare-relay-setup.md').read_text()
+        self.assertRegex(doc, r'hotfix tag.s `relay-deploy` was cancelled or superseded.*re-run that tag.s workflow')
+
     def test_release_requires_successful_tests_and_deploy_and_not_always(self):
         condition = JOBS['release']['if']
         self.assertNotIn('always()', condition)
