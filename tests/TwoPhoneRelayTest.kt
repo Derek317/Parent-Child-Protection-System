@@ -242,8 +242,8 @@ class TwoPhoneRelayTest {
         val p = Phones(); p.upToDigits()
         val digits = p.digits
         assertTrue(p.child.confirm())
-        settle(1_000)
-        assertTrue("the child waits for the parent (409)", relay.refusals.contains("child:409"))
+        // Wait for the 409 rather than a fixed 1 s: a slow CI runner may not have made the child's first request by then.
+        waitUntil("the child waits for the parent (409)") { synchronized(relay) { relay.refusals.contains("child:409") } }
         assertTrue(p.parent.enterDigits(digits)); assertTrue(p.parent.accept())
         assertPaired(p)
     }
