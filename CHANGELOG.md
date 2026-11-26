@@ -2,7 +2,7 @@
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 
-Version 6.0.3 fixes eleven problems found in a second audit; all were present in 6.0 or earlier. Full notes, with what is not fixed and what was not tested: [6.0.3 release notes](docs/releases/6.0.3.md). Version code: 100 plus the GitHub Actions run number of the release run; the installed app shows it. Terms revision `2026-11-26-v9`, unchanged, so no notice appears. A phone cannot go back to 6.0.2 afterwards without clearing the app's data (database format 10).
+Version 6.0.3 fixes eleven problems found in a second audit; all were present in 6.0 or earlier. Full notes, with what is not fixed and what was not tested: [6.0.3 release notes](docs/releases/6.0.3.md). Version code: 100 plus the GitHub Actions run number of the release run; the installed app shows it. Terms revision `2026-11-26-v10`, unchanged, so no notice appears. A phone cannot go back to 6.0.2 afterwards without clearing the app's data (database format 10).
 
 - Parent: the records-not-delivered warning no longer comes early; a refused multi-part record no longer keeps its parts; the child's own account name is taken only from a newer record; "Add a child" shows an error where it crashed when the signing key cannot be loaded.
 - Both phones: the list of relay delivery numbers, which never caught a repeat, is removed; retiring a pairing room no longer holds up sending and receiving; the password check no longer freezes the unlock page and the role-change sheet.

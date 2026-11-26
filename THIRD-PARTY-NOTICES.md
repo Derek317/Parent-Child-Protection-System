@@ -41,7 +41,7 @@ SOFTWARE.
 - Licence: Apache License, Version 2.0. The model page states `apache-2.0`, and the repository's `LICENSE` file (https://huggingface.co/Qwen/Qwen3-1.7B/blob/main/LICENSE) is the Apache License 2.0 text with the line "Copyright 2024 Alibaba Cloud" in its appendix. Checked on 20 November 2026. Full licence text: https://www.apache.org/licenses/LICENSE-2.0.
 - NOTICE file: the Qwen3-1.7B repository has no NOTICE file (checked on 20 November 2026), so section 4(d) of the licence adds no notice to carry.
 - **Modified work.** The model shipped with the app, `qwen3-1.7b-beacon-Q4_K_M.gguf` ("Beacon"), is not the original Qwen3 1.7B. The developer fine-tuned it for chat risk scoring and quantised it to 4 bits (GGUF `Q4_K_M`). Qwen and Alibaba Cloud did not make, review or endorse Beacon.
-- Beacon's own training data (invented chats, a small number of real conversations, PAN-12 research conversations and the developer's own chats) is not covered by the Apache licence above and is not distributed; see the [Terms](docs/ig-guard-terms-of-service.md), section 2C.
+- Beacon's own training data (invented chats, PAN-12 research conversations, the only real grooming conversations used, and the developer's own ordinary chats) is not covered by the Apache licence above and is not distributed; see the [Terms](docs/ig-guard-terms-of-service.md), section 2C.
 
 Copyright 2024 Alibaba Cloud
 
