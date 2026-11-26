@@ -359,6 +359,24 @@ class PairingGuardTest {
             settle{GuardEngine.getRole(ctx)=="unconfigured"}
         } finally {c.pause().stop().destroy()}
     }
+    /** The app died between the parent identity's "pending" marker and its key: "Add a child" shows the existing key error instead of
+     *  crashing, and the identity is still refused, never silently replaced (FamilySecurity.loadOrCreateParentIdentity). */
+    @Test fun addAChildWithAnInterruptedParentIdentityShowsTheKeyErrorInsteadOfCrashing() {
+        GuardEngine.setRole(ctx,"parent");GuardEngine.setPin(ctx,"ParentPrivate928!")
+        TestKeyStore.privateKeys.clear();TestKeyStore.certificates.clear()
+        ctx.noBackupFilesDir.listFiles()?.filter{it.name.startsWith("ig_guard.parent_signing.")}?.forEach{it.delete()}
+        java.io.File(ctx.noBackupFilesDir,"ig_guard.parent_signing.ec.v1.initialized").writeText("ig_guard.parent_signing.ec.v1\npending")
+        prefs.edit().remove("parent_signing_public").remove("parent_signing_private").commit();GuardEngine.forgetParentIdentityCache()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            MainActivity::class.java.getDeclaredMethod("showParentPairingSheet").apply{isAccessible=true}.invoke(a)
+            val sheet=ShadowDialog.getLatestDialog().window!!.decorView
+            assertTrue("the existing key error",shows(sheet,"未能使用此手機的簽署金鑰。\nThis phone's signing key is unavailable."))
+            assertNull("no QR",sheet.findViewWithTag<View>("pairing_qr"))
+            assertTrue("no parent key was made",TestKeyStore.privateKeys.keys.none{it.startsWith("ig_guard.parent_signing")})
+            try{FamilySecurity.loadOrCreateParentIdentity(ctx,null,null);fail("still refused")}catch(_:SecurityException){}
+        } finally {c.pause().stop().destroy()}
+    }
     // ---- F9(b): one rate-limited alert, however often another app fires the link ----
     private fun fire(a:MainActivity,i:FamilySecurity.Invite)=MainActivity::class.java.getDeclaredMethod("onNewIntent",Intent::class.java).apply{isAccessible=true}.invoke(a,Intent(Intent.ACTION_VIEW,link(i)))
     @Test fun repeatedLinksAtALockedChildRaiseOneRateLimitedAlert() {

@@ -4130,7 +4130,11 @@ class MainActivity : Activity() {
             var link: ParentPairingLink? = null
             link = ParentPairingLink(this@MainActivity, { link?.let { if (parentPairing === it && !isDestroyed) fillParentPairing(body, dialog, it, t) } })
             parentPairing = link
-            link.begin()
+            try { link.begin() } catch (_: Exception) {
+                // The parent signing key cannot be loaded (e.g. its first creation was interrupted): say so; nothing is replaced.
+                addView(stateNote(Note.ERROR, parentCancelText(Pairing.CancelReason.KEY_UNAVAILABLE), t, cardTag = "pairing_stopped"))
+                addView(actionButton("關閉 · Close", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() })
+            }
         }
     }
     private fun parentCancelText(reason: Pairing.CancelReason): String = when (reason) {
