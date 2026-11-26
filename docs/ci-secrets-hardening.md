@@ -35,7 +35,7 @@ Other tag names (for example `foo`) are treated like a branch: unsigned, nothing
 
 ## Step 3. Protect `main` and the release tags
 
-1. **Settings → Rules → Rulesets → New branch ruleset**: target `main`; enable **Restrict deletions**, **Block force pushes**, **Require a pull request before merging** (at least 1 approval if there is a second person; otherwise at least require the PR) and **Require status checks** (`relay-test`, `build`). Add yourself as the only bypass actor if needed.
+1. **Settings → Rules → Rulesets → New branch ruleset**: target `main`; enable **Restrict deletions**, **Block force pushes**, **Require a pull request before merging** (at least 1 approval if there is a second person; otherwise at least require the PR) and **Require status checks** (`relay-test`, `app-test`, `build`). List `app-test` itself: a skipped `build` counts as passed, so failed app tests could otherwise still merge. Add yourself as the only bypass actor if needed.
 2. **New tag ruleset**: target the patterns `[0-9]*.[0-9]*`; enable **Restrict creations**, **Restrict updates** and **Restrict deletions**, with only you as bypass actor. This is what stops other contributors from creating a release or hotfix tag, which would sign and publish.
 3. Restrict who has **write** access under **Settings → Collaborators and teams**. Anyone with write access can push branches and edit the workflow on them.
 4. Settings → Actions → General: set **Fork pull request workflows** to require approval, and **Workflow permissions** to read-only (the workflow already declares `contents: read` and only the release job gets write).
