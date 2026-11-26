@@ -57,7 +57,7 @@ class ScreenCaptureConnectionTest {
                 .putString("parent_command_public_key",FamilySecurity.newSigningIdentity().publicKey)
                 .putString("capture_policy_id",id).putString("capture_local_ack_id",id).commit()
         }
-        val root=node("",Rect(0,0,1000,2000))
+        val root=node("",Rect(0,0,1000,2000)).apply{packageName="com.instagram.android"}
         val nodes=mutableListOf(node(header,Rect(80,80,400,160)).apply{viewIdResourceName="com.instagram.android:id/action_bar_title"},
             node(body,Rect(30,composerY-160,420,composerY-100)),
             node(draft,Rect(30,composerY,970,composerY+80),editable=true,hint=hint))

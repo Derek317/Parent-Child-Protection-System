@@ -2722,7 +2722,8 @@ class IgAccessibilityService : AccessibilityService() {
         GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
 
         val root = rootInActiveWindow ?: run{GuardEngine.cpLastCaptureStatus="Instagram 尚未提供可讀取的前景視窗";return}
-        if(root.packageName?.toString()?.let{it!=GuardEngine.INSTAGRAM_PKG}==true){GuardEngine.cpLastCaptureStatus="目前前景視窗不是 Instagram";return}
+        if(root.packageName?.toString()!=GuardEngine.INSTAGRAM_PKG){   // an unnamed window is not Instagram
+            GuardEngine.cpLastCaptureStatus="目前前景視窗不是 Instagram";return}
 
         val metrics = resources.displayMetrics
         val rootBounds=Rect();root.getBoundsInScreen(rootBounds)

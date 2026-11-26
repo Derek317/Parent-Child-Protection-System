@@ -86,6 +86,11 @@ class ChatReaderRegressionTest {
             return org.robolectric.shadow.api.Shadow.extract<ShadowAccessibilityService>(c.get()).globalActionsPerformed.toList()
         } finally {c.destroy()}
     }
+    @Test fun aWindowWithoutAPackageNameIsNotReadAsInstagram(){
+        assertTrue(scanActions(screen("Alice").apply{packageName=null}).isEmpty())
+        assertTrue(rows().isEmpty())
+        scanActions(screen("Alice"));assertEquals(listOf("hello"),rows().map{it.optString("text")})
+    }
     @Test fun muteAndQuietModeScreensAreNeitherLeftNorReported(){
         val root=node(x=0,y=0,r=1000,b=2000).apply{packageName="com.instagram.android"}
         shadowOf(root).addChild(node("Mute notifications",y=300));shadowOf(root).addChild(node("Quiet mode",y=500))
