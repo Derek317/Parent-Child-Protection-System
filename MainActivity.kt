@@ -2022,9 +2022,6 @@ object GuardEngine {
         val msgId = outer.optString("id")
         if (msgId.isEmpty()) return RelayConsumption.REJECTED
 
-        val existingSet = prefs(ctx).getStringSet("seen_msg_ids", emptySet()) ?: emptySet()
-        if (existingSet.contains(msgId)) return RelayConsumption.CONSUMED
-
         val innerStr = outer.optString("message")
         val token = getOrCreateFamilyToken(ctx)
         val decoded = decryptPayload(token, innerStr) ?: return RelayConsumption.REJECTED
@@ -2227,16 +2224,11 @@ object GuardEngine {
                 }
             }
         }
-        val updatedIds = HashSet<String>(existingSet)
-        updatedIds.add(msgId)
-        val persistedSet = if (updatedIds.size > 300) {
-            HashSet(updatedIds.toList().takeLast(300))
-        } else {
-            updatedIds
-        }
-        val editor=prefs(ctx).edit().putStringSet("seen_msg_ids", persistedSet)
+        // No list of relay delivery ids: the relay makes a new id for every delivery, so it never matched a repeat; each record
+        // type has its own repeat check. The remove deletes the list an install of 6.0.2 or earlier left behind.
+        val editor=prefs(ctx).edit().remove("seen_msg_ids")
         if(committedControlState!=null)editor.putString("control_state_json",committedControlState)
-        // The child's own control-record state is committed with the seen ids; its first verified record completes the pairing.
+        // The child's own control-record state is committed here; its first verified record completes the pairing.
         if(verified!=null){verified.newControlState?.let{editor.putString(CHILD_RECORD_STATE,it)};editor.remove(PAIRING_PENDING_MS)}
         check(editor.commit())
         if(controlId.isNotEmpty())FamilyEvidence(ctx).use{db->

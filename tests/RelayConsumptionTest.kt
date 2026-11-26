@@ -28,6 +28,17 @@ class RelayConsumptionTest {
             assertTrue(db.due(GuardEngine.getChannelTopic(ctx),Long.MAX_VALUE,"parent").any{it.kind=="receipt"})
         }
     }
+    /** The relay gives every delivery a fresh id: a record delivered twice is handled once by its own barrier, and no list of
+     *  delivery ids is kept (an upgraded install's old list is dropped). */
+    @Test fun aRedeliveryUnderANewRelayIdIsHandledOnceAndNoDeliveryIdsAreKept() {
+        val prefs=LocalVault.preferences(ctx)
+        prefs.edit().putStringSet("seen_msg_ids",setOf("left-by-an-older-build")).commit()
+        val payload=alert()
+        assertEquals(RelayConsumption.CONSUMED,GuardEngine.processIncomingRelayLine(ctx,outer(payload),"parent",null))
+        assertEquals(RelayConsumption.CONSUMED,GuardEngine.processIncomingRelayLine(ctx,outer(payload),"parent",null))
+        assertEquals(1,GuardEngine.getParentAlerts(ctx).count{it.optString("event_id")==payload.getString("event_id")})
+        assertFalse(prefs.contains("seen_msg_ids"))
+    }
     @Test fun aRealLocalStorageFailureLeavesCloudConsumptionRetryableWithoutReceipt() {
         FamilyEvidence(ctx).use{it.writableDatabase.execSQL("DROP TABLE evidence")}
         assertEquals(RelayConsumption.RETRY,GuardEngine.processIncomingRelayLine(ctx,outer(alert()),"parent",null))
