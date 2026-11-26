@@ -2,6 +2,8 @@
 
 **Read this first.** The workflow now signs and deploys only on `main` and on release tags. That alone is **not a security boundary**. While the signing and Cloudflare secrets are still *repository* secrets, anyone who can push a branch can edit `.github/workflows/build-apk.yml` on that branch so that it reads them and sends them somewhere. GitHub runs the workflow file from the pushed branch. The boundary only exists once you finish the steps below in the GitHub website. Code cannot do them for you.
 
+**State on 26 November 2026, as shown by the owner's own settings page (not checked by any code).** The `relay-prod` environment exists and allows branch `main` and tags `*-hotfix.*`. It has no required reviewer and no wait timer, and administrators may bypass its rules. It holds no secrets and no variables, so the Cloudflare token the deploy uses is still a repository secret. Steps 1 and 2 below are therefore only partly done: the warning above still applies to the Cloudflare token, and a deploy starts without anyone approving it. The `release` environment was not shown and is not described here.
+
 Replace `OWNER/REPO` below with `Derek317/Parent-Child-Protection-System`.
 
 ## What the workflow does now
