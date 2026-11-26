@@ -209,6 +209,18 @@ class ChildRecordGateTest {
         assertEquals(0, stored()); assertEquals(0, notices())
     }
 
+    /** The child resends a record until it gets a receipt: an older alert delivered again must not set the child's handle back. */
+    @Test fun aRedeliveredOlderAlertDoesNotSetTheChildHandleBack() {
+        val now = System.currentTimeMillis()
+        val first = signed(heartbeat(ts = now - 2_000, reason = "test_alert").put("child_self_handle", "old"))
+        assertEquals(RelayConsumption.CONSUMED, deliver(first)); assertEquals("old", GuardEngine.getChildSelfHandle(ctx))
+        assertEquals(RelayConsumption.CONSUMED, deliver(signed(heartbeat(ts = now - 1_000, reason = "test_alert").put("child_self_handle", "new"))))
+        assertEquals("new", GuardEngine.getChildSelfHandle(ctx))
+        assertEquals(RelayConsumption.CONSUMED, deliver(JSONObject(first.toString())))      // record 1 again
+        assertEquals("a repeated record changes nothing", "new", GuardEngine.getChildSelfHandle(ctx))
+        assertEquals(2, stored())
+    }
+
     private fun relayTakesEverythingQueued() { for (frame in FamilyEvidence(ctx).use { it.due(scope, Long.MAX_VALUE, "parent") }) GuardEngine.recordRelayAcceptance(ctx, scope, frame) }
 
     /** Remote reset of a pinned child: once the relay holds it, K is unpinned and nothing later "from" that child is taken. */

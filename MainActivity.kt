@@ -2204,13 +2204,14 @@ object GuardEngine {
                         }
                         prefs(ctx).edit().putString("capture_child_ack_id",inner.getString("policy_id")).apply()
                     }
+                    val inserted = recordParentAlert(ctx, inner, "relay:$msgId")
+                    sendDeliveryReceipt(ctx,inner.optString("event_id"),inner.optBoolean("receipt_requested"))
+                    if (!inserted) return RelayConsumption.CONSUMED
+                    // Only a newly stored record: a resent older one must not set the handle back.
                     val childSelf = inner.optString("child_self_handle")
                     if (childSelf.isNotEmpty()) {
                         setChildSelfHandle(ctx, childSelf)
                     }
-                    val inserted = recordParentAlert(ctx, inner, "relay:$msgId")
-                    sendDeliveryReceipt(ctx,inner.optString("event_id"),inner.optBoolean("receipt_requested"))
-                    if (!inserted) return RelayConsumption.CONSUMED
                     val reason = inner.optString("reason")
                     // A sign of life: a verified record, or any record of a child without a pinned key (5.2 pairing, not verified).
                     if (reason in setOf("heartbeat_ok", "pairing_verified", "tamper_attempt", "test_alert") && (verified != null || pinned == null)) {
