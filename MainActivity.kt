@@ -3686,22 +3686,34 @@ class MainActivity : Activity() {
             val password = inputBox(t, "家長主密碼", "", isPassword = true, remember = false).apply { tag = "role_password" }
             addView(password)
             val error = label("", 13f, t.warmCoral); addView(error)
-            addView(actionButton("驗證並繼續", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
+            lateinit var verify: Button
+            verify = actionButton("驗證並繼續", t.btnPrimaryBg, t.btnPrimaryText, critical = true) {
                 error.setTextColor(color(t.warmCoral)) // errors; the progress line below switches to the status colour
                 val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this@MainActivity)
                 if (remaining > 0) { error.text = "輸入已鎖定，請等 $remaining 秒，或由家長手機遠端救援。"; return@actionButton }
-                if (GuardEngine.passwordCheckRunning.get()) { error.text = PASSWORD_CHECK_BUSY; return@actionButton }
-                val ok = GuardEngine.verifyParentPassword(this@MainActivity, password.text.toString())
-                GuardEngine.recordPasswordAttempt(this@MainActivity, ok)
-                if (!ok) { error.text = "家長主密碼不正確。"; password.error = "請重新輸入"; return@actionButton }
-                inputDrafts.remove("家長主密碼")
-                if (!announceLeaving) { dialog.dismiss(); onSuccess(); return@actionButton }
-                error.setTextColor(color(t.textSecondary)); error.text = "正在通知家長手機…"
+                if (!GuardEngine.passwordCheckRunning.compareAndSet(false, true)) { error.text = PASSWORD_CHECK_BUSY; return@actionButton }
+                val entered = password.text.toString()
+                fun checking(on: Boolean) { verify.isEnabled = !on; password.isEnabled = !on; verify.text = if (on) "核對中… · Checking…" else "驗證並繼續" }
+                checking(true)
+                // PBKDF2 takes seconds on older phones: off the main thread, as for the QR join (Join this family).
                 thread {
-                    GuardEngine.announceChildLeaving(this@MainActivity, 6_000L)
-                    runOnUiThread { if (!isDestroyed) { dialog.dismiss(); onSuccess() } }
+                    val ok = GuardEngine.verifyParentPassword(this@MainActivity, entered)
+                    runOnUiThread {
+                        GuardEngine.passwordCheckRunning.set(false)
+                        GuardEngine.recordPasswordAttempt(this@MainActivity, ok) // every attempt counts, even if the sheet was closed meanwhile
+                        if (isDestroyed || !dialog.isShowing) return@runOnUiThread
+                        if (!ok) { checking(false); error.text = "家長主密碼不正確。"; password.error = "請重新輸入"; return@runOnUiThread }
+                        inputDrafts.remove("家長主密碼")
+                        if (!announceLeaving) { dialog.dismiss(); onSuccess(); return@runOnUiThread }
+                        error.setTextColor(color(t.textSecondary)); error.text = "正在通知家長手機…"
+                        thread {
+                            GuardEngine.announceChildLeaving(this@MainActivity, 6_000L)
+                            runOnUiThread { if (!isDestroyed) { dialog.dismiss(); onSuccess() } }
+                        }
+                    }
                 }
-            })
+            }
+            addView(verify)
         }
     }
     private fun renderUi(animate: Boolean = false) {
@@ -5393,25 +5405,37 @@ class MainActivity : Activity() {
         val error = label("", 13f, t.warmCoral); rootContainer.addView(error)
         val lockout = GuardEngine.checkPasswordLockoutRemainingSec(this)
         if (lockout > 0) error.text = "輸入已鎖定，剩餘 $lockout 秒。"
-        rootContainer.addView(actionButton("驗證並暫時解鎖", t.btnPrimaryBg, t.btnPrimaryText) {
+        lateinit var verify: Button
+        verify = actionButton("驗證並暫時解鎖", t.btnPrimaryBg, t.btnPrimaryText) {
             val remaining = GuardEngine.checkPasswordLockoutRemainingSec(this)
             if (remaining > 0) { error.text = "請等 $remaining 秒後再試。"; return@actionButton }
             if (GuardEngine.passwordCheckRunning.get()) { error.text = PASSWORD_CHECK_BUSY; return@actionButton }
             val entered = input.text.toString().trim()
-            when {
-                GuardEngine.redeem15MinUnlockCode(this, entered) -> {
-                    GuardEngine.recordPasswordAttempt(this, true); GuardEngine.grantTemporaryUnlock(this, 15 * 60_000L)
-                    input.setText("")
-                    GuardEngine.sendAlertFromChild(this, "unlock_used", "@${GuardEngine.getChildSelfHandle(this).ifEmpty { "child" }}", "子女手機已使用 6 位臨時解鎖碼解鎖 15 分鐘", bypassDedupe = true)
-                    renderUi()
-                }
-                GuardEngine.verifyParentPassword(this, entered) -> {
-                    GuardEngine.recordPasswordAttempt(this, true); GuardEngine.grantTemporaryUnlock(this, 3 * 60_000L)
+            if (GuardEngine.redeem15MinUnlockCode(this, entered)) {
+                GuardEngine.recordPasswordAttempt(this, true); GuardEngine.grantTemporaryUnlock(this, 15 * 60_000L)
+                input.setText("")
+                GuardEngine.sendAlertFromChild(this, "unlock_used", "@${GuardEngine.getChildSelfHandle(this).ifEmpty { "child" }}", "子女手機已使用 6 位臨時解鎖碼解鎖 15 分鐘", bypassDedupe = true)
+                renderUi()
+                return@actionButton
+            }
+            if (!GuardEngine.passwordCheckRunning.compareAndSet(false, true)) { error.text = PASSWORD_CHECK_BUSY; return@actionButton }
+            fun checking(on: Boolean) { verify.isEnabled = !on; input.isEnabled = !on; verify.text = if (on) "核對中… · Checking…" else "驗證並暫時解鎖" }
+            checking(true)
+            // PBKDF2 takes seconds on older phones: off the main thread, as for the QR join (Join this family).
+            thread {
+                val ok = GuardEngine.verifyParentPassword(this, entered)
+                runOnUiThread {
+                    GuardEngine.passwordCheckRunning.set(false)
+                    GuardEngine.recordPasswordAttempt(this, ok) // every attempt counts, even if the activity is gone
+                    // A refresh may rebuild this page meanwhile: the unlock is still granted, as before (a stale view's text is harmless).
+                    if (isDestroyed) return@runOnUiThread
+                    if (!ok) { checking(false); error.text = "解鎖碼或家長主密碼不正確。"; input.error = "請重新輸入"; return@runOnUiThread }
+                    GuardEngine.grantTemporaryUnlock(this, 3 * 60_000L)
                     input.setText(""); renderUi()
                 }
-                else -> { GuardEngine.recordPasswordAttempt(this, false); error.text = "解鎖碼或家長主密碼不正確。"; input.error = "請重新輸入" }
             }
-        })
+        }
+        rootContainer.addView(verify)
         unlockTimerText = label("", 16f, t.accentSeafoam, true, topPad = 24); rootContainer.addView(unlockTimerText)
         if (GuardEngine.isTemporarilyUnlocked(this)) rootContainer.addView(textAction("立即重新上鎖") { GuardEngine.grantTemporaryUnlock(this, 0); renderUi() })
     }

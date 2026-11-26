@@ -119,6 +119,9 @@ class UnlockClockTest {
             fun submit(text:String){
                 all(a.window.decorView).filterIsInstance<EditText>().first().setText(text)
                 all(a.window.decorView).filterIsInstance<Button>().first{it.text.toString()=="驗證並暫時解鎖"}.performClick()
+                // A text that is not a valid code goes on to the password check, which runs off the main thread.
+                val end=System.currentTimeMillis()+20_000
+                do org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle() while(GuardEngine.passwordCheckRunning.get() && System.currentTimeMillis()<end && run{Thread.sleep(5);true})
             }
             submit(code)
             assertTrue(GuardEngine.isTemporarilyUnlocked(ctx))

@@ -830,7 +830,9 @@ class ScoresChildUiTest {
         val root = ShadowDialog.getLatestDialog().window!!.decorView
         UiSupport.all(root).filterIsInstance<android.widget.EditText>().single { it.tag == "role_password" }.setText(password)
         UiSupport.all(root).filterIsInstance<android.widget.Button>().single { it.text.toString() == "驗證並繼續" }.performClick()
-        shadowOf(Looper.getMainLooper()).idle()
+        // The password check runs off the main thread; its result is handled on it.
+        val end = System.currentTimeMillis() + 20_000
+        do shadowOf(Looper.getMainLooper()).idle() while (GuardEngine.passwordCheckRunning.get() && System.currentTimeMillis() < end && run { Thread.sleep(5); true })
     }
     @Test fun importRowOpensTheSystemPickerForAnyFileOnlyAfterTheParentPassword() {
         LocalVault.preferences(ctx).edit().putString("parent_password_verifier", parentVerifier).commit()

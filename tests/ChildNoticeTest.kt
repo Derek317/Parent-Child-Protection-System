@@ -63,7 +63,8 @@ class ChildNoticeTest {
             call(a,"navigateTo","role");call(a,"selectEntryRole","parent");call(a,"continueEntryRole")
             val sheet=ShadowDialog.getLatestDialog().window!!.decorView
             all(sheet).filterIsInstance<EditText>().first{it.tag=="role_password"}.setText("WrongPassword928!")
-            all(sheet).filterIsInstance<Button>().first{it.text.toString()=="驗證並繼續"}.performClick();idle()
+            all(sheet).filterIsInstance<Button>().first{it.text.toString()=="驗證並繼續"}.performClick()
+            waitFor("password check"){!GuardEngine.passwordCheckRunning.get()}
             assertEquals("child",GuardEngine.getRole(ctx));assertTrue(queued().none{it.optString("reason")=="tamper_attempt"})
         } finally {c.pause().stop().destroy()}
     }

@@ -275,7 +275,7 @@ class PairingGuardTest {
             assertEquals("after the check, the next press is an attempt again",2,prefs.getInt("pw_failed_count",0))
         } finally {c.pause().stop().destroy()}
     }
-    /** The unlock page and the role-switch sheet check on the main thread: they refuse while a join check runs, so attempts stay in order. */
+    /** The unlock page and the role-switch sheet refuse while a join check runs, so attempts stay in order. */
     @Test fun unlockPageAndRoleSheetMakeNoAttemptWhileAJoinCheckRuns() {
         pairedChild()
         val parent=FamilySecurity.newSigningIdentity()
@@ -305,9 +305,58 @@ class PairingGuardTest {
             settle{!GuardEngine.passwordCheckRunning.get()}
             assertEquals("only the join attempt",1,prefs.getInt("pw_failed_count",0))
             ShadowDialog.getShownDialogs().forEach{it.dismiss()}
-            assertTrue("the role sheet checks again",shows(roleSheet("WrongPassword928!"),"家長主密碼不正確。"));assertEquals(2,prefs.getInt("pw_failed_count",0))
+            val again=roleSheet("WrongPassword928!");settle{!GuardEngine.passwordCheckRunning.get()}
+            assertTrue("the role sheet checks again",shows(again,"家長主密碼不正確。"));assertEquals(2,prefs.getInt("pw_failed_count",0))
             ShadowDialog.getShownDialogs().forEach{it.dismiss()}
-            unlock("ParentPrivate928!");assertTrue("the unlock page works again",GuardEngine.isTemporarilyUnlocked(ctx))
+            unlock("ParentPrivate928!");settle{!GuardEngine.passwordCheckRunning.get()}
+            assertTrue("the unlock page works again",GuardEngine.isTemporarilyUnlocked(ctx))
+        } finally {c.pause().stop().destroy()}
+    }
+    /** The unlock page checks the parent password off the main thread, as the Join button does: disabled while checking. */
+    @Test fun unlockPagePasswordPressWhileCheckedIsIgnored() {
+        pairedChild()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            MainActivity::class.java.getDeclaredMethod("navigateTo",String::class.java).apply{isAccessible=true}.invoke(a,"unlock")
+            val box=all(a.window.decorView).filterIsInstance<android.widget.EditText>().first()
+            val verify=all(a.window.decorView).filterIsInstance<Button>().first{it.text.toString()=="驗證並暫時解鎖"}
+            box.setText("WrongPassword928!");verify.performClick()
+            assertFalse("the button is disabled while checking",verify.isEnabled);assertFalse("the input too",box.isEnabled)
+            assertEquals("核對中… · Checking…",verify.text.toString())
+            verify.performClick()
+            settle{verify.isEnabled}
+            assertEquals("one attempt, recorded once",1,prefs.getInt("pw_failed_count",0))
+            assertTrue("the same error",shows(a.window.decorView,"解鎖碼或家長主密碼不正確。"))
+            assertEquals("請重新輸入",box.error?.toString());assertTrue(box.isEnabled)
+            assertEquals("驗證並暫時解鎖",verify.text.toString());assertFalse(GuardEngine.isTemporarilyUnlocked(ctx))
+            box.setText("ParentPrivate928!");verify.performClick()
+            assertFalse("not unlocked before the check finishes",GuardEngine.isTemporarilyUnlocked(ctx))
+            settle{GuardEngine.isTemporarilyUnlocked(ctx)}
+            assertEquals(0,prefs.getInt("pw_failed_count",0))
+        } finally {c.pause().stop().destroy()}
+    }
+    /** The role-change sheet checks the parent password off the main thread, as the Join button does: disabled while checking. */
+    @Test fun roleSheetPasswordPressWhileCheckedIsIgnored() {
+        pairedChild()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        fun call(name:String,vararg args:Any?){MainActivity::class.java.declaredMethods.first{it.name==name && it.parameterCount==args.size}.apply{isAccessible=true}.invoke(a,*args)}
+        try {
+            call("navigateTo","role");call("selectEntryRole","parent");call("continueEntryRole")
+            val sheet=ShadowDialog.getLatestDialog().window!!.decorView
+            val box=all(sheet).filterIsInstance<android.widget.EditText>().first{it.tag=="role_password"}
+            val verify=all(sheet).filterIsInstance<Button>().first{it.text.toString()=="驗證並繼續"}
+            box.setText("WrongPassword928!");verify.performClick()
+            assertFalse("the button is disabled while checking",verify.isEnabled);assertFalse("the password box too",box.isEnabled)
+            assertEquals("核對中… · Checking…",verify.text.toString())
+            verify.performClick()
+            settle{verify.isEnabled}
+            assertEquals("one attempt, recorded once",1,prefs.getInt("pw_failed_count",0))
+            assertTrue("the same error",shows(sheet,"家長主密碼不正確。"))
+            assertEquals("請重新輸入",box.error?.toString());assertTrue(box.isEnabled)
+            assertEquals("驗證並繼續",verify.text.toString());assertEquals("child",GuardEngine.getRole(ctx))
+            box.setText("ParentPrivate928!");verify.performClick()
+            assertEquals("no change before the check finishes","child",GuardEngine.getRole(ctx))
+            settle{GuardEngine.getRole(ctx)=="unconfigured"}
         } finally {c.pause().stop().destroy()}
     }
     // ---- F9(b): one rate-limited alert, however often another app fires the link ----
