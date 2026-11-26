@@ -29,11 +29,14 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         private val openLock=Any()
         private const val DAY=86_400_000L
         private const val PENDING_TTL=3*DAY
+        @Volatile internal var contentLookups=0 // test-only: per-row body/payload fetches
     }
     private val app=ctx.applicationContext
     private val privateColumns=listOf("sender","conversation_key","conversation_label","account_label","body","payload")
     // Fetch the duplicate body separately so encrypted 1 MiB events still fit a CursorWindow.
     private val evidenceColumns="scope,id,sender,reason,stamp,payload,saved,help_seen,legacy,conversation_key,conversation_label,account_label,direction,review_state,kind,actionable,capture_order,sort_stamp,sort_order,sender_index,conversation_index"
+    // Search scans every row for body, so it reads body instead and fetches payload only for matches.
+    private val searchColumns=evidenceColumns.replace("payload","body")
     private fun purpose(scope:String,table:String,id:String,column:String):String = org.json.JSONArray(listOf("archive",scope,table,id,column)).toString()
     private fun seal(scope:String,table:String,id:String,column:String,value:String):String = LocalVault.seal(app,purpose(scope,table,id,column),value)
     private fun open(scope:String,table:String,id:String,column:String,value:String):String = LocalVault.open(app,purpose(scope,table,id,column),value)
@@ -44,9 +47,9 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     private fun Cursor.string(column:String):String = getString(getColumnIndexOrThrow(column))
     private fun Cursor.number(column:String):Long = getLong(getColumnIndexOrThrow(column))
     private fun Cursor.content(column:String):String {
-        val value=if(column=="body" && getColumnIndex(column)<0)readableDatabase.rawQuery(
-            "SELECT body FROM evidence WHERE scope=? AND id=?",arrayOf(string("scope"),string("id"))).use {
-            check(it.moveToFirst());it.getString(0)
+        val value=if(column in setOf("body","payload") && getColumnIndex(column)<0)readableDatabase.rawQuery(
+            "SELECT $column FROM evidence WHERE scope=? AND id=?",arrayOf(string("scope"),string("id"))).use {
+            contentLookups++;check(it.moveToFirst());it.getString(0)
         } else string(column)
         return open(string("scope"),"evidence",string("id"),column,value)
     }
@@ -357,7 +360,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         val order=if(q.conversationKey!=null)"sort_stamp DESC,sort_order DESC,id DESC" else "stamp DESC,capture_order DESC,id DESC"
         val offset=q.page.coerceAtLeast(0)*30L;val size=limit.coerceIn(1,61)
         val paging=if(q.text.isBlank())" LIMIT ? OFFSET ?" else ""
-        return readableDatabase.rawQuery("SELECT $evidenceColumns FROM evidence WHERE $where ORDER BY $order$paging",
+        return readableDatabase.rawQuery("SELECT ${if(q.text.isBlank())evidenceColumns else searchColumns} FROM evidence WHERE $where ORDER BY $order$paging",
             if(q.text.isBlank())args+arrayOf(size.toString(),offset.toString()) else args).use { c ->
             buildList {
                 var skipped=0L
@@ -374,7 +377,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             buildList{while(c.moveToNext())add(EvidenceContact(c.content("sender"),c.getInt(3),c.getInt(4),c.getLong(5)))}
         }.sortedWith(compareByDescending<EvidenceContact>{it.latest}.thenBy{it.sender}).drop(q.page.coerceAtLeast(0)*30).take(31)
         val groups=mutableMapOf<String,EvidenceContact>()
-        readableDatabase.rawQuery("SELECT $evidenceColumns FROM evidence WHERE $where",args).use { c ->
+        readableDatabase.rawQuery("SELECT $searchColumns FROM evidence WHERE $where",args).use { c ->
             while(c.moveToNext())if(matches(c,q)) {
                 val key=c.string("sender_index");val previous=groups[key]
                 groups[key]=EvidenceContact(previous?.sender?:c.content("sender"),(previous?.count?:0)+1,
@@ -387,19 +390,26 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     fun conversations(scope:String,q:EvidenceQuery):List<ConversationSummary> {
         val (where,args)=where(scope,q)
         if(q.text.isBlank())return readableDatabase.rawQuery("SELECT scope,id,conversation_index,conversation_key,conversation_label,account_label,COUNT(*),SUM(CASE WHEN actionable=1 AND review_state<>'reviewed' THEN 1 ELSE 0 END),MAX(stamp),GROUP_CONCAT(DISTINCT CASE WHEN actionable=1 THEN reason END),MAX(CASE WHEN reason='sexual_or_grooming_content' THEN 2 ELSE 1 END) FROM evidence WHERE $where GROUP BY conversation_index",args).use { c ->
-            buildList {while(c.moveToNext()) {
+            // Priority and MAX(stamp) are clear; only the key tiebreak needs decryption, so decrypt just the page plus rows tied at its edges.
+            val ranked=buildList{while(c.moveToNext())add(Triple(c.position,if(q.section=="review")c.getInt(10) else 0,c.getLong(8)))}
+                .sortedWith(compareByDescending<Triple<Int,Int,Long>>{it.second}.thenByDescending{it.third})
+            fun tied(a:Int,b:Int)=ranked[a].second==ranked[b].second && ranked[a].third==ranked[b].third
+            val offset=q.page.coerceAtLeast(0)*30
+            var from=minOf(offset,ranked.size);var to=minOf(offset+31,ranked.size)
+            if(from<to){while(from>0 && tied(from-1,from))from--;while(to<ranked.size && tied(to,to-1))to++}
+            ranked.subList(from,to).map { (position) -> c.moveToPosition(position)
                 val last=readableDatabase.rawQuery("SELECT $evidenceColumns FROM evidence WHERE $where AND conversation_index=? ORDER BY sort_stamp DESC,sort_order DESC,id DESC LIMIT 1",args+arrayOf(c.string("conversation_index"))).use {
                     check(it.moveToFirst());val payload=JSONObject(it.content("payload"))
                     Triple(it.content("body"),payload.optString("conversation_kind","unknown"),ConversationCapture.unidentifiedLegacyLabel(payload)) to payload.optBoolean("content_free")
                 }
-                add(c.getInt(10) to ConversationSummary(c.content("conversation_key"),c.content("conversation_label"),c.content("account_label"),
-                    c.getInt(6),c.getInt(7),c.getLong(8),last.first.first,c.getString(9)?.split(",")?:emptyList(),last.first.second,last.first.third,last.second))
-            }}
-        }.sortedWith(compareByDescending<Pair<Int,ConversationSummary>>{if(q.section=="review")it.first else 0}
-            .thenByDescending{it.second.latest}.thenBy{it.second.key}).drop(q.page.coerceAtLeast(0)*30).take(31).map{it.second}
+                c.getInt(10) to ConversationSummary(c.content("conversation_key"),c.content("conversation_label"),c.content("account_label"),
+                    c.getInt(6),c.getInt(7),c.getLong(8),last.first.first,c.getString(9)?.split(",")?:emptyList(),last.first.second,last.first.third,last.second)
+            }.sortedWith(compareByDescending<Pair<Int,ConversationSummary>>{if(q.section=="review")it.first else 0}
+                .thenByDescending{it.second.latest}.thenBy{it.second.key}).drop(offset-from).take(31).map{it.second}
+        }
         val groups=mutableMapOf<String,ConversationGroup>()
         val comparator=compareBy<EvidenceCursor>{it.stamp}.thenBy{it.order}.thenBy{it.id}
-        readableDatabase.rawQuery("SELECT $evidenceColumns FROM evidence WHERE $where ORDER BY sort_stamp DESC,sort_order DESC,id DESC",args).use { c ->
+        readableDatabase.rawQuery("SELECT $searchColumns FROM evidence WHERE $where ORDER BY sort_stamp DESC,sort_order DESC,id DESC",args).use { c ->
             while(c.moveToNext())if(matches(c,q)) {
                 val key=c.string("conversation_index");val previous=groups[key]
                 val position=EvidenceCursor(c.number("sort_stamp"),c.number("sort_order"),c.string("id"))

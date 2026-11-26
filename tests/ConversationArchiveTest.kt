@@ -144,4 +144,39 @@ class ConversationArchiveTest {
             assertEquals(listOf("z-first","a-second"),db.timeline("f",EvidenceQuery(conversationKey=first.getString("conversation_key"))).map{it.getString("_id")})
         }
     }
+    // 75 conversations, mixed priorities, only seven distinct stamps: page edges fall inside stamp ties, so the decrypted key decides.
+    private fun pagingFixture(db:FamilyEvidence)=(0 until 75).forEach { i ->
+        val r=ConversationCapture.record(CapturedText("partner $i",if(i%3==0)"send nudes" else "hello $i","incoming",author="partner $i",account="child",messageTime=5000L+i%7),6000L,i%3!=1,false)
+            .put("event_id","paging-$i")
+        assertTrue(db.append("f","paging-$i",r))
+    }
+    @Test fun conversationPagesKeepFullSortOrderWithMixedPrioritiesAndStampTies() {
+        FamilyEvidence(ctx).use { db ->
+            pagingFixture(db)
+            for((section,total) in listOf("review" to 50,"conversations" to 75)) {
+                fun page(p:Int,text:String="")=db.conversations("f",EvidenceQuery(text=text,section=section,page=p)).map{it.copy(categories=it.categories.sorted())}
+                // The search path still groups every matching row before paging; "partner" matches every sender.
+                for(p in 0..3)assertEquals("$section page $p",page(p,"partner"),page(p))
+                val full=(0..2).flatMap{page(it).take(30)}
+                assertEquals(total,full.map{it.key}.distinct().size)
+                assertEquals(full.sortedWith(compareByDescending<ConversationSummary>{if(section=="review" && "sexual_or_grooming_content" in it.categories)2 else 1}
+                    .thenByDescending{it.latest}.thenBy{it.key}),full)
+                assertEquals(setOf("sexual_or_grooming_content","stranger_message"),full.flatMap{it.categories}.toSet())
+                if(section=="conversations")for(edge in listOf(29,60))assertEquals(full[edge].latest,full[edge+1].latest)
+            }
+        }
+    }
+    @Test fun conversationPageAndSearchDoNotFetchEveryArchivedRow() {
+        FamilyEvidence(ctx).use { db ->
+            pagingFixture(db)
+            FamilyEvidence.contentLookups=0
+            assertEquals(31,db.conversations("f",EvidenceQuery(section="conversations")).size)
+            assertEquals(31,FamilyEvidence.contentLookups)
+            FamilyEvidence.contentLookups=0
+            assertEquals("hello 13",db.messages("f",EvidenceQuery(text="hello 13")).single().getString("text"))
+            assertEquals("partner 13",db.contacts("f",EvidenceQuery(text="hello 13")).single().sender)
+            assertEquals("hello 13",db.conversations("f",EvidenceQuery(text="hello 13")).single().preview)
+            assertEquals(2,FamilyEvidence.contentLookups) // one payload per matched message/conversation, none per scanned row
+        }
+    }
 }
