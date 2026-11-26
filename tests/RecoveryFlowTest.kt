@@ -97,8 +97,9 @@ class RecoveryFlowTest {
                 .setStyle(Notification.MessagingStyle(me).addMessage("You: send nudes",System.currentTimeMillis(),sender)).build()
             val posted=StatusBarNotification("com.instagram.android","com.instagram.android",1,null,0,0,0,notification,android.os.UserHandle.getUserHandleForUid(0),System.currentTimeMillis())
             c.get().onNotificationPosted(posted)
-            assertTrue(GuardEngine.isFlaggedOffender(ctx,"outsider"))
-            assertFalse(GuardEngine.isFlaggedOffender(ctx,"You"))
+            val queued=FamilyEvidence(ctx).use{db->db.due(GuardEngine.getChannelTopic(ctx),Long.MAX_VALUE).mapNotNull{GuardEngine.decryptPayload(GuardEngine.getOrCreateFamilyToken(ctx),it.wire)}}
+            assertEquals("outsider",queued.single{it.optString("reason")=="sexual_or_grooming_content"}.getString("sender"))
+            assertTrue("a keyword match alone flags no one",GuardEngine.getFlaggedOffenders(ctx).isEmpty())
         } finally { c.destroy();ProxySelector.setDefault(original) }
     }
 }

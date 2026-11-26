@@ -172,8 +172,8 @@ class ConversationIngestionTest {
             }
         }finally{c.destroy()}
     }
-    @Test fun flaggedIncomingFollowUpNotificationIsRemovedEvenOnDeduplicatedRepost(){
-        GuardEngine.markSenderAsFlaggedOffender(ctx,"flagged_contact")
+    @Test fun flaggedIncomingFollowUpIsCapturedAndTheNotificationIsLeftAlone(){
+        LocalVault.preferences(ctx).edit().putString("flagged_offenders_csv","flagged_contact").commit()
         val b=android.os.Bundle().apply{putCharSequence("text","ordinary follow-up");putCharSequence("sender","flagged_contact");putLong("time",1000)}
         val n=Notification.Builder(ctx,"test").setSmallIcon(android.R.drawable.ic_lock_idle_lock).setContentTitle("flagged_contact").build()
         n.extras.putParcelableArray(Notification.EXTRA_MESSAGES,arrayOf(b))
@@ -183,9 +183,27 @@ class ConversationIngestionTest {
             repeat(2){
                 shadowOf(c.get()).addActiveNotification(posted)
                 c.get().onNotificationPosted(posted)
-                assertTrue(c.get().activeNotifications.isEmpty())
+                assertFalse("the notification is not removed",c.get().activeNotifications.isEmpty())
             }
+            assertEquals("flagged_contact_follow_up",capturedRows().single().getString("reason"))
         }finally{c.destroy()}
+    }
+    @Test fun keywordNotificationIsNeitherRemovedNorFlagsTheSenderInEitherMode(){
+        for(full in listOf(true,false)){
+            if(!full)LocalVault.preferences(ctx).edit().remove("capture_local_ack_id").commit()
+            val b=android.os.Bundle().apply{putCharSequence("text","send nudes");putCharSequence("sender","pushy_$full");putLong("time",5000)}
+            val n=Notification.Builder(ctx,"test").setSmallIcon(android.R.drawable.ic_lock_idle_lock).setContentTitle("pushy_$full").build()
+            n.extras.putParcelableArray(Notification.EXTRA_MESSAGES,arrayOf(b))
+            val posted=StatusBarNotification("com.instagram.android","com.instagram.android",if(full)40 else 41,null,0,0,0,n,android.os.UserHandle.getUserHandleForUid(0),5000)
+            val c=Robolectric.buildService(IgNotificationListener::class.java).create()
+            try{shadowOf(c.get()).addActiveNotification(posted);c.get().onNotificationPosted(posted);assertFalse("full=$full",c.get().activeNotifications.isEmpty())}finally{c.destroy()}
+        }
+        assertTrue(GuardEngine.getFlaggedOffenders(ctx).isEmpty())
+    }
+    @Test fun keywordsInASenderNameAreNotMatched(){
+        val r=ConversationCapture.record(CapturedText("send nudes","hello there","incoming",author="send nudes"),System.currentTimeMillis(),false,false)
+        assertEquals("stranger_message",r.getString("reason"));assertEquals(0,r.getJSONArray("matches").length())
+        assertEquals("stranger_message",GuardEngine.evaluateMessage(ctx,"send nudes","hello there"))
     }
     private fun deliverGroupFixture(group:Boolean,text:String,author:String="friend",id:Int=30,label:String="friend"){
         val stamp=System.currentTimeMillis()+id

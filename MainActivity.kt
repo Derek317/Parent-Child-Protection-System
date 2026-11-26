@@ -1503,7 +1503,6 @@ object GuardEngine {
                     } finally {sql.endTransaction()}
                 }
                 RiskLocal.sendContentFreeAlerts(ctx,contentFreeAlerts,expectedSession)
-                accepted.filter{it.optBoolean("flag_partner")}.forEach{markSenderAsFlaggedOffender(ctx,it.optString("conversation_label"))}
             }
         } catch(e:Exception) {
             accepted.clear();cpLastHttpStatus="未能保留對話 · ${e.javaClass.simpleName} · 請保持畫面並重試"
@@ -1584,15 +1583,6 @@ object GuardEngine {
 
     fun getFlaggedOffenders(ctx: Context): Set<String> = storedHandles(ctx, "flagged_offenders_csv")
 
-    fun markSenderAsFlaggedOffender(ctx: Context, sender: String) {
-        val clean = sender.trim().lowercase(Locale.US).removePrefix("@")
-        if (clean.isEmpty() || clean in RESERVED_UI_HEADERS || clean == "instagram_dm" || isChildSelfHandle(ctx, clean)) return
-        val next = getFlaggedOffenders(ctx).toMutableSet()
-        if (next.add(clean)) {
-            prefs(ctx).edit().putString("flagged_offenders_csv", next.joinToString(",")).apply()
-        }
-    }
-
     fun isFlaggedOffender(ctx: Context, rawSender: String): Boolean {
         val offenders = getFlaggedOffenders(ctx)
         if (offenders.isEmpty()) return false
@@ -1656,8 +1646,8 @@ object GuardEngine {
         if (isNonMessageUiString(text)) return null
         if (isChildSelfHandle(ctx, senderTitle)) return null
 
-        if (SEXUAL_PATTERN.containsMatchIn(text) || SEXUAL_PATTERN.containsMatchIn(senderTitle)) {
-            markSenderAsFlaggedOffender(ctx, senderTitle)
+        // Keywords are matched in message text only, never in a name a sender chooses; a match alone never flags the contact.
+        if (SEXUAL_PATTERN.containsMatchIn(text)) {
             return "sexual_or_grooming_content"
         }
 
@@ -2575,15 +2565,6 @@ class IgNotificationListener : NotificationListenerService() {
             fromNotification = true,
             expectedSession = observationSession
         )
-
-        if ((reason == "sexual_or_grooming_content" || GuardEngine.isFlaggedOffender(this, resolvedSender)) &&
-            !GuardEngine.isTemporarilyUnlocked(this)
-        ) {
-            try {
-                cancelNotification(sbn.key)
-            } catch (_: Exception) {
-            }
-        }
     }
 
     private fun captureFullNotification(sbn:StatusBarNotification,extras:Bundle,observationSession:Triple<String,String,Int>) {
@@ -2635,9 +2616,7 @@ class IgNotificationListener : NotificationListenerService() {
             if(text.isNotBlank() && !GuardEngine.NON_MESSAGE_UI_PATTERN.matches(text.trim()) && !GuardEngine.isNotificationSummary(text))observed.add(CapturedText(conversation,text,direction,if(direction=="incoming")title else "",account,
                 "notification",0,JSONArray().put(sbn.key).put(sbn.postTime).put(text).toString(),true,conversationKind))
         }
-        val accepted=observed.chunked(128).flatMap{GuardEngine.captureMessages(this,it,expectedSession=observationSession)}
-        val flaggedIncoming=observed.any{it.direction=="incoming" && it.author.isNotBlank() && GuardEngine.isFlaggedOffender(this,it.author)}
-        if(GuardEngine.captureRelaySession(this)==observationSession && !GuardEngine.isTemporarilyUnlocked(this) && (flaggedIncoming || accepted.any{it.optBoolean("flag_partner")}))try{cancelNotification(sbn.key)}catch(_:Exception){}
+        observed.chunked(128).forEach{GuardEngine.captureMessages(this,it,expectedSession=observationSession)}
     }
 
     @Suppress("DEPRECATION")
@@ -2730,7 +2709,6 @@ class IgAccessibilityService : AccessibilityService() {
 
         val root = rootInActiveWindow ?: run{GuardEngine.cpLastCaptureStatus="Instagram 尚未提供可讀取的前景視窗";return}
         if(root.packageName?.toString()?.let{it!=GuardEngine.INSTAGRAM_PKG}==true){GuardEngine.cpLastCaptureStatus="目前前景視窗不是 Instagram";return}
-        val dmUnlocked = GuardEngine.isTemporarilyUnlocked(this)
 
         val metrics = resources.displayMetrics
         val rootBounds=Rect();root.getBoundsInScreen(rootBounds)
@@ -2741,34 +2719,10 @@ class IgAccessibilityService : AccessibilityService() {
         collectScreenNodes(root,items,0,rootBounds,intArrayOf(0))
         if (items.isEmpty()){GuardEngine.cpLastCaptureStatus="Instagram 未提供可讀取的文字節點";return}
 
-        val joined = items.joinToString(" ") { it.text }
-
-        // A. Prevent muting notifications inside Instagram settings
-        val isExplicitMuteScreen = joined.contains("Pause all", ignoreCase = true) ||
-            joined.contains("暫停所有") ||
-            joined.contains("Mute messages", ignoreCase = true) ||
-            joined.contains("Mute notifications", ignoreCase = true) ||
-            joined.contains("將訊息設為靜音") ||
-            joined.contains("將通知設為靜音") ||
-            joined.contains("Quiet mode", ignoreCase = true) ||
-            joined.contains("靜音模式")
-
         // A named or semantic DM composer remains valid when a keyboard raises it above mid-screen.
         val dmComposerNode = items.firstOrNull { item ->
             item.top>=0 && (item.isEditable && (ConversationCapture.composerLabel(item.text) || ConversationCapture.composerLabel(item.hintText)) ||
                 ConversationCapture.composerRole(item.viewId) || !fullCapture && item.isEditable && item.top>=screenHeight*.72)
-        }
-
-        if (!dmUnlocked && dmComposerNode==null && isExplicitMuteScreen) {
-            performGlobalAction(GLOBAL_ACTION_BACK)
-            GuardEngine.sendAlertFromChild(
-                this,
-                "tamper_attempt",
-                "IG Mute Settings",
-                "Child tried to mute Instagram DM notifications.",
-                expectedSession=observationSession
-            )
-            return
         }
 
         // Profile controls quoted inside a DM are message text, not proof of the child's identity.
@@ -2837,18 +2791,10 @@ class IgAccessibilityService : AccessibilityService() {
                 if(it.direction=="outgoing")account.ifEmpty{"子女"} else "",account,"visible_dm",labelFromToolbar=true)}
             val accepted=GuardEngine.captureMessages(this,snapshots,ConversationCapture.key(account,topHeaderSender),expectedSession=observationSession)
             GuardEngine.cpLastCaptureStatus="雙向模式 · 可見訊息 ${visible.size} 則 · 本輪保留 ${accepted.size} 則（重複內容不重存）"
-            if(GuardEngine.captureRelaySession(this)!=observationSession)return
-            if(!dmUnlocked && (GuardEngine.isFlaggedOffender(this,topHeaderSender) || accepted.any{it.optString("direction")=="incoming" && it.optString("reason")=="sexual_or_grooming_content"}))performGlobalAction(GLOBAL_ACTION_BACK)
             return
         }
 
         GuardEngine.cpLastCaptureStatus="僅傳入警報模式 · 雙向範圍尚未確認"
-
-        // Block child from staying in a DM session with any flagged sexual/grooming offender
-        if (!dmUnlocked && GuardEngine.isFlaggedOffender(this, topHeaderSender)) {
-            performGlobalAction(GLOBAL_ACTION_BACK)
-            return
-        }
 
         // Read incoming left-aligned bubbles between the confirmed header and composer, including above a keyboard:
         // - Left edge must start near the left margin (<= 24% width)
@@ -2878,7 +2824,6 @@ class IgAccessibilityService : AccessibilityService() {
         // Check for sexual/grooming keywords on incoming left-aligned DM bubbles
         val sexualHit = incomingLeftBubbles.firstOrNull { GuardEngine.SEXUAL_PATTERN.containsMatchIn(it.text) }
         if (sexualHit != null) {
-            GuardEngine.markSenderAsFlaggedOffender(this, topHeaderSender)
             GuardEngine.sendAlertFromChild(
                 this,
                 reason = "sexual_or_grooming_content",
@@ -2886,9 +2831,6 @@ class IgAccessibilityService : AccessibilityService() {
                 text = sexualHit.text,
                 expectedSession=observationSession
             )
-            if (!dmUnlocked) {
-                performGlobalAction(GLOBAL_ACTION_BACK)
-            }
             return
         }
 
@@ -2906,9 +2848,6 @@ class IgAccessibilityService : AccessibilityService() {
                     text = newestIncoming,
                     expectedSession=observationSession
                 )
-                if (reason == "sexual_or_grooming_content" && !dmUnlocked) {
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                }
             }
         }
     }
@@ -4823,7 +4762,7 @@ class MainActivity : Activity() {
                 val handle = GuardEngine.getChildSelfHandle(this@MainActivity)
                 val offenders = GuardEngine.getFlaggedOffenders(this@MainActivity)
                 val pairing = if (GuardEngine.childKeyAlias(this@MainActivity) != null) "配對方式：QR 碼（已核實）" else "家庭核對圖案：${GuardEngine.getSafetyEmojis(this@MainActivity)}\n安全代碼：${GuardEngine.getSafetyCode(this@MainActivity).ifEmpty { "需要更新家庭配對" }}"
-                addView(label("$pairing\n\nInstagram 帳號：${if (handle.isEmpty()) "等待自動識別" else "@$handle"}\n\n高危帳號：${if (offenders.isEmpty()) "暫無記錄" else offenders.joinToString(", ") { "@$it" }}", 14f, t.textPrimary, bottomPad = 20))
+                addView(label("$pairing\n\nInstagram 帳號：${if (handle.isEmpty()) "等待自動識別" else "@$handle"}\n\n已標記聯絡人：${if (offenders.isEmpty()) "暫無記錄" else offenders.joinToString(", ") { "@$it" }}", 14f, t.textPrimary, bottomPad = 20))
                 addView(actionButton("關閉", t.btnSecondaryBg, t.btnSecondaryText) { dialog.dismiss() })
             }
         })
@@ -4900,7 +4839,7 @@ class MainActivity : Activity() {
         val notification = GuardEngine.isNotificationListenerEnabledStatic(this)
         val screen = GuardEngine.isAccessibilityEnabledStatic(this)
         rootContainer.addView(row("bell-simple", "Instagram 通知", if (notification) { if (GuardEngine.cpNotifConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取 IG 通知並加密傳送警報。", t) { openDirectNotificationToggle() })
-        rootContainer.addView(row("shield-check", "進階畫面保護", if (screen) { if (GuardEngine.cpAccConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取已顯示的 DM，辨識高危對話及靜音操作。", t) { openAccessibilityToggle() })
+        rootContainer.addView(row("shield-check", "進階畫面保護", if (screen) { if (GuardEngine.cpAccConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取已顯示的 DM，辨識高危對話。", t) { openAccessibilityToggle() })
         rootContainer.addView(row("info", "監察狀態通知", "持續顯示子女保護模式，與通知讀取是不同權限。", t) { requestAppNotifications() })
         if ((!notification || !screen) && Build.VERSION.SDK_INT >= 33) {
             val card = makeCard(t, true)
@@ -5907,8 +5846,8 @@ class MainActivity : Activity() {
     private fun showAccessExplanation(accessibility: Boolean) {
         if (!GuardEngine.isChildMode(this)) return
         val purpose = if (accessibility)
-            "讀取 Instagram 畫面以偵測高危對話、留言回覆及靜音操作，並在需要時返回上一頁。此功能需要無障礙存取；銀行 App 可能因此提示風險。"
-        else "讀取 Instagram 通知，將警報加密傳送到家長手機，並清除高危通知。Android 授予的是通知存取權；本 App 只處理 Instagram。"
+            "讀取 Instagram 畫面上顯示的對話文字，以偵測高危對話。此功能需要無障礙存取；銀行 App 可能因此提示風險。"
+        else "讀取 Instagram 通知，將警報加密傳送到家長手機。Android 授予的是通知存取權；本 App 只處理 Instagram。"
         alert().setTitle(if (accessibility) "進階畫面保護" else "通知讀取保護")
             .setMessage(purpose + "\n\n下一步由 Android 顯示授權頁。請自行閱讀及確認；App 不能代你授權。若開關被封鎖，返回此頁選擇「受限設定協助」。")
             .setNegativeButton("稍後", null)

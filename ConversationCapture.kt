@@ -37,11 +37,10 @@ object ConversationCapture {
         require(c.text.isNotBlank() && c.conversation.isNotBlank() && c.direction in directions && c.source in sources && c.conversationKind in conversationKinds)
         require(listOf(c.conversation,c.author,c.account).all{it.length<=256})
         val matches=JSONArray();val signals=linkedSetOf<String>()
-        for((field,value) in listOf("text" to c.text,"author" to if(c.direction=="incoming")c.author else "")) {
-            for(m in GuardEngine.SEXUAL_PATTERN.findAll(value).take(20)) {
-                val tag=signalFor(m.value)
-                signals.add(tag);matches.put(JSONObject().put("field",field).put("phrase",m.value).put("tag",tag))
-            }
+        // Keywords are matched in message text only, never in a name or title a sender chooses.
+        for(m in GuardEngine.SEXUAL_PATTERN.findAll(c.text).take(20)) {
+            val tag=signalFor(m.value)
+            signals.add(tag);matches.put(JSONObject().put("field","text").put("phrase",m.value).put("tag",tag))
         }
         val reason=when {
             signals.isNotEmpty()->"sexual_or_grooming_content"

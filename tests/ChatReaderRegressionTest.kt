@@ -78,6 +78,33 @@ class ChatReaderRegressionTest {
     private fun rows():List<JSONObject> = FamilyEvidence(ctx).use { db->db.due(GuardEngine.getChannelTopic(ctx),Long.MAX_VALUE).mapNotNull {
         GuardEngine.decryptPayload(GuardEngine.getOrCreateFamilyToken(ctx),it.wire)?.takeIf{it.optString("type") in ConversationCapture.contentTypes}
     }}
+    private fun scanActions(root:AccessibilityNodeInfo):List<Int> {
+        RootShadow.root=root
+        val c=Robolectric.buildService(IgAccessibilityService::class.java).create()
+        try {
+            c.get().onAccessibilityEvent(AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply{packageName="com.instagram.android"})
+            return org.robolectric.shadow.api.Shadow.extract<ShadowAccessibilityService>(c.get()).globalActionsPerformed.toList()
+        } finally {c.destroy()}
+    }
+    @Test fun muteAndQuietModeScreensAreNeitherLeftNorReported(){
+        val root=node(x=0,y=0,r=1000,b=2000).apply{packageName="com.instagram.android"}
+        shadowOf(root).addChild(node("Mute notifications",y=300));shadowOf(root).addChild(node("Quiet mode",y=500))
+        assertTrue(scanActions(root).isEmpty());assertTrue(rows().isEmpty())
+    }
+    @Test fun aFlaggedOrKeywordThreadIsCapturedWithoutForcingBack(){
+        LocalVault.preferences(ctx).edit().putString("flagged_offenders_csv","alice").commit()
+        assertTrue(scanActions(screen("Alice",body=listOf(node("send nudes")))).isEmpty())
+        assertEquals(listOf("send nudes"),rows().map{it.optString("text")})
+        assertEquals(setOf("alice"),GuardEngine.getFlaggedOffenders(ctx))
+    }
+    @Test fun alertOnlyModeAlertsOnKeywordsWithoutBackOrFlagging(){
+        LocalVault.preferences(ctx).edit().remove("capture_local_ack_id").commit()
+        assertTrue(scanActions(screen("Bob",body=listOf(node("send nudes")))).isEmpty())
+        assertEquals("sexual_or_grooming_content",rows().single().optString("reason"))
+        assertTrue("a keyword match alone flags no one",GuardEngine.getFlaggedOffenders(ctx).isEmpty())
+        LocalVault.preferences(ctx).edit().putString("flagged_offenders_csv","carol").commit()
+        assertTrue(scanActions(screen("Carol",body=listOf(node("hi there")))).isEmpty())
+    }
     @Test fun accountHeaderCannotReplaceThePeerInTheBackButtonRow(){
         GuardEngine.setChildSelfHandle(ctx,"child_account")
         val root=screen(peer="")
