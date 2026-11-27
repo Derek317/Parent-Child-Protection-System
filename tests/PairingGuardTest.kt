@@ -187,7 +187,6 @@ class PairingGuardTest {
         GuardEngine::class.java.getDeclaredMethod("purgeChildFamily",android.content.Context::class.java,String::class.java).apply{isAccessible=true}.invoke(GuardEngine,ctx,token)
         assertEquals("the purge itself must empty the scoring store",0,riskRows())
     }
-    /** A released child keeps nothing of the old family, whether or not the parent deleted the room (purge_family). */
     private fun assertOldFamilyGone(token:String,scope:String) {
         assertEquals(0,FamilyEvidence(ctx).use{it.pendingCount(scope)})
         for(key in listOf("parent_command_public_key","parent_password_verifier","trusted_csv","flagged_offenders_csv","child_self_handle"))assertNull(key,prefs.getString(key,null))

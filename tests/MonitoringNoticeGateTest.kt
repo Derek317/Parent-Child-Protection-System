@@ -13,7 +13,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
-/** Capture runs only while the child can see the monitoring notice; heartbeats keep going and say why capture is off. Invented data only. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class MonitoringNoticeGateTest : UploadTestBase() {

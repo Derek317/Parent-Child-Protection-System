@@ -200,7 +200,6 @@ object GuardEngine {
     }
 
     fun collectionAllowed(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && !prefs(ctx).getBoolean("collection_withdrawn", false)
-    /** Capture needs the child to be able to see the monitoring notice: app notifications on and its channel not blocked. */
     fun monitoringNoticeAllowed(ctx: Context): Boolean {
         val manager = ctx.getSystemService(NotificationManager::class.java) ?: return false
         if (Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) return false
@@ -997,8 +996,6 @@ object GuardEngine {
         relayGeneration++
         CloudRelay.disconnect()
     }
-    /** Relayed command ids (a release among them) hold no secret and outlive a purge for their lifetime: re-paired to the same room,
-     *  the child must not run an old release again. */
     private fun keepReleasedCommandIds(ctx: Context, editor: android.content.SharedPreferences.Editor) {
         val kept = releasedCommandIds(ctx)
         val current = try { JSONObject(prefs(ctx).getString("control_state_json", "{}") ?: "{}").optJSONObject("relayed_ids") } catch (_: Exception) { null }
@@ -1057,7 +1054,6 @@ object GuardEngine {
             prefs(ctx).edit().putString("role", role).apply()
             // Leaving the child role (including a remote reset) ends scores-only mode and deletes the scoring store.
             if (previous == "child" && role != "child") { RiskLocal.resetFamily(ctx); forgetChildKey(ctx); prefs(ctx).edit().remove(CHILD_QR_PAIRED).remove(DeliveryHealth.EXPIRED_AT_MS).remove(DeliveryHealth.HEARTBEAT_IDS).apply() }
-            // A released child keeps none of the old family's secrets, lists or queued records (UI role changes all pass through unconfigured).
             if (previous == "child" && role == "unconfigured") purgeChildFamily(ctx, prefs(ctx).getString("family_uuid_token", "").orEmpty())
         }
         syncChildComponents(ctx)
@@ -1532,8 +1528,6 @@ object GuardEngine {
         return candidate.takeIf{VALID_IG_HANDLE_REGEX.matches(it) && it !in RESERVED_UI_HEADERS}.orEmpty()
     }
     fun getChildSelfHandle(ctx: Context): String {
-        // Older builds inferred the child's identity from a conversation title (the peer).
-        // Discard that unverified cache once; the own-profile screen can restore it.
         if (prefs(ctx).contains("child_self_handle") && prefs(ctx).getInt("child_self_handle_source_version", 0) < 2) {
             prefs(ctx).edit().remove("child_self_handle").remove("child_self_handle_ts_ms").apply()
         }
@@ -1659,7 +1653,6 @@ object GuardEngine {
         if (isNonMessageUiString(text)) return null
         if (isChildSelfHandle(ctx, senderTitle)) return null
 
-        // Keywords are matched in message text only, never in a name a sender chooses; a match alone never flags the contact.
         if (SEXUAL_PATTERN.containsMatchIn(text)) {
             return "sexual_or_grooming_content"
         }
@@ -2209,9 +2202,8 @@ object GuardEngine {
             "remote_reset_child" -> {
                 if (role == "child") {
                     grantTemporaryUnlock(ctx, 10 * 60_000L)
-                    // Committed first so the purge keeps this release's id (it must never run again after a re-pair to this room).
                     committedControlState?.let { check(prefs(ctx).edit().putString("control_state_json", it).commit()) }
-                    setRole(ctx, "unconfigured")   // also purges the old family, with or without purge_family
+                    setRole(ctx, "unconfigured")
                     addCheckpointLog(ctx, "CP4-RESET", "家長已遠端解除並重設子女手機")
                     ctx.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(ctx.packageName))
                 }
@@ -2480,7 +2472,7 @@ class IgNotificationListener : NotificationListenerService() {
         if(!GuardEngine.collectionAllowed(this))return
         val observationSession=GuardEngine.captureRelaySession(this)
         GuardEngine.checkAndSendChildHeartbeatIfDue(this)
-        if(!GuardEngine.monitoringNoticeAllowed(this))return   // the child cannot see the monitoring notice: read nothing
+        if(!GuardEngine.monitoringNoticeAllowed(this))return
         if(RiskLocal.uploadOnly(this))return   // manual upload: nothing in a notification is read
 
         val pkg = sbn?.packageName ?: return
@@ -2494,7 +2486,6 @@ class IgNotificationListener : NotificationListenerService() {
         // Instagram's multi-account prefix names the recipient. A conversation title names the peer.
         val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
         var cleanTitle = rawTitle
-        // The prefix is title text a sender's display name can imitate: never taken as the child's own account.
         if (rawTitle.startsWith("[") && rawTitle.contains("]")) {
             cleanTitle = rawTitle.substringAfter("]").trim().ifEmpty { rawTitle }
         }
@@ -2533,8 +2524,6 @@ class IgNotificationListener : NotificationListenerService() {
                     bundleSender = person?.name?.toString()?.trim() ?: ""
                 }
 
-                // Issue #2 Fix: If the latest message in the notification bundle was sent by the child (the notification's own user Person),
-                // STOP IMMEDIATELY so we never misattribute the child's own sent message to the conversation partner!
                 if (bundleSender.isNotEmpty()) {
                     if (selfDisplayName.isNotEmpty() && bundleSender.equals(selfDisplayName, ignoreCase = true)) {
                         return
@@ -2592,7 +2581,6 @@ class IgNotificationListener : NotificationListenerService() {
         val conversationKind=if(extras.containsKey(Notification.EXTRA_IS_GROUP_CONVERSATION)) {
             if(extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION))"group" else "direct"
         } else "unknown"
-        // Only the notification's own user Person decides "self"; a name or title prefix a sender can choose never does.
         fun own(label:String)=self.isNotEmpty() && label.equals(self,true)
         fun authorOf(b:Bundle):String {
             @Suppress("DEPRECATION")
@@ -2722,8 +2710,7 @@ class IgAccessibilityService : AccessibilityService() {
         GuardEngine.cpLastAccTime = GuardEngine.nowTimeStr()
 
         val root = rootInActiveWindow ?: run{GuardEngine.cpLastCaptureStatus="Instagram 尚未提供可讀取的前景視窗";return}
-        if(root.packageName?.toString()!=GuardEngine.INSTAGRAM_PKG){   // an unnamed window is not Instagram
-            GuardEngine.cpLastCaptureStatus="目前前景視窗不是 Instagram";return}
+        if(root.packageName?.toString()!=GuardEngine.INSTAGRAM_PKG){GuardEngine.cpLastCaptureStatus="目前前景視窗不是 Instagram";return}
 
         val metrics = resources.displayMetrics
         val rootBounds=Rect();root.getBoundsInScreen(rootBounds)

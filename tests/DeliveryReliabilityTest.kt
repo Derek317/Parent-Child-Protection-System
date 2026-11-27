@@ -45,7 +45,6 @@ class DeliveryReliabilityTest {
         } finally {workers.shutdownNow()}
     }
     @Test fun childPrivacyAndUnapprovedContactPolicyRemainIntact(){
-        // A sender may name itself "You": only the child's exact stored handle is the child.
         assertEquals("stranger_message",GuardEngine.evaluateMessage(ctx,"You","hello"))
         GuardEngine.setChildSelfHandle(ctx,"own_handle");assertNull(GuardEngine.evaluateMessage(ctx,"@Own_Handle","hello"))
         assertEquals("stranger_message",GuardEngine.evaluateMessage(ctx,"unapproved","ordinary greeting"))

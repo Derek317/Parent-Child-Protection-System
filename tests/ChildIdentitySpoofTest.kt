@@ -10,7 +10,6 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** Text a stranger can choose (a sender name, a notification title) never decides who the child is or who is trusted/flagged. Invented data only. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class ChildIdentitySpoofTest : UploadTestBase() {
