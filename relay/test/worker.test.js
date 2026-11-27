@@ -1,13 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
-import { DatabaseSync } from 'node:sqlite';
 import { family, header, headerV2, childIdentity } from './proofs.js';
 
 registerHooks({ resolve: (specifier, context, next) => specifier === 'cloudflare:workers'
   ? { url: 'data:text/javascript,export class DurableObject {}', shortCircuit: true } : next(specifier, context) });
-globalThis.WebSocketRequestResponsePair ??= class {};
-const { default: worker, FamilyRoom } = await import('../src/worker.js');
+const { default: worker } = await import('../src/worker.js');
 
 async function route(authorization, { room, method = 'GET' } = {}) {
   let reached = 0;
@@ -49,37 +47,4 @@ test('a genuine proof reaches its room; a genuine one outside the time window is
   for (const authorization of [headerV2(f, 'parent', child, { ts: Date.now() - 121_000 }), headerV2(f, 'child', child, { ts: Date.now() + 121_000 })]) {
     assert.deepEqual(await route(authorization, { room: f.room }), { status: 401, code: 'stale_time', reached: 0 });
   }
-});
-
-function room() {
-  const db = new DatabaseSync(':memory:');
-  let alarm = null;
-  const exec = (query, ...params) => {
-    const statement = db.prepare(query);
-    const rows = /^\s*SELECT/i.test(query) ? statement.all(...params) : (statement.run(...params), []);
-    return { toArray: () => rows, one: () => rows[0] };
-  };
-  const transactionSync = action => { db.exec('BEGIN'); try { const result = action(); db.exec('COMMIT'); return result; } catch (e) { db.exec('ROLLBACK'); throw e; } };
-  const ctx = { storage: { sql: { exec }, transactionSync, getAlarm: async () => alarm, setAlarm: async at => { alarm = at; } },
-    getWebSockets: () => [], setWebSocketAutoResponse() {} };
-  const r = new FamilyRoom(ctx, {});
-  return Object.assign(r, { alarmAt: () => alarm, tables: () => exec("SELECT name FROM sqlite_master WHERE type='table'").toArray().map(t => t.name),
-    marker: () => exec("SELECT value FROM metadata WHERE key='retired'").toArray()[0]?.value,
-    setMarker: value => exec("UPDATE metadata SET value=? WHERE key='retired'", value) });
-}
-
-test('audit L6: a retirement marker is kept a year, then the room is forgotten', async () => {
-  const year = 365 * 86_400_000, r = room();
-  r.ensureSchema(); r.retire(); await r.ensureAlarm();
-  assert.ok(Math.abs(Number(r.marker()) - Date.now()) < 5000, 'the marker records when the room was retired');
-  assert.ok(Math.abs(r.alarmAt() - (Number(r.marker()) + year)) < 5000, 'an alarm is set for its end');
-  r.setMarker(String(Date.now() - year + 60_000)); await r.alarm();
-  assert.ok(r.retired(), 'a marker younger than a year stays');
-  r.setMarker('1'); await r.alarm();
-  assert.ok(r.retired() && Math.abs(Number(r.marker()) - Date.now()) < 5000, 'a marker from before dates had a year from now');
-  r.setMarker(String(Date.now() - year - 1)); await r.alarm();
-  assert.equal(r.retired(), false);
-  assert.deepEqual(r.tables(), [], 'nothing of the room is left');
-  await r.ensureAlarm(); r.cleanupExpired();
-  assert.deepEqual(r.tables(), [], 'and nothing comes back by itself');
 });

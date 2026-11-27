@@ -10,7 +10,6 @@ const WINDOW = 8;
 // class answered with a long retry would make the app close the socket and back off for hours.
 const DAY = 86_400_000;
 const DAILY_DATA_BUDGET = 2000;
-const RETIRED_TTL = 365 * DAY;
 // New packet ids per sending role (parent, child) per UTC day, forwarded or buffered: each leaves a packet_lifetimes row for
 // TTL + REGISTRATION_TTL. Per role, so one phone can never spend the other's. A phone's data is refused once its new ids that
 // day reach 10 000; its alerts, receipts and controls are refused only at 30 000. A real family sends a few hundred a day.
@@ -93,6 +92,7 @@ export class FamilyRoom extends DurableObject {
     return row ? JSON.parse(row.value) : null;
   }
 
+  // A deleted or expired room is never usable again: this content-free marker is the only thing kept, and it has no expiry.
   retired() {
     return this.hasSchema() && this.sql.exec("SELECT 1 FROM metadata WHERE key='retired'").toArray().length > 0;
   }
@@ -101,7 +101,7 @@ export class FamilyRoom extends DurableObject {
     this.ctx.storage.transactionSync(() => {
       for (const inbox of ['parent_inbox', 'child_inbox', 'packet_lifetimes']) this.sql.exec(`DELETE FROM ${inbox}`);
       this.sql.exec('DELETE FROM metadata');
-      this.sql.exec("INSERT INTO metadata(key,value) VALUES('retired',?)", String(Date.now()));
+      this.sql.exec("INSERT INTO metadata(key,value) VALUES('retired','1')");
     });
     if (socket?.readyState === 1) send(socket, { type: 'retired' });
     for (const peer of this.ctx.getWebSockets()) {
@@ -109,25 +109,7 @@ export class FamilyRoom extends DurableObject {
     }
   }
 
-  retiredAt() {
-    if (!this.hasSchema()) return null;
-    const row = this.sql.exec("SELECT value FROM metadata WHERE key='retired'").toArray()[0];
-    if (!row) return null;
-    const at = Number(row.value);
-    if (Number.isSafeInteger(at) && at > 1_000_000_000_000) return at;
-    this.sql.exec("UPDATE metadata SET value=? WHERE key='retired'", String(Date.now()));
-    return Date.now();
-  }
-
-  pruneRetired() {
-    const at = this.retiredAt();
-    if (at === null || at + RETIRED_TTL > Date.now()) return;
-    for (const name of ['parent_inbox', 'child_inbox', 'packet_lifetimes', 'metadata']) this.sql.exec(`DROP TABLE IF EXISTS ${name}`);
-    this.schemaReady = false;
-  }
-
   cleanupRegistration() {
-    this.pruneRetired();
     const now = Date.now(), owner = this.metadata();
     if (owner && owner.last_active === undefined) {
       // Existing registrations get a full idle period when this schema is first adopted.
@@ -160,7 +142,6 @@ export class FamilyRoom extends DurableObject {
     try {
       this.cleanupRegistration();
       if (this.retired()) {
-        await this.ensureAlarm();
         // A valid signing proof is required even for an idempotent purge acknowledgment.
         if (request.method === 'DELETE') return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
         return json(410, 'room_retired', REGISTRATION_TTL);
@@ -382,8 +363,8 @@ export class FamilyRoom extends DurableObject {
   }
 
   cleanupExpired() {
-    this.cleanupRegistration();
     if (!this.hasSchema()) return;
+    this.cleanupRegistration();
     this.ctx.storage.transactionSync(() => {
       // Backfill existing queues with their own deadline; never renew on first reconnect.
       for (const inbox of ['parent_inbox','child_inbox']) {
@@ -399,8 +380,8 @@ export class FamilyRoom extends DurableObject {
     if (!this.hasSchema()) return;
     const current = await this.ctx.storage.getAlarm();
     const nextPacket = this.sql.exec('SELECT MIN(expires) AS expiry FROM (SELECT MIN(expires) AS expires FROM parent_inbox UNION ALL SELECT MIN(expires) FROM child_inbox UNION ALL SELECT MIN(expires)+? FROM packet_lifetimes)', REGISTRATION_TTL).one().expiry;
-    const owner = this.metadata(), retiredAt = this.retiredAt();
-    const next = Math.min(nextPacket ?? Infinity, owner ? owner.last_active + REGISTRATION_TTL : Infinity, retiredAt === null ? Infinity : retiredAt + RETIRED_TTL);
+    const owner = this.metadata();
+    const next = Math.min(nextPacket ?? Infinity, owner ? owner.last_active + REGISTRATION_TTL : Infinity);
     if (Number.isFinite(next) && (current === null || current > next || current <= Date.now())) await this.ctx.storage.setAlarm(Math.max(Date.now() + 1000, next));
   }
 
