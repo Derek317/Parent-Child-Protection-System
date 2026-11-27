@@ -260,6 +260,17 @@ class ChildRecordGateTest {
         assertFalse(prefs.contains("child_self_handle")); assertFalse(prefs.contains("child_self_handle_ts_ms"))
     }
 
+    @Test fun aPre60PairingIsRefusedFromAprilFirst2027() {
+        prefs.edit().remove("pinned_child_key").commit()
+        val sync = { JSONObject().put("type", "sync_child_handle").put("child_self_handle", "h").put("ts_ms", System.currentTimeMillis()).put("time", "x") }
+        try {
+            GuardEngine.wallClock = { GuardEngine.LEGACY_PAIRING_END_MS - 1 }
+            assertEquals(RelayConsumption.CONSUMED, deliver(legacyControl(sync())))
+            GuardEngine.wallClock = { GuardEngine.LEGACY_PAIRING_END_MS }
+            assertEquals(RelayConsumption.REJECTED, deliver(legacyControl(sync())))
+        } finally { GuardEngine.wallClock = { System.currentTimeMillis() } }
+    }
+
     /** A 5.2 pairing (no pinned key) sends an unsigned handle sync with ts_ms: the same rule applies to it. */
     @Test fun aLegacyHandleSyncFollowsTheSameOrder() {
         prefs.edit().remove("pinned_child_key").commit()

@@ -18,8 +18,24 @@ import java.time.Instant
 
 /** Installation-level acceptance; capture-scope and Android permission grants remain separate. */
 object AppConsent {
-    const val VERSION = "2026-11-26-v9"
+    const val VERSION = "2026-11-26-v10"
     const val TERMS_ASSET = "ig-guard-terms-of-service.md"
+    const val CHILD_SUMMARY =
+        "同意之前\n" +
+        "• 這個 App 裝在你的手機，是因為家長想知道有沒有人在 Instagram 向你施壓。\n" +
+        "• 它會讀取 Instagram 訊息通知；如你之後同意，亦會讀取畫面上的對話。\n" +
+        "• 家長收到甚麼，視乎模式：只有風險分數，或訊息本身。App 會告訴你是哪一種。\n" +
+        "• 你可以隨時在「擷取範圍與停止」停止，家長會收到你已停止的通知。\n" +
+        "• 它可能出錯。被標記不代表你或朋友做錯事。\n" +
+        "• 如果網上有事令你害怕，請告訴你信任的大人。緊急情況請致電 999。\n" +
+        "\n" +
+        "Before you agree\n" +
+        "• This app is on your phone because a parent wants to know if someone is pressuring you on Instagram.\n" +
+        "• It can read your Instagram message notifications and, if you agree later, the chats on your screen.\n" +
+        "• What your parent gets depends on the mode: only a risk score, or the messages themselves. The app tells you which.\n" +
+        "• You can stop it at any time under 「擷取範圍與停止」. Your parent is told that you stopped.\n" +
+        "• It can be wrong. A flag does not mean you or your friend did anything wrong.\n" +
+        "• If something online scares you, tell an adult you trust. In an emergency call 999."
     internal val acknowledgments = setOf("consent_terms", "consent_transfer", "consent_family")
     private const val PURPOSE = "consent_receipt"
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("ig_guard_consent", Context.MODE_PRIVATE)
@@ -89,6 +105,7 @@ object AppConsent {
             activity.label(value, size, t.textPrimary, bold, bottomPad = 16).apply { setTextIsSelectable(true) }
         content.addView(text("先了解，再決定\nYour messages, your decision", 27f, true))
         content.addView(text("請與家長一起閱讀完整條款。你可以拒絕並返回主畫面。\nRead the full Terms with your parent. You may decline and return to Home."))
+        content.addView(text(CHILD_SUMMARY).apply { tag = "consent_child_summary" })
         content.addView(text("子女模式會將實際擷取的 Instagram 訊息及相關資料傳至指定、已核對配對的家長／法定監護人。一般模式處理傳入警報；傳出及信任對象的一般對話仍須另行確認雙向擷取。未送出草稿不會讀取。", 16f, true))
         content.addView(text("本機內容及偏好字串以 Android Keystore 金鑰及 AES-GCM 保護；家長控制簽署金鑰存入 Keystore 後不匯出；若移入失敗，會暫用原有加密保存的金鑰並於下次啟動重試。家長畫面須經手機鎖驗證，背景接收仍繼續；部分時間、分類及狀態資料仍可見。內容先以家庭金鑰加密，再經 TLS 及 Cloudflare 中繼傳送。開發者與 Cloudflare 可處理密文及連線中繼資料，中繼不持有家庭解密金鑰。加密不能保護已解鎖、遭入侵的手機或外部副本。"))
         content.addView(text("手機上新待傳記錄最多保留 72 小時；中繼站上未被取走的密文最多保留 7 天；兩部手機連續 90 天沒有連線，中繼登記便會刪除，家長亦可在 App 內要求刪除房間。新封存預設 30 天，可選 7／30 天。個別記錄可明確保留一次 90 天。舊封存須預覽及確認採用期限。到期內容在下次存取或排程清理時移除；供應商日誌／備份另有保留規則。只供私人家庭保障用途，禁止監視陌生人、伴侶、員工或學生。第 486 章第 52 條不是本服務、開發者或 Cloudflare 的全面豁免。"))

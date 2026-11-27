@@ -286,6 +286,7 @@ object GuardEngine {
     // family was created by this version, which pairs only by QR: no unsigned 5.2 child record is ever taken on it. Child: this
     // pairing came from a QR: no record ever leaves unsigned.
     private const val FAMILY_QR_ONLY = "family_qr_only"
+    internal const val LEGACY_PAIRING_END_MS = 1_806_508_800_000L
     private const val CHILD_QR_PAIRED = "child_qr_paired"
     private const val PINNED_CHILD_KEY = "pinned_child_key"
     private const val PAIRING_PENDING_MS = "child_pairing_pending_ms"
@@ -2043,7 +2044,7 @@ object GuardEngine {
         // Legacy (the unsigned 5.2 format) only for a family without the sticky FAMILY_QR_ONLY fact. With it and no pinned key (rolled
         // back, cancelled, remotely reset, or any other unpinning) no record is taken, signed or not, until a new QR pairing pins a key.
         // The rollback/reset marks only choose the overview text.
-        if (role == "parent" && pinnedChildKey(ctx) == null && familyQrOnly(ctx)) return RelayConsumption.REJECTED
+        if (role == "parent" && pinnedChildKey(ctx) == null && (familyQrOnly(ctx) || wallClock() >= LEGACY_PAIRING_END_MS)) return RelayConsumption.REJECTED
         val decrypted = if (decoded.optString("type") == "alert_fragment") {
             if (role != "parent" && !(role=="child" && decoded.optString("event_id").startsWith("control:"))) return RelayConsumption.REJECTED
             // A late part of a record already taken: reassembly would return the stored (unwrapped) record, which the gate must not see.
@@ -4042,7 +4043,7 @@ class MainActivity : Activity() {
         when (trust) {
             GuardEngine.ChildTrust.NOT_VERIFIED -> rootContainer.addView(noticeCard(t, cardTag = "child_not_verified").apply {
                 addView(iconLine("shield-warning", t.warmHoney, "此子女手機未核實 · This child phone is not verified", t, 15f))
-                addView(label("此配對在舊版本以聊天邀請建立，未能證明訊息來自子女手機。提醒照常運作。\nPaired with an older version through a chat invitation: messages cannot be proven to come from the child's phone. Alerts keep working.", 13f, t.textSecondary, topPad = 6))
+                addView(label("此配對在舊版本以聊天邀請建立，未能證明訊息來自子女手機。提醒照常運作至 2027 年 3 月 31 日；由 2027 年 4 月 1 日起不再接收此配對的記錄，請重新配對。\nPaired with an older version through a chat invitation: messages cannot be proven to come from the child's phone. Alerts keep working until 31 March 2027; from 1 April 2027 this pairing delivers nothing, so pair again.", 13f, t.textSecondary, topPad = 6))
                 addView(textAction("重新配對以核實 · Pair again to verify") { startParentPairing() })
             })
             GuardEngine.ChildTrust.PAIRING -> {
@@ -5314,7 +5315,7 @@ class MainActivity : Activity() {
             choice.addView(label(ScoresUi.METHOD_TITLE, 15f, t.textPrimary, true, bottomPad = 6))
             for (m in listOf(ScoresMethod.UPLOAD, ScoresMethod.CAPTURE)) {
                 val selected = m == method
-                choice.addView(choiceButton(ScoresUi.methodName(m), selected, t) {
+                choice.addView(choiceButton(ScoresUi.chooserLabel(m), selected, t) {
                     method = m; acked = false; draw()
                 }.apply { tag = "scores_method_$m" })
             }

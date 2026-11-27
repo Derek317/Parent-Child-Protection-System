@@ -226,5 +226,11 @@ class ReleaseVersionAndHotfixSafety(unittest.TestCase):
         self.assertEqual(0, self.signing_check('refs/heads/main'))
 
 
+class ManifestSurface(unittest.TestCase):
+    def test_no_browsable_link_reaches_the_app(self):
+        self.assertNotIn('android.intent.category.BROWSABLE', TEXT)
+        self.assertNotIn('android:scheme="igguard" android:host="pair"', TEXT)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -83,6 +83,14 @@ class FirstLaunchConsentTest {
         GuardEngine.setRole(ctx, "parent")
         assertFalse(GuardEngine.isParentMode(ctx))
     }
+    @Test fun aShortChildSummaryComesBeforeTheFullTerms() {
+        val a = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val summary = root(a).findViewWithTag<TextView>("consent_child_summary")
+        assertNotNull("no child summary on the first-launch page", summary)
+        for (needle in listOf("同意之前", "Before you agree", "擷取範圍與停止", "999", "可能出錯", "It can be wrong")) assertTrue(needle, summary.text.contains(needle))
+        val parent = summary.parent as android.view.ViewGroup
+        assertTrue("the summary comes before the full Terms", parent.indexOfChild(summary) < parent.indexOfChild(root(a).findViewWithTag<TextView>("consent_document")))
+    }
     @Test fun acceptanceIsEncryptedAndRelaunchDoesNotRepeatOrEnableExpandedCapture() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val a = controller.get()
