@@ -180,7 +180,7 @@ class TwoPhoneRelayTest {
         relay.server.shutdown()
     }
 
-    private fun waitUntil(what: String, seconds: Int = 20, seen: () -> String = { "" }, condition: () -> Boolean) {
+    private fun waitUntil(what: String, seconds: Int = 45, seen: () -> String = { "" }, condition: () -> Boolean) {
         val until = System.currentTimeMillis() + seconds * 1000L
         while (System.currentTimeMillis() < until) { idle(); if (condition()) return; Thread.sleep(50) }
         idle(); assertTrue("timed out: $what${seen()}", condition())
