@@ -204,6 +204,7 @@ object GuardEngine {
         if (Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) return false
         return manager.areNotificationsEnabled() && manager.getNotificationChannel("child_disclosure")?.importance != NotificationManager.IMPORTANCE_NONE
     }
+    fun capturePausedByNotice(ctx: Context): Boolean = collectionAllowed(ctx) && !RiskLocal.uploadOnly(ctx) && !monitoringNoticeAllowed(ctx)
     fun transferAllowed(ctx: Context): Boolean = AppConsent.hasAccepted(ctx) && (getRole(ctx) != "child" || collectionAllowed(ctx))
     /**
      * The child may always stop collection. With [noticeWaitMs] > 0 (UI path, background thread) one content-free
@@ -463,7 +464,7 @@ object GuardEngine {
         val notifOn = isNotificationListenerEnabledStatic(ctx)
         val accOn = isAccessibilityEnabledStatic(ctx)
 
-        val statusSummary = "裝置 ${Build.MODEL} Convoy 運作中（通知讀取：${if (notifOn) "已開啟" else "已關閉"} · 畫面保護：${if (accOn) "已開啟" else "選用"}）· 下次回報約 ${nextMins} 分鐘後（時間隨機）" + (if (collectionAllowed(ctx) && !monitoringNoticeAllowed(ctx)) NOTICE_OFF_MARK else "") + if (RiskLocal.captureHeld(ctx)) CAPTURE_HELD_MARK else ""
+        val statusSummary = "裝置 ${Build.MODEL} Convoy 運作中（通知讀取：${if (notifOn) "已開啟" else "已關閉"} · 畫面保護：${if (accOn) "已開啟" else "選用"}）· 下次回報約 ${nextMins} 分鐘後（時間隨機）" + (if (capturePausedByNotice(ctx)) NOTICE_OFF_MARK else "") + if (RiskLocal.captureHeld(ctx)) CAPTURE_HELD_MARK else ""
         // Under manual upload the teen may switch notification access off, which is then no tampering. A held capture is not that: access is expected to stay on.
         val reason = if (notifOn || RiskLocal.uploadMethodOn(ctx)) "heartbeat_ok" else "tamper_attempt"
 
@@ -517,6 +518,7 @@ object GuardEngine {
 
     /** Ends the child's heartbeat summary while its capture is held (content-free). An older parent just shows it as text. */
     const val NOTICE_OFF_MARK = " · 監察提示通知已關閉，擷取已暫停"
+    const val NOTICE_OFF_STATUS = "擷取已暫停：未允許通知 · Capture paused: notifications not allowed"
     const val CAPTURE_HELD_MARK = " | 擷取已暫停 (capture held)"
 
     fun getLastChildHeartbeatInfo(ctx: Context): String {
@@ -4900,7 +4902,7 @@ class MainActivity : Activity() {
         val screen = GuardEngine.isAccessibilityEnabledStatic(this)
         rootContainer.addView(row("bell-simple", "Instagram 通知", if (notification) { if (GuardEngine.cpNotifConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取 IG 通知並加密傳送警報。", t) { openDirectNotificationToggle() })
         rootContainer.addView(row("shield-check", "進階畫面保護", if (screen) { if (GuardEngine.cpAccConnected) "已授權 · 已連接" else "已授權 · 等待連接" } else "未開啟。讀取已顯示的 DM，辨識高危對話。", t) { openAccessibilityToggle() })
-        rootContainer.addView(row("info", "監察狀態通知", "持續顯示子女保護模式，與通知讀取是不同權限。", t) { requestAppNotifications() })
+        rootContainer.addView(row("info", "監察狀態通知", if (GuardEngine.capturePausedByNotice(this)) GuardEngine.NOTICE_OFF_STATUS else "持續顯示子女保護模式，與通知讀取是不同權限。", t) { requestAppNotifications() })
         if ((!notification || !screen) && Build.VERSION.SDK_INT >= 33) {
             val card = makeCard(t, true)
             card.addView(label("設定開關變灰了？", 16f, t.textPrimary, true, bottomPad = 8))

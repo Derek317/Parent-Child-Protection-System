@@ -58,4 +58,20 @@ class MonitoringNoticeGateTest : UploadTestBase() {
         assertEquals(2, heartbeats().size)
         assertTrue(heartbeats().any { it.getString("text").contains(GuardEngine.NOTICE_OFF_MARK) })
     }
+    @Test fun manualUploadHeartbeatDoesNotSayCaptureIsPaused() {
+        activate(ScoresMethod.UPLOAD); shadowOf(nm).setNotificationsEnabled(false)
+        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx, force = true)
+        assertFalse(heartbeats().single().getString("text").contains(GuardEngine.NOTICE_OFF_MARK))
+    }
+    private fun permissionTexts(): List<String> {
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try { UiSupport.nav(c.get(), "permissions"); return UiSupport.texts(UiSupport.current(c.get())) } finally { c.pause().stop().destroy() }
+    }
+    @Test fun theNoticeRowTellsTheChildCaptureIsPaused() {
+        assertFalse(permissionTexts().contains(GuardEngine.NOTICE_OFF_STATUS))
+        shadowOf(nm).setNotificationsEnabled(false)
+        assertTrue(permissionTexts().contains(GuardEngine.NOTICE_OFF_STATUS))
+        activate(ScoresMethod.UPLOAD)
+        assertFalse(permissionTexts().contains(GuardEngine.NOTICE_OFF_STATUS))
+    }
 }
