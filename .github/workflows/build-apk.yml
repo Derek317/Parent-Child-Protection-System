@@ -252,7 +252,7 @@ jobs:
           cat > app/src/main/res/values/strings.xml <<'EOF'
           <resources>
               <string name="app_name">Convoy</string>
-              <string name="acc_desc">Convoy reads the conversation text shown on screen in Instagram, including messages you send, and sends alerts to your paired parent's phone. It works only in Instagram and does not block or change anything there.</string>
+              <string name="acc_desc">Convoy reads the conversation text shown on screen in Instagram, including messages you send, and sends alerts to the paired parent phone. It works only in Instagram and does not block or change anything there.</string>
           </resources>
           EOF
 

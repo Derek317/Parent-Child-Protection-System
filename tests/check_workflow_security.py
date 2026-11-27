@@ -229,6 +229,10 @@ class ManifestSurface(unittest.TestCase):
         self.assertNotIn('android.intent.category.BROWSABLE', TEXT)
         self.assertNotIn('android:scheme="igguard" android:host="pair"', TEXT)
 
+    def test_resource_strings_have_no_unescaped_apostrophe(self):
+        for value in re.findall(r'<string name="[^"]+">(.*?)</string>', TEXT):
+            self.assertIsNone(re.search(r"(?<!\\)'", value), value)
+
 
 if __name__ == '__main__':
     unittest.main()
