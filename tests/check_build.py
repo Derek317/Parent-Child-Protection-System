@@ -48,7 +48,7 @@ class Packaging(unittest.TestCase):
         return dict(zip(SECRETS, (base64.b64encode(self.keys[same]).decode(), self.store_password,
                                   'test-only-alias', self.store_password if same else self.key_password)))
 
-    def package(self, values):
+    def package(self, values, ref='refs/heads/main'):
         workflow = (REPO / '.github/workflows/build-apk.yml').read_text()
         step = re.search(r'      - name: Compile (?:Signed )?APK\n(.*?)(?=\n      - name:|\Z)', workflow, re.S).group(1)
         script = '\n'.join(line[10:] for line in step.split('        run: |\n', 1)[1].splitlines())
@@ -68,6 +68,7 @@ Path('observed.json').write_text(json.dumps({'key': key}))
             for key in (*SECRETS, 'APK_KEYSTORE_PATH'):
                 env.pop(key, None)
             env.update({key: '' for key in SECRETS})
+            env['GITHUB_REF'] = ref
             env.update(values)
             env.update(PATH=temp+os.pathsep+env['PATH'], RUNNER_TEMP=temp,
                        GITHUB_OUTPUT=str(root/'output'), GITHUB_STEP_SUMMARY=str(root/'summary'))
@@ -92,6 +93,12 @@ Path('observed.json').write_text(json.dumps({'key': key}))
         self.assertEqual(0, code)
         self.assertIn('artifact_name=ig-guard-unsigned-apk', output)
         self.assertIsNone(observed['key'])
+
+    def test_missing_secrets_on_a_release_tag_fail_before_gradle(self):
+        code, output, observed, _ = self.package({}, ref='refs/tags/6.0.3')
+        self.assertNotEqual(0, code)
+        self.assertIsNone(observed)
+        self.assertNotIn('artifact_name=', output)
 
     def test_partial_secrets_fail_before_packaging(self):
         code, _, observed, _ = self.package({'APK_KEY_ALIAS': 'test-only-alias'})
