@@ -3928,12 +3928,26 @@ class MainActivity : Activity() {
         rootContainer.addView(textAction("產生高強度密碼") {
             password.setText(GuardEngine.generateRandomStrongPassword()); error.text = ""; password.error = null
         })
-        rootContainer.addView(actionButton("建立家庭", t.btnPrimaryBg, t.btnPrimaryText) {
+        lateinit var create: Button
+        create = actionButton("建立家庭", t.btnPrimaryBg, t.btnPrimaryText) {
             val candidate = password.text.toString().trim()
             if (!GuardEngine.isStrongPasswordValid(candidate)) { error.text = "請輸入最少 12 位字元，並同時包含字母及數字，避免常見密碼（例如 password、123456）。"; password.error = "密碼長度或格式不正確"; return@actionButton }
-            GuardEngine.setFamilyToken(this, UUID.randomUUID().toString(), qrOnly = true); GuardEngine.setPin(this, candidate); GuardEngine.setRole(this, "parent")
-            section = "overview"; syncRoleServices(); renderUi(animate = true)
-        })
+            if (!GuardEngine.passwordCheckRunning.compareAndSet(false, true)) { error.text = PASSWORD_CHECK_BUSY; return@actionButton }
+            fun working(on: Boolean) { create.isEnabled = !on; password.isEnabled = !on; create.text = if (on) "核對中… · Checking…" else "建立家庭" }
+            working(true)
+            thread {
+                val created = try {
+                    GuardEngine.setFamilyToken(this, UUID.randomUUID().toString(), qrOnly = true); GuardEngine.setPin(this, candidate); GuardEngine.setRole(this, "parent"); true
+                } catch (_: RuntimeException) { false }
+                runOnUiThread {
+                    GuardEngine.passwordCheckRunning.set(false)
+                    if (isDestroyed) return@runOnUiThread
+                    if (!created) { working(false); error.text = "未能建立家庭，請重試。"; return@runOnUiThread }
+                    section = "overview"; syncRoleServices(); renderUi(animate = true)
+                }
+            }
+        }
+        rootContainer.addView(create)
         rootContainer.addView(label("主密碼用於保護角色切換及解鎖設定，請妥善保管。", 13f, t.textSecondary, topPad = 16))
     }
     private fun renderChildSetup(t: ThemeColors) {

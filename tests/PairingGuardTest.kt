@@ -488,4 +488,26 @@ class PairingGuardTest {
             c.pause().stop().destroy()
         }
     }
+    /** Create family stores the PBKDF2 verifier off the main thread; the button is disabled meanwhile and the role is set last. */
+    @Test fun createFamilyHashesThePasswordOffTheMainThread() {
+        AppConsent.accept(ctx,AppConsent.acknowledgments)
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            MainActivity::class.java.getDeclaredMethod("navigateTo",String::class.java).apply{isAccessible=true}.invoke(a,"parent_setup")
+            val views=all(a.window.decorView)
+            views.filterIsInstance<android.widget.EditText>().first().setText("ParentPrivate928!")
+            val create=views.filterIsInstance<Button>().first{it.text.toString()=="建立家庭"}
+            val lock=GuardEngine::class.java.getDeclaredField("pollLock").apply{isAccessible=true}.get(GuardEngine)
+            synchronized(lock){
+                create.performClick()
+                assertNull("no verifier stored by the click itself",prefs.getString("parent_share_verifier",null))
+                assertEquals("unconfigured",GuardEngine.getRole(ctx))
+                assertFalse("the button is disabled while it runs",create.isEnabled)
+                assertEquals("核對中… · Checking…",create.text.toString())
+            }
+            settle{GuardEngine.getRole(ctx)=="parent" && !GuardEngine.passwordCheckRunning.get()}
+            assertTrue(GuardEngine.verifyParentPassword(ctx,"ParentPrivate928!"))
+            assertTrue(prefs.getString("family_uuid_token","").orEmpty().isNotEmpty())
+        } finally {c.pause().stop().destroy()}
+    }
 }
