@@ -5475,7 +5475,7 @@ class MainActivity : Activity() {
                 addView(label(AppConsent.reviewText(this@MainActivity), 14f, t.textPrimary).apply { setTextIsSelectable(true) })
             }
         }.apply { tag = "terms_review" })
-        rootContainer.addView(row("bell-simple", if (GuardEngine.isParentMode(this)) "家長警報通知" else "監察狀態通知", "管理系統通知的顯示方式", t) { requestAppNotifications() })
+        rootContainer.addView(row("bell-simple", if (GuardEngine.isParentMode(this)) "家長警報通知" else "監察狀態通知", if (!GuardEngine.isParentMode(this) && GuardEngine.capturePausedByNotice(this)) GuardEngine.NOTICE_OFF_STATUS else "管理系統通知的顯示方式", t) { requestAppNotifications() })
         rootContainer.addView(row("shield", "權限與相容性", "了解 Android 授權及銀行 App 提醒", t) {
             showSheet("清楚了解，每一份授權。") { dialog ->
                 addView(label("通知存取、無障礙服務及系統通知是不同權限，正式授權由 Android 處理。\n\n子女模式會讀取 Instagram 通知及已顯示的 DM；未送出草稿不會讀取。已確認的擴展模式按子女的選項包含已送出的傳出訊息及信任對象的一般脈絡。" + (if (scoresContentFree()) ScoresChildCopy.MODE_PERMISSIONS_CLAUSE else "記錄會加密傳至配對家長；新封存預設 30 天，待傳記錄最多 72 小時。") + "可在「你的擷取範圍」停止新擷取與待傳送及捨棄佇列；已送達副本須另行刪除。本 App 未獲 Meta 授權，也未整合官方資料轉移機制。銀行 App 或 Play Protect 仍可能提示風險，允許受限設定不代表這些服務已認可本 App。家長模式不啟用子女監察服務。\n\n若遇到封鎖，請保留完整警告及版本資料，交由開發者向 Google 提交審查。", 14f, t.textSecondary, bottomPad = 18))
