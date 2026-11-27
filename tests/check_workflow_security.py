@@ -228,7 +228,6 @@ class ReleaseVersionAndHotfixSafety(unittest.TestCase):
 
 class ManifestSurface(unittest.TestCase):
     def test_no_browsable_link_reaches_the_app(self):
-        # Any web page could open igguard://pair and raise a tamper alert on a child phone; pairing is QR-only.
         self.assertNotIn('android.intent.category.BROWSABLE', TEXT)
         self.assertNotIn('android:scheme="igguard" android:host="pair"', TEXT)
 

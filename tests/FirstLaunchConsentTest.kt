@@ -83,7 +83,6 @@ class FirstLaunchConsentTest {
         GuardEngine.setRole(ctx, "parent")
         assertFalse(GuardEngine.isParentMode(ctx))
     }
-    /** A short child-facing summary comes before the full Terms (PCPD guidance for services used by children). */
     @Test fun aShortChildSummaryComesBeforeTheFullTerms() {
         val a = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         val summary = root(a).findViewWithTag<TextView>("consent_child_summary")

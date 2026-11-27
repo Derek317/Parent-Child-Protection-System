@@ -105,7 +105,6 @@ object AppConsent {
             activity.label(value, size, t.textPrimary, bold, bottomPad = 16).apply { setTextIsSelectable(true) }
         content.addView(text("先了解，再決定\nYour messages, your decision", 27f, true))
         content.addView(text("請與家長一起閱讀完整條款。你可以拒絕並返回主畫面。\nRead the full Terms with your parent. You may decline and return to Home."))
-        // A short child-facing summary before the dense legal text (PCPD guidance for services used by children).
         content.addView(text(CHILD_SUMMARY).apply { tag = "consent_child_summary" })
         content.addView(text("子女模式會將實際擷取的 Instagram 訊息及相關資料傳至指定、已核對配對的家長／法定監護人。一般模式處理傳入警報；傳出及信任對象的一般對話仍須另行確認雙向擷取。未送出草稿不會讀取。", 16f, true))
         content.addView(text("本機內容及偏好字串以 Android Keystore 金鑰及 AES-GCM 保護；家長控制簽署金鑰存入 Keystore 後不匯出；若移入失敗，會暫用原有加密保存的金鑰並於下次啟動重試。家長畫面須經手機鎖驗證，背景接收仍繼續；部分時間、分類及狀態資料仍可見。內容先以家庭金鑰加密，再經 TLS 及 Cloudflare 中繼傳送。開發者與 Cloudflare 可處理密文及連線中繼資料，中繼不持有家庭解密金鑰。加密不能保護已解鎖、遭入侵的手機或外部副本。"))
