@@ -1391,7 +1391,7 @@ object GuardEngine {
             val eventId = result.complete.optString("event_id")
             if (!eventId.startsWith("control:")) return null
             val replaced = if (pairingReplacesChild(ctx)) getOrCreateFamilyToken(ctx) else null
-            if (replaced != null) try { rotateKeyAndNotifyChild(ctx, true) } catch (_: Exception) { addCheckpointLog(ctx, "CP3-PAIR", "未能為被取代的子女手機保留解除指令") }
+            if (replaced != null) try { rotateKeyAndNotifyChild(ctx, true); lastResetEvent?.let { deliveryCallbacks.remove(it) } } catch (_: Exception) { addCheckpointLog(ctx, "CP3-PAIR", "未能為被取代的子女手機保留解除指令") }
             val released = (releasedFamilyTokens(ctx) + listOfNotNull(replaced)).distinct().joinToString(",")
             setFamilyToken(ctx, result.token, preserveFamilyHistory = true, qrOnly = true)
             val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json").putString(RELEASED_FAMILY_TOKENS, released)

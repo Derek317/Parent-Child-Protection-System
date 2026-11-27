@@ -119,6 +119,8 @@ class QrPairingTest {
         GuardEngine.recordRelayAcceptance(ctx, oldScope, reset)
         assertEquals("once the relay holds it, the old room is no longer a route", listOf(family.token), routes())
         assertEquals(GuardEngine.ChildTrust.PAIRING, GuardEngine.childTrust(ctx))
+        GuardEngine::class.java.getDeclaredMethod("finishDeliveryCallbacks", android.content.Context::class.java).apply { isAccessible = true }.invoke(GuardEngine, ctx)
+        assertFalse("a release still queued is never logged as failed", GuardEngine.getCheckpointLogs(ctx).contains("傳送失敗或配對已變更"))
     }
 
     @Test fun nothingIsPinnedOnCancelWrongDigitsExpiryOrASecondPhone() {
