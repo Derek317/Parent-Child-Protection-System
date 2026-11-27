@@ -64,7 +64,7 @@ Why those `zipalign` flags: the GitHub build is made with Android Gradle plugin 
 
 The script prints three certificate digests when it can: the one that signed the APK you gave it (if it was signed), the one that now signs the output, and the one the GitHub workflow expects (`.github/workflows/build-apk.yml`, "Verify signed APK").
 
-If the new one **differs** from either, it prints a `WARNING`. It means the phone's installed IG Guard was signed by a different key. Android refuses to update an app signed by a different key, so the only way to install is to uninstall the old app first, which **deletes its data on that phone** (pairing, settings and consent receipt; the family would have to be set up again). Stop and use the keystore that signed the GitHub release. Continue only if you really mean to start over on a fresh phone or are happy to pair again.
+If the new one **differs** from either, it prints a `WARNING`. It means the phone's installed Convoy was signed by a different key. Android refuses to update an app signed by a different key, so the only way to install is to uninstall the old app first, which **deletes its data on that phone** (pairing, settings and consent receipt; the family would have to be set up again). Stop and use the keystore that signed the GitHub release. Continue only if you really mean to start over on a fresh phone or are happy to pair again.
 
 If the input APK was unsigned, only the comparison with the workflow's pinned digest is possible.
 

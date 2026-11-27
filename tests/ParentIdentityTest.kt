@@ -30,7 +30,6 @@ class ParentIdentityTest {
 
     private fun load(legacy: String? = null, expected: String? = null) = FamilySecurity.loadOrCreateParentIdentity(ctx, legacy, expected)
     private fun delete() = FamilySecurity.deleteParentIdentity(ctx)
-    // The production recovery path (MainActivity): stage a key, then activate it after the family change is journalled.
     private fun fresh() = FamilySecurity.stageFreshParentIdentity(ctx).also { FamilySecurity.activateParentIdentity(ctx, it) }
     private fun sign(bytes: ByteArray, reference: String) = FamilySecurity.signBytes(bytes, reference)
     private fun rejects(action: () -> Unit) {

@@ -525,11 +525,9 @@ class ScoresModeChildTest {
         val result = runBatch(FakeScorer(onScore = { stop = true })) { stop }
         assertEquals(RiskBatch.Outcome.STOPPED, result.outcome); assertEquals(1, result.scored)
         assertEquals(1, count("risk_results")); assertEquals(1, FamilyEvidence(ctx).use { it.riskDueThreads(scope).size })
-        // A call that threw has no score to keep.
         stop = false
         assertEquals(RiskBatch.Outcome.STOPPED, runBatch(FakeScorer(onScore = { stop = true; error("invented failure") })) { stop }.outcome)
         assertEquals(1, count("risk_results"))
-        // A pause during the call still voids the score, even when Android stops the job at the same time.
         stop = false
         assertEquals(RiskBatch.Outcome.STOPPED, runBatch(FakeScorer(onScore = { stop = true; RiskLocal.pause(ctx) })) { stop }.outcome)
         assertEquals(1, count("risk_results"))

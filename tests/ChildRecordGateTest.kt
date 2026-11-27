@@ -319,7 +319,6 @@ class ChildRecordGateTest {
         assertFalse(GuardEngine.childRemotelyReset(ctx)); assertEquals(GuardEngine.ChildTrust.NOT_VERIFIED, GuardEngine.childTrust(ctx))
     }
 
-    // ---------- replay ids (seen) pruned by the nightly cleanup ----------
     private val day = 86_400_000L
     private fun putSeen(id: String, storedAt: Long?) = FamilyEvidence(ctx).use {
         it.writableDatabase.execSQL("INSERT INTO seen(scope,id,stored_at) VALUES(?,?,?)", arrayOf(scope, id, storedAt))
@@ -329,7 +328,6 @@ class ChildRecordGateTest {
     @Test fun aReplayOfAnIdPrunedFromSeenIsStillRefusedByTheRecordWindow() {
         prefs.edit().putBoolean("family_qr_only", true).commit()
         val now = System.currentTimeMillis()
-        // Received 17 days ago, then deleted: its record time was at most 24 h ahead of the parent's clock then.
         val record = heartbeat(now - 17 * day + RiskLimits.REPORT_FUTURE_MS, "stranger_message")
         putSeen(record.getString("event_id"), now - 17 * day)
         ArchiveMaintenance.pruneAll(ctx, now)
@@ -339,12 +337,10 @@ class ChildRecordGateTest {
     }
     @Test fun theNightlyPruneDropsOnlyOldIdsWithoutARecordAndOnlyOnAQrOnlyParent() {
         val now = System.currentTimeMillis()
-        // A 5.2 pairing (no key, no QR-only fact): seen is its only replay guard, so nothing is pruned.
         prefs.edit().remove("pinned_child_key").commit()
         putSeen("legacy", now - 40 * day)
         ArchiveMaintenance.pruneAll(ctx, now)
         assertTrue(seen("legacy"))
-        // A child phone keeps its discard tombstones.
         prefs.edit().putBoolean("family_qr_only", true).commit(); pin(); GuardEngine.setRole(ctx, "child")
         ArchiveMaintenance.pruneAll(ctx, now)
         assertTrue(seen("legacy"))
@@ -356,7 +352,6 @@ class ChildRecordGateTest {
         ArchiveMaintenance.pruneAll(ctx, now)
         assertFalse(seen("legacy")); assertFalse(seen("old"))
         assertTrue(seen("recent")); assertTrue("an id with a stored record stays", seen(kept.getString("event_id")))
-        // An id without a time gets the time of the first cleanup that sees it, never an earlier one.
         ArchiveMaintenance.pruneAll(ctx, now + 15 * day); assertTrue(seen("unstamped"))
         ArchiveMaintenance.pruneAll(ctx, now + 17 * day); assertFalse(seen("unstamped"))
     }

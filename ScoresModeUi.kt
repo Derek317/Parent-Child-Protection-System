@@ -226,13 +226,13 @@ internal object ScoresUi {
         ScoresPage.WAITING -> StateCopy("等待子女同意",
             if (m.noReportYet) "已送出設定，但還沒有收到子女手機的回覆。子女需要在自己的手機閱讀說明並同意，分析才會開始。你不能代替子女同意。"
             else "子女需要在自己的手機閱讀說明並同意，分析才會開始。你不能代替子女同意，在子女同意之前，子女手機維持原有的運作方式。",
-            "下一步：請向孩子說明這個功能，並請孩子打開 IG Guard 查看。")
+            "下一步：請向孩子說明這個功能，並請孩子打開 Convoy 查看。")
         ScoresPage.RECONSENT -> StateCopy("子女需要再次同意",
             "說明文字已更新，子女需要在自己的手機上再次同意。在子女再次同意之前，子女手機不會儲存或分析任何內容，也不會把訊息文字傳給你，只會傳送不含文字的提醒。你不能代替子女同意。",
-            "下一步：請向孩子說明，並請孩子打開 IG Guard 查看。")
+            "下一步：請向孩子說明，並請孩子打開 Convoy 查看。")
         ScoresPage.MODEL_MISSING -> StateCopy("子女手機尚未安裝模型",
             "分析模型（$MODEL_FILE）隨 App 內附，子女手機第一次打開 App 時會自己安裝。如果這個版本的 App 沒有內附模型，AI 風險分析無法使用，請改裝內附模型的安裝包。在安裝之前不會有新的分數，而在這個模式下你也不會收到訊息內容。",
-            "下一步：請子女打開 IG Guard，等安裝完成（手機需要約 1.1 GB 可用空間）。只有沒有內附模型的版本，才需要在子女手機的「權限」頁手動匯入（需要家長密碼）。")
+            "下一步：請子女打開 Convoy，等安裝完成（手機需要約 1.1 GB 可用空間）。只有沒有內附模型的版本，才需要在子女手機的「權限」頁手動匯入（需要家長密碼）。")
         ScoresPage.MODEL_WRONG -> StateCopy("子女手機的模型檔不正確",
             "子女手機上的檔案不是指定的模型檔，所以不會被使用。只接受完全相同的檔案：$MODEL_FILE，$MODEL_SIZE_TEXT。",
             "下一步：在子女手機移除該檔案（需要家長密碼），再安裝 App 內附的模型。")
@@ -245,7 +245,7 @@ internal object ScoresUi {
             "下一步：如果想知道原因，可以用不責備的語氣問問孩子。")
         ScoresPage.ENGINE_UNAVAILABLE -> StateCopy("子女手機的分析功能未能啟動",
             "這個 App 的分析部分未能在子女手機上啟動，所以不會有分數。這和手機記憶體或處理器不足是不同的問題，在這個模式下你也不會收到訊息內容。",
-            "下一步：請在子女手機更新或重新安裝 IG Guard，然後再看。")
+            "下一步：請在子女手機更新或重新安裝 Convoy，然後再看。")
         ScoresPage.NOT_RUNNING -> StateCopy("子女已同意，但分析沒有在子女手機上運行",
             "子女已同意，但子女手機目前沒有在分析（可能是雙向擷取尚未確認，或擷取已停止）。在恢復之前不會有新的分數；在這個模式下你也不會收到訊息內容。",
             "下一步：請確認子女手機已確認雙向擷取的範圍，而且手機有在充電。")
@@ -278,9 +278,9 @@ internal object ScoresUi {
     fun enableBlockedWhy(state: ScoresModeState?): String = when {
         state == null -> "還沒有收到子女手機的回報，暫時不能開啟。"
         state.model == "unsupported_device" -> "子女手機的記憶體不足或處理器不支援，不能使用這個模式。"
-        state.model == "engine_unavailable" -> "子女手機的分析功能未能啟動。更新或重新安裝 IG Guard 可能有幫助。"
+        state.model == "engine_unavailable" -> "子女手機的分析功能未能啟動。更新或重新安裝 Convoy 可能有幫助。"
         state.model == "mismatch" -> "子女手機上的模型檔不正確。請先在子女手機移除它，再安裝 App 內附的模型。"
-        else -> "分析模型隨 App 內附，子女手機第一次打開 IG Guard 時會自己安裝（需要約 1.1 GB 可用空間），回報模型有效後才能開啟。如果這個版本沒有內附模型，AI 風險分析無法使用，請改裝內附模型的安裝包。"
+        else -> "分析模型隨 App 內附，子女手機第一次打開 Convoy 時會自己安裝（需要約 1.1 GB 可用空間），回報模型有效後才能開啟。如果這個版本沒有內附模型，AI 風險分析無法使用，請改裝內附模型的安裝包。"
     }
 
     const val PARENT_ON_TITLE = "改用「僅分數模式」？ / Switch to scores-only mode?"
@@ -315,9 +315,9 @@ internal object ScoresUi {
     const val METHOD_CAPTURE_BODY = "本 App 讀取子女手機上的 Instagram 通知及對話畫面（現有方式）。你仍然只會收到分數。\nThis app reads Instagram notifications and conversation screens on your child's phone (the current way). You still receive scores only."
     /** The warning, word for word as Derek read it (docs/superpowers/specs/2026-11-20-collection-method-design.md). */
     const val WARNING_ZH_TITLE = "自動擷取可能違反 Instagram 使用條款"
-    const val WARNING_ZH_BODY = "此方式會讀取子女手機上的 Instagram 通知及對話畫面。Instagram 的使用條款禁止未經其許可以自動方式取得資料。子女的 Instagram 帳戶可能因此被限制或停用。IG Guard 與 Meta 無關，亦未獲 Meta 批准。選擇此方式即表示你明白上述風險，並由你自行決定及承擔使用此方式的責任。如不接受，請改用「手動上載」。"
+    const val WARNING_ZH_BODY = "此方式會讀取子女手機上的 Instagram 通知及對話畫面。Instagram 的使用條款禁止未經其許可以自動方式取得資料。子女的 Instagram 帳戶可能因此被限制或停用。Convoy 與 Meta 無關，亦未獲 Meta 批准。選擇此方式即表示你明白上述風險，並由你自行決定及承擔使用此方式的責任。如不接受，請改用「手動上載」。"
     const val WARNING_EN_TITLE = "Automatic capture may breach Instagram's Terms of Use"
-    const val WARNING_EN_BODY = "This method reads Instagram notifications and conversation screens on your child's phone. Instagram's Terms of Use prohibit collecting information in an automated way without its permission. Your child's Instagram account could be restricted or disabled as a result. IG Guard is independent of Meta and has no Meta approval. By choosing this method you confirm that you understand this risk and that the decision to use it, and the responsibility for it, are yours. If you do not accept this, choose Manual upload."
+    const val WARNING_EN_BODY = "This method reads Instagram notifications and conversation screens on your child's phone. Instagram's Terms of Use prohibit collecting information in an automated way without its permission. Your child's Instagram account could be restricted or disabled as a result. Convoy is independent of Meta and has no Meta approval. By choosing this method you confirm that you understand this risk and that the decision to use it, and the responsibility for it, are yours. If you do not accept this, choose Manual upload."
     const val WARNING_ACK = "我明白上述風險，並自行決定及承擔選擇自動擷取的責任。\nI understand the risk above, and the decision and the responsibility are mine."
     const val METHOD_CHANGE = "更改收集方式 / Change method"
     const val METHOD_CHANGE_TITLE = "更改收集方式？ / Change the method?"
@@ -375,7 +375,7 @@ internal object ScoresChildCopy {
     val CLOUD_GOOGLE_DRIVE_URL = cloudUrl("GoogleDrive")
     val CLOUD_DROPBOX_URL = cloudUrl("Dropbox")
     const val CLOUD_TITLE = "可選：每星期自動匯出到你自己的雲端硬碟 / Optional: a weekly export to your own cloud drive"
-    const val CLOUD_NOTICE = "這是 Instagram（Meta）自己的功能，不是 IG Guard 的功能。設定後，你的訊息副本會存放在你自己的雲端硬碟（Google Drive 或 Dropbox），受該服務的條款約束。Instagram 會要求你輸入 Instagram 密碼；IG Guard 不會看到你的密碼。匯入仍然要用上載卡的「匯入 Instagram 資料」選取檔案。\nThis is Instagram's (Meta's) own feature, not IG Guard's. Once set up, a copy of your messages sits in your own cloud drive (Google Drive or Dropbox), under that provider's terms. Instagram asks for your Instagram password; IG Guard never sees it. Importing still happens through \"Import Instagram export\" on the upload card."
+    const val CLOUD_NOTICE = "這是 Instagram（Meta）自己的功能，不是 Convoy 的功能。設定後，你的訊息副本會存放在你自己的雲端硬碟（Google Drive 或 Dropbox），受該服務的條款約束。Instagram 會要求你輸入 Instagram 密碼；Convoy 不會看到你的密碼。匯入仍然要用上載卡的「匯入 Instagram 資料」選取檔案。\nThis is Instagram's (Meta's) own feature, not Convoy's. Once set up, a copy of your messages sits in your own cloud drive (Google Drive or Dropbox), under that provider's terms. Instagram asks for your Instagram password; Convoy never sees it. Importing still happens through \"Import Instagram export\" on the upload card."
     const val CLOUD_GOOGLE_DRIVE = "每週匯出到 Google Drive / Weekly export to Google Drive"
     const val CLOUD_DROPBOX = "每週匯出到 Dropbox / Weekly export to Dropbox"
     const val CLOUD_CONFIRM_TITLE = "前往 Instagram 設定每週匯出？ / Set up a weekly export on Instagram?"
@@ -389,11 +389,11 @@ internal object ScoresChildCopy {
     val DOWNLOADS_URI: Uri = android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
     fun exportPicker(): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
         .putExtra(Intent.EXTRA_MIME_TYPES, EXPORT_MIME_TYPES).putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, DOWNLOADS_URI)
-    const val REMINDER_TITLE = "IG Guard · 是時候更新 Instagram 資料 (Time to refresh your Instagram export)"
-    const val REMINDER_TEXT = "你上次匯入 Instagram 資料已超過 7 天。打開 IG Guard，按指引再下載及匯入一份新的資料。\nYour last Instagram import is more than 7 days old. Open IG Guard and follow the guide to download and import a fresh export."
+    const val REMINDER_TITLE = "Convoy · 是時候更新 Instagram 資料 (Time to refresh your Instagram export)"
+    const val REMINDER_TEXT = "你上次匯入 Instagram 資料已超過 7 天。打開 Convoy，按指引再下載及匯入一份新的資料。\nYour last Instagram import is more than 7 days old. Open Convoy and follow the guide to download and import a fresh export."
     // The parent asked for a fresh export: no content, and the parent is not told whether it was seen.
-    const val REQUEST_TITLE = "IG Guard · 你的家長請你更新 Instagram 資料 (Your parent asks you to refresh your Instagram export)"
-    const val REQUEST_TEXT = "打開 IG Guard，按指引下載及匯入一份新的資料。\nOpen IG Guard and follow the guide to download and import a fresh export."
+    const val REQUEST_TITLE = "Convoy · 你的家長請你更新 Instagram 資料 (Your parent asks you to refresh your Instagram export)"
+    const val REQUEST_TEXT = "打開 Convoy，按指引下載及匯入一份新的資料。\nOpen Convoy and follow the guide to download and import a fresh export."
     const val REQUEST_CARD_TITLE = "你的家長請你更新 Instagram 資料 / Your parent asks you to refresh your Instagram export"
     const val EXPORT_RUNNING = "正在讀取檔案…\nReading the file…"
     const val EXPORT_PICKER_MISSING = "找不到檔案選擇器。\nNo file picker is available."
@@ -442,8 +442,8 @@ internal object ScoresChildCopy {
     }
     const val UNTIL_AGREE_AGAIN = "說明文字已更新，需要你再次同意。你同意之前，不會儲存或分析任何內容，也不會把你的訊息文字傳給家長。你也可以撤回同意。\nThe explanation was updated, so we need you to agree again. Until you do, nothing is stored or analysed and no message text is sent to your parent. You can also withdraw."
     /** While capture is held after a switch-off that followed manual upload: for the ongoing notice and the child's status line. */
-    const val HELD_STATUS = "IG Guard 暫時不讀取 Instagram：你之前選擇了手動上載，要等你在 App 內同意後才會再讀取，家長暫時不會收到你的訊息。\nIG Guard is not reading Instagram: you had chosen manual upload, so it waits for your agreement in the app. Your parent does not receive your messages meanwhile."
-    private const val UNTIL_AGREE_HELD = "你同意之前，不會儲存或分析任何內容，IG Guard 也不會讀取 Instagram，因為你之前選擇了手動上載。\nUntil you agree, nothing is stored or analysed and capture stays off, because you had chosen manual upload."
+    const val HELD_STATUS = "Convoy 暫時不讀取 Instagram：你之前選擇了手動上載，要等你在 App 內同意後才會再讀取，家長暫時不會收到你的訊息。\nConvoy is not reading Instagram: you had chosen manual upload, so it waits for your agreement in the app. Your parent does not receive your messages meanwhile."
+    private const val UNTIL_AGREE_HELD = "你同意之前，不會儲存或分析任何內容，Convoy 也不會讀取 Instagram，因為你之前選擇了手動上載。\nUntil you agree, nothing is stored or analysed and capture stays off, because you had chosen manual upload."
     const val UNTIL_AGREE = "你同意之前，不會儲存或分析任何內容，原有的運作方式繼續：你的家長仍會像以往一樣收到訊息。\nUntil you agree, nothing is stored or analysed and the earlier mode continues, so your parent still receives messages as before."
     private const val PARENT_GETS_NO_TEXT = "家長不會收到你的訊息文字，只會收到不含文字的提醒。\nYour parent does not receive your message text, only alerts without text."
     /** What is and is not happening in each state. Never says the parent does not see messages unless that is true. */
@@ -496,9 +496,9 @@ internal object ScoresChildCopy {
     const val CHANGE_DONE = "我知道了 / Got it"
     const val CHANGE_OFF_HELD_BODY = "分析已停止，這部手機上為分析儲存的訊息已刪除。因為你之前選擇手動上載，本 App 不會自行再讀取 Instagram，要先得到你的同意。\nAnalysis has stopped and the messages stored here for it were deleted. Because you had chosen manual upload, this app will not read Instagram again on its own: it needs your agreement first."
     // asked while capture is held after a switch-off that followed manual upload
-    const val HOLD_TITLE = "IG Guard 暫時不會讀取 Instagram\nIG Guard is not reading Instagram"
-    const val HOLD_BODY = "家長已關閉 AI 分析。你之前選擇手動上載，所以本 App 不會讀取 Instagram 的通知或對話畫面，除非你同意。你不作回應，就會維持不讀取。\nYour parent switched AI analysis off. You had chosen manual upload, so IG Guard reads no Instagram notifications or conversation screens unless you agree. If you do nothing, it stays off."
-    const val HOLD_ASK = "是否允許 IG Guard 再次讀取 Instagram 的通知和對話畫面？\nMay IG Guard read Instagram notifications and conversation screens again?"
+    const val HOLD_TITLE = "Convoy 暫時不會讀取 Instagram\nConvoy is not reading Instagram"
+    const val HOLD_BODY = "家長已關閉 AI 分析。你之前選擇手動上載，所以本 App 不會讀取 Instagram 的通知或對話畫面，除非你同意。你不作回應，就會維持不讀取。\nYour parent switched AI analysis off. You had chosen manual upload, so Convoy reads no Instagram notifications or conversation screens unless you agree. If you do nothing, it stays off."
+    const val HOLD_ASK = "是否允許 Convoy 再次讀取 Instagram 的通知和對話畫面？\nMay Convoy read Instagram notifications and conversation screens again?"
     const val HOLD_ALLOW = "允許讀取 / Allow reading"
 
     // model import

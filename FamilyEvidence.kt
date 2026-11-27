@@ -29,15 +29,13 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         private val openLock=Any()
         private const val DAY=86_400_000L
         private const val PENDING_TTL=3*DAY
-        @Volatile internal var contentLookups=0 // test-only: per-row body/payload fetches
-        /** A parent's replay id outlives its record's acceptance window (record time up to 24 h ahead, 8 days back) with room to spare. */
+        @Volatile internal var contentLookups=0
         private const val SEEN_KEEP=2*FamilySecurity.CONTENT_RECORD_WINDOW_MS
     }
     private val app=ctx.applicationContext
     private val privateColumns=listOf("sender","conversation_key","conversation_label","account_label","body","payload")
     // Fetch the duplicate body separately so encrypted 1 MiB events still fit a CursorWindow.
     private val evidenceColumns="scope,id,sender,reason,stamp,payload,saved,help_seen,legacy,conversation_key,conversation_label,account_label,direction,review_state,kind,actionable,capture_order,sort_stamp,sort_order,sender_index,conversation_index"
-    // Search scans every row for body, so it reads body instead and fetches payload only for matches.
     private val searchColumns=evidenceColumns.replace("payload","body")
     private fun purpose(scope:String,table:String,id:String,column:String):String = org.json.JSONArray(listOf("archive",scope,table,id,column)).toString()
     private fun seal(scope:String,table:String,id:String,column:String,value:String):String = LocalVault.seal(app,purpose(scope,table,id,column),value)
@@ -121,7 +119,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         }
         if(oldVersion<6)retentionSchema(db)
         if(oldVersion<10)riskSchema(db)   // 10: the risk_store(scope,stamp) index for the 14-day cleanup
-        if(oldVersion<11)addColumn(db,"seen","stored_at","INTEGER")   // 11: NULL until the first cleanup that may prune it stamps it
+        if(oldVersion<11)addColumn(db,"seen","stored_at","INTEGER")
         if(oldVersion<9) {
             // Before schema 9 a thread was keyed by account, label and kind and risk_unknown meant "counted, not stored".
             // From 9 a thread is keyed by its label alone and risk_unknown means "set aside as a group", so nothing carries over.
@@ -189,8 +187,6 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     /** When [id] was first queued here (its lifetime started then), or null. */
     fun enqueuedAt(scope:String,id:String):Long? = readableDatabase.rawQuery("SELECT expires FROM outbox_lifetimes WHERE scope=? AND id=?",arrayOf(scope,id))
         .use{if(it.moveToFirst())it.getLong(0)-PENDING_TTL else null}
-    /** [pruneSeen]: only for a parent of a QR-only family, where every record is signed and refused once older than its window.
-     * A 5.2 pairing has no such time check and a child's seen rows are discard tombstones: neither may ever be pruned. */
     fun pruneExpired(scope:String,now:Long=System.currentTimeMillis(),pruneSeen:Boolean=false):Int {
         val db=writableDatabase;db.beginTransaction()
         try {
@@ -213,7 +209,6 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             val windows=db.delete("capture_windows",if(evidence+fragments+outbox>0)"scope=?" else "scope=? AND updated<=?",
                 if(evidence+fragments+outbox>0)arrayOf(scope) else arrayOf(scope,(now-PENDING_TTL).toString()))
             if(pruneSeen) {
-                // Stamped no earlier than stored; an id with a record stays so append never meets a row it cannot insert.
                 db.execSQL("UPDATE seen SET stored_at=? WHERE scope=? AND stored_at IS NULL",arrayOf(now,scope))
                 db.execSQL("DELETE FROM seen WHERE scope=? AND stored_at<? AND NOT EXISTS(SELECT 1 FROM evidence e WHERE e.scope=seen.scope AND e.id=seen.id)",arrayOf(scope,now-SEEN_KEEP))
             }
@@ -400,7 +395,6 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
     fun conversations(scope:String,q:EvidenceQuery):List<ConversationSummary> {
         val (where,args)=where(scope,q)
         if(q.text.isBlank())return readableDatabase.rawQuery("SELECT scope,id,conversation_index,conversation_key,conversation_label,account_label,COUNT(*),SUM(CASE WHEN actionable=1 AND review_state<>'reviewed' THEN 1 ELSE 0 END),MAX(stamp),GROUP_CONCAT(DISTINCT CASE WHEN actionable=1 THEN reason END),MAX(CASE WHEN reason='sexual_or_grooming_content' THEN 2 ELSE 1 END) FROM evidence WHERE $where GROUP BY conversation_index",args).use { c ->
-            // Priority and MAX(stamp) are clear; only the key tiebreak needs decryption, so decrypt just the page plus rows tied at its edges.
             val ranked=buildList{while(c.moveToNext())add(Triple(c.position,if(q.section=="review")c.getInt(10) else 0,c.getLong(8)))}
                 .sortedWith(compareByDescending<Triple<Int,Int,Long>>{it.second}.thenByDescending{it.third})
             fun tied(a:Int,b:Int)=ranked[a].second==ranked[b].second && ranked[a].third==ranked[b].third
@@ -551,7 +545,6 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
      * capture (the newest such row, so an older, distinct "ok" stays) (the notification row is dropped, the screen row's position is kept), and a notification arriving after the
      * screen read is dropped if an unclaimed screen row matches. So "ok","ok" stays two messages.
      */
-    /** A risk message with its Keystore work done (blind indexes and sealed text), so a caller can do it before taking a lock. */
     class SealedRiskMessage internal constructor(val thread:String,val bodyHash:String,val label:String,val body:String)
     fun sealRiskMessage(scope:String,id:String,threadKey:String,label:String,text:String):SealedRiskMessage = SealedRiskMessage(index(scope,"conversation",threadKey),
         index(scope,"risk_body",text),seal(scope,"risk_store",id,"label",label),seal(scope,"risk_store",id,"body",text))
@@ -716,7 +709,6 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             for(row in report.conversations) {
                 val key=scoreLabelKey(scope,row.label)
                 val old=db.rawQuery("SELECT scored_at,first_reached_50 FROM risk_scores WHERE scope=? AND label_index=?",arrayOf(scope,key)).use{if(it.moveToFirst())it.getLong(0) to (if(it.isNull(1))null else it.getLong(1)) else null}
-                // Same run time may carry a lower score: the child sends the best of 14 days, and the high one can age out. Only older is skipped.
                 if(old!=null && row.scoredAt<old.first)continue
                 val tomb=db.rawQuery("SELECT deleted_at,notified_at FROM risk_tombstones WHERE scope=? AND label_index=?",arrayOf(scope,key)).use{if(it.moveToFirst())it.getLong(0) to (if(it.isNull(1))null else it.getLong(1)) else null}
                 if(tomb!=null && row.scoredAt<=tomb.first)continue

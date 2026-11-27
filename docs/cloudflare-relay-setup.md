@@ -9,7 +9,8 @@ The [migration design](superpowers/specs/2026-11-08-cloudflare-relay-design.md) 
 3. In **Workers & Pages**, use the `dere2005317.workers.dev` subdomain and the existing `parent-child-protection-system` Worker for this project.
 4. Keep account login, API tokens and APK signing secrets in your own account/secret settings. The app will contain only the public relay endpoint, with each family authenticated separately by its existing pairing and signing identity.
 
-No Cloudflare account is needed for the parents or children using the app. Both phones keep using IG Guard.
+No Cloudflare account is needed for the parents or children using the app. Both phones keep using Convoy.
+5. Add a Cloudflare WAF rate-limiting rule: URI path starts with `/v1/rooms/`, counted per IP, about 30 requests per 10 seconds, then block for 60 seconds. The Worker refuses unsigned or mismatched room requests before routing, and the rule keeps floods from using up the plan's quota.
 
 ## Deploy through GitHub Actions
 

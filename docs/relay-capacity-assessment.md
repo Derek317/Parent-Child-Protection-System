@@ -25,7 +25,7 @@ The expanded 4.8 capture can increase traffic and expose these weaknesses. The l
 
 ## Replacement requirements
 
-- Only IG Guard is installed on parent and child phones.
+- Only Convoy is installed on parent and child phones.
 - No VPS or server for the developer or families to operate; no payment or automatic paid upgrade.
 - Capacity for ordinary conversation capture, not just occasional risk notifications.
 - Existing application encryption, signed parent commands, explicit child consent, durable local queue, receipt verification and family separation remain intact.

@@ -13,11 +13,11 @@ Inspection/update date: **16 November 2026 (Hong Kong)**. This document describe
 
 ## Intended use
 
-IG Guard is restricted to authorized private family safeguarding by a parent or legal guardian. Surveillance of strangers, partners, staff, students or clients, and commercial or institutional surveillance, is prohibited. It contains no school administration console or developer plaintext-message dashboard. Conditional Child Mode capture forwards selected Instagram message records encrypted to the dedicated paired parent or legal guardian, who can decrypt and read them. The developer-deployed relay temporarily stores encrypted undelivered packets and separately holds routing/registration metadata. Choosing the parent role does not verify a person's identity or parental responsibility. The existing child pairing flow requires explicit confirmation and supports comparing a full security code on both phones.
+Convoy is restricted to authorized private family safeguarding by a parent or legal guardian. Surveillance of strangers, partners, staff, students or clients, and commercial or institutional surveillance, is prohibited. It contains no school administration console or developer plaintext-message dashboard. Conditional Child Mode capture forwards selected Instagram message records encrypted to the dedicated paired parent or legal guardian, who can decrypt and read them. The developer-deployed relay temporarily stores encrypted undelivered packets and separately holds routing/registration metadata. Choosing the parent role does not verify a person's identity or parental responsibility. The existing child pairing flow requires explicit confirmation and supports comparing a full security code on both phones.
 
 Hong Kong Cap. 486 section 52 concerns personal data held by an individual and concerned only with the management of his personal, family or household affairs, or so held only for recreational purposes. The specified exemption covers the Data Protection Principles, Parts 4 and 5, and sections 36 and 38(b), subject to the actual facts; it is not a blanket exemption for Safe Guard, Cloudflare or institutions. Other correspondents' applicable rights, privacy interests and other legal/contractual requirements remain relevant. Acceptance records a device user's choice, not consent on behalf of all correspondents or legal certification of monitoring.
 
-Instagram accounts must meet Instagram's applicable minimum age: at least 13, or higher where required. IG Guard has no Meta approval. Official Instagram API and portability integrations are not implemented. Current capture uses Android notifications and accessibility. Future integration proposals do not describe runtime safeguards.
+Instagram accounts must meet Instagram's applicable minimum age: at least 13, or higher where required. Convoy has no Meta approval. Official Instagram API and portability integrations are not implemented. Current capture uses Android notifications and accessibility. Future integration proposals do not describe runtime safeguards.
 
 ## Where information goes
 
@@ -52,7 +52,7 @@ These are source-code findings about normal operation. They do not establish tha
 
 ## Retention and deletion
 
-- To stop new capture, disable both IG Guard notification access and accessibility in Android Settings. The scope screen currently has no separate switch to withdraw expanded capture. These controls do not erase existing queues or archives, and pending delivery/retry may continue. They are separate from deletion.
+- To stop new capture, disable both Convoy notification access and accessibility in Android Settings. The scope screen currently has no separate switch to withdraw expanded capture. These controls do not erase existing queues or archives, and pending delivery/retry may continue. They are separate from deletion.
 - Parent evidence has no automatic expiry and remains until explicit deletion. App-data clearing/uninstallation also removes local app data. Old-family archives remain isolated and have an explicit removal control.
 - The separate initial acceptance receipt has no automatic expiry and persists through normal launches/updates. Archive deletion leaves it intact; clearing app data/uninstalling on that phone removes it, so subsequent setup requires initial acceptance. Clearing one phone does not erase the other phone's receipt or archive.
 - Deleting archived text retains content-free replay tombstones and separate chart statistics. It does not request remote relay-cache deletion or erase clipboard/export copies.

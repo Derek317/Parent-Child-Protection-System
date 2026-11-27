@@ -140,7 +140,6 @@ class LocalRunner(unittest.TestCase):
             subprocess.run(['bash', '-c', clean[0]], env={**os.environ, 'build_dir': tmp}, check=True)
             self.assertEqual([], [p for p in stale if p.exists()])
             self.assertEqual(kept, [p for p in kept if p.exists()])
-        # An empty build_dir must stop the script instead of deleting from /.
         self.assertNotEqual(0, subprocess.run(['bash', '-c', 'build_dir=; ' + clean[0]], capture_output=True).returncode)
 
 class DependencyVerification(unittest.TestCase):
@@ -153,7 +152,6 @@ class DependencyVerification(unittest.TestCase):
         self.assertGreater(len(artifacts), 100)
         self.assertTrue(all(a.find('v:sha256', ns) is not None for a in artifacts))
         names = {a.get('name') for a in artifacts}
-        # aapt2 is published per OS: the metadata generated on Windows must also list what CI's Linux runners fetch.
         for name in [n for n in names if n.endswith('-windows.jar')]:
             self.assertIn(name.replace('-windows.jar', '-linux.jar'), names)
         self.assertIn("out/'gradle/verification-metadata.xml'", (REPO / 'tests/run_android.sh').read_text())

@@ -1,4 +1,4 @@
-# Visual review and debugging — IG Guard 4.8
+# Visual review and debugging — Convoy 4.8
 
 ## Scope and sequence
 
@@ -55,7 +55,7 @@ Version 4.8 is built by the existing GitHub tag workflow using the repository's 
 
 ## Published release verification
 
-- Release: [IG Guard 4.8](https://github.com/Derek317/Parent-Child-Protection-System/releases/tag/4.8); source commit `ebb8f78`.
+- Release: [Convoy 4.8](https://github.com/Derek317/Parent-Child-Protection-System/releases/tag/4.8); source commit `ebb8f78`.
 - [Tag workflow](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42458776227) and [main workflow](https://github.com/Derek317/Parent-Child-Protection-System/actions/runs/42458776278): **success**.
 - Downloaded release APK: `app.family.igguard`, **version 4.8 / code 150**, not debuggable; APK Signature Scheme v2 verification passed.
 - APK SHA-256: `75238e903163fc64273e49699d4c2f33e1ec9cd035061c3d089542926f85b6fa` — matches the published SHA256SUMS.

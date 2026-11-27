@@ -275,7 +275,6 @@ class DeliveryHealthTest {
         assertTrue("the parent's missing-heartbeat alert fires", GuardEngine.shouldFireHeartbeatMissingAlert(ctx))
     }
 
-    /** A child clock more than 100 minutes slow: each newer heartbeat is still already overdue, so it must not re-arm the alert. */
     @Test fun aSlowChildClockRaisesTheOfflineAlertOnceNotAfterEveryHeartbeat() {
         val now = System.currentTimeMillis()
         GuardEngine.recordChildHeartbeatOnParent(ctx, "summary", now - 120 * 60_000L)

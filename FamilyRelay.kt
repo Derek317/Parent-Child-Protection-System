@@ -15,7 +15,6 @@ object FamilyRelay {
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
     private fun encoded(bytes:ByteArray) = encoder.encodeToString(bytes)
-    /** The relay's clock minus this phone's, learned from a refused proof's Date header (GuardEngine.noteRelayClock); 0 when they agree. */
     @Volatile var clockOffsetMs = 0L
     private fun hash(text:String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it.toInt() and 255)}
 

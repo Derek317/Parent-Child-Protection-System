@@ -26,7 +26,6 @@ import java.util.concurrent.TimeUnit
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[28])
 class SecurityMaintenanceTest {
-    /** Records which job each jobFinished call ends: the stock shadow keeps only one flag. */
     @Implements(JobService::class)
     class FinishShadow : ShadowJobService() {
         @Implementation override fun jobFinished(params: JobParameters, needsReschedule: Boolean) { finished.add(params.jobId); super.jobFinished(params, needsReschedule) }

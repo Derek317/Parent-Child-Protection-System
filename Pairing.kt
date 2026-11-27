@@ -7,7 +7,6 @@ import java.util.Base64
 import java.util.UUID
 
 /**
- * QR pairing state machines (design m2-and-multichild rev. 3, sections 2.2-2.6).
  * No transport, UI, storage or global state: the caller encrypts every emitted record with
  * GuardEngine.encryptPayload(rendezvous.token, record.toString()) and passes the decrypted records back in.
  *

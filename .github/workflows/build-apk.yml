@@ -1,4 +1,4 @@
-name: Build IG Guard APK
+name: Build Convoy APK
 
 on:
   push:
@@ -135,7 +135,6 @@ jobs:
 
 
           VER_NAME=6.0.3
-          # The code comes from the version first, the run second: a hotfix of an older release never outranks a newer release.
           IFS=. read -r V_MAJ V_MIN V_PATCH <<< "$VER_NAME"
           VER_CODE=$(( (V_MAJ * 10000 + V_MIN * 100 + ${V_PATCH:-0}) * 10000 + ${{ github.run_number }} % 10000 ))
 
@@ -252,8 +251,8 @@ jobs:
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
           <resources>
-              <string name="app_name">IG Guard</string>
-              <string name="acc_desc">Keeps Instagram notifications enabled and protects teens from explicit messages.</string>
+              <string name="app_name">Convoy</string>
+              <string name="acc_desc">Convoy reads the conversation text shown on screen in Instagram, including messages you send, and sends alerts to your paired parent's phone. It works only in Instagram and does not block or change anything there.</string>
           </resources>
           EOF
 
@@ -316,7 +315,7 @@ jobs:
 
                   <service
                       android:name=".IgNotificationListener"
-                      android:label="IG Guard DM Reader"
+                      android:label="Convoy DM Reader"
                       android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
                       android:exported="true">
                       <intent-filter>
@@ -326,7 +325,7 @@ jobs:
 
                   <service
                       android:name=".IgAccessibilityService"
-                      android:label="IG Guard Anti-Tamper"
+                      android:label="Convoy Chat Reader"
                       android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
                       android:exported="true">
                       <intent-filter>
@@ -410,7 +409,7 @@ jobs:
       - name: Checkout relay source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          fetch-depth: 0  # the hotfix check below needs origin/main and the history
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -432,7 +431,6 @@ jobs:
         run: |
           set -euo pipefail
           if ! git merge-base --is-ancestor origin/main HEAD; then
-            # A hotfix of an older release, or a re-run of an older main run, would put an older relay over main's current one.
             echo "::warning title=Relay deploy skipped::This commit does not contain the current main, so its relay is not deployed. Checking the existing endpoint instead."
             echo "This commit does not contain the current main; the relay was not deployed. Checking the existing endpoint instead." >> "$GITHUB_STEP_SUMMARY"
           elif [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
@@ -508,7 +506,7 @@ jobs:
         run: |
           set -euo pipefail
           unset APK_KEYSTORE_PATH
-          echo "Signing secrets are not available on this ref. This unsigned APK is for CI inspection only and cannot update an installed IG Guard." >> "$GITHUB_STEP_SUMMARY"
+          echo "Signing secrets are not available on this ref. This unsigned APK is for CI inspection only and cannot update an installed Convoy." >> "$GITHUB_STEP_SUMMARY"
           gradle assembleRelease --no-daemon
           echo "artifact_name=ig-guard-unsigned-apk" >> "$GITHUB_OUTPUT"
 

@@ -119,7 +119,6 @@ internal object InstagramExport {
         val zip = ZipInputStream(input)
         val buffer = ByteArray(1 shl 14)
         while (true) {
-            // An entry name that is not valid UTF-8 makes nextEntry throw IllegalArgumentException: bad archive, not a bug.
             val entry = try { zip.nextEntry } catch (_: IllegalArgumentException) { throw Failure(ImportResult.MALFORMED) } ?: break
             if (++entries > limits.maxEntries) throw Failure(ImportResult.TOO_MANY_ENTRIES)
             val name = entry.name
@@ -350,7 +349,6 @@ internal object InstagramExport {
             val teen = when {
                 global != null && global in c.people -> global
                 c.json && c.listed.size == 2 && c.listed.all { it in c.people } -> c.listed[1]   // the first-listed participant is the other person
-                // A guess by count missing from a two-person thread may be a busy friend: that thread could be a chat, so no guess.
                 c.people.size == 2 && (global == null || byFolder == null && child == null) -> throw Failure(ImportResult.TEEN_UNKNOWN)
                 else -> null   // with the teen known, a thread without them is one they never wrote in
             }
@@ -430,15 +428,12 @@ internal object InstagramImport {
             val scope = GuardEngine.getChannelTopic(app)
             var stored = 0
             var conversations = 0
-            // Sealing is Keystore work per message: done before the session lock, so Pause, Withdraw and Accept never wait on a long import.
             val prepared = FamilyEvidence(app).use { db -> parsed.conversations.map { c ->
                 val recent = c.messages.filter { it.ts != null && it.ts >= cutoff }.takeLast(RiskLimits.MESSAGES)
-                // The id is the time read to the minute, so JSON, HTML and any language give one id (undated messages were dropped above).
                 val ids = ids(c.key, recent) { Math.floorDiv(it.ts!!, 60_000L).toString() }
                 Triple(c, recent, ids) to recent.mapIndexed { i, m -> db.sealRiskMessage(scope, ids[i], c.key, c.label, m.text) }
             } }
             // The parse can be long: a wipe, pause, withdrawal or method change meanwhile must win, so permission is checked again under the session lock.
-            // The scope is checked again too: the messages were sealed and indexed for it before the lock.
             val stillAllowed = GuardEngine.withSessionLock { if (!allowed(app) || GuardEngine.getChannelTopic(app) != scope) false else {
             FamilyEvidence(app).use { db ->
                 val sql = db.writableDatabase

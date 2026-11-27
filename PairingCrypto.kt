@@ -19,7 +19,6 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Pure building blocks of the QR pairing (design m2-and-multichild, sections 2.2-2.4).
  * Key texts (P, K, Ep, Ec) are base64url SPKI strings exactly as transmitted; every string is hashed as its UTF-8 bytes.
  */
 object PairingCrypto {

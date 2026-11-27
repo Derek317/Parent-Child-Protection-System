@@ -62,7 +62,6 @@ object ArchiveMaintenance {
 }
 
 class ArchiveMaintenanceJob : JobService() {
-    // One thread per job: the prune job and the heartbeat tick can run side by side.
     private val workers=HashMap<Int,Thread>()
     private val completion=Handler(Looper.getMainLooper())
 

@@ -65,7 +65,6 @@ class PairingRelayTest {
 
     @Test fun a401ToAKeyedChildSaysPairAgainAndWipesNothing() {
         val r = QrPairing.pairChild(ctx)
-        // The relay's clock agrees with the phone's: a genuine key refusal.
         val (server, _) = refuse(401, "unauthorized", System.currentTimeMillis())
         try {
             assertTrue(GuardEngine.cpChildKeyRefused)
@@ -86,7 +85,6 @@ class PairingRelayTest {
         } finally { server.shutdown() }
     }
 
-    /** The relay refuses proofs more than 2 min off its clock. That 401 is the phone's clock, not its key: say so and sign with the relay's time. */
     @Test fun a401FromAPhoneClockOffBy10MinSaysCheckTheTimeAndSignsWithTheRelaysTime() {
         val r = QrPairing.pairChild(ctx)
         val (server, request) = refuse(401, "unauthorized", System.currentTimeMillis() + 10 * 60_000L)
@@ -102,12 +100,11 @@ class PairingRelayTest {
         } finally { server.shutdown(); FamilyRelay.clockOffsetMs = 0L }
     }
 
-    /** A new process starts with no offset in memory: a refusal must be judged against the offset the proof was signed with, not the saved one. */
     @Test fun aSkewedRefusalAfterARestartStillCorrectsTheClock() {
         val now = System.currentTimeMillis(); val relay = now + 10 * 60_000L
         try {
             assertTrue(GuardEngine.noteRelayClock(ctx, relay, now))
-            FamilyRelay.clockOffsetMs = 0L // the process died; the offset is saved but not loaded
+            FamilyRelay.clockOffsetMs = 0L
             assertTrue("a proof signed with offset 0 was refused for the clock", GuardEngine.noteRelayClock(ctx, relay, now))
             assertEquals(relay - now, FamilyRelay.clockOffsetMs)
             FamilyRelay.clockOffsetMs = 0L
@@ -116,7 +113,6 @@ class PairingRelayTest {
         } finally { FamilyRelay.clockOffsetMs = 0L }
     }
 
-    /** A refusal mark from an earlier attempt goes away once the relay accepts this phone. */
     @Test fun aReadyConnectionClearsAnEarlierKeyRefusal() {
         QrPairing.pairChild(ctx)
         GuardEngine.cpChildKeyRefused = true

@@ -1,4 +1,4 @@
-# IG Guard 使用條款 / Terms of Service
+# Convoy 使用條款 / Terms of Service
 
 更新 / Updated: 26 November 2026（香港 / Hong Kong）
 條款修訂 / Terms revision: 2026-11-26-v10
@@ -41,7 +41,7 @@
 **自動擷取。** App 讀取子女手機上的 Instagram 通知及對話畫面（通知存取及無障礙）。父母須勾選以下警告才能送出此選擇，子女的同意頁亦會重複：
 
 > **自動擷取可能違反 Instagram 使用條款**
-> 此方式會讀取子女手機上的 Instagram 通知及對話畫面。Instagram 的使用條款禁止未經其許可以自動方式取得資料。子女的 Instagram 帳戶可能因此被限制或停用。IG Guard 與 Meta 無關，亦未獲 Meta 批准。選擇此方式即表示你明白上述風險，並由你自行決定及承擔使用此方式的責任。如不接受，請改用「手動上載」。
+> 此方式會讀取子女手機上的 Instagram 通知及對話畫面。Instagram 的使用條款禁止未經其許可以自動方式取得資料。子女的 Instagram 帳戶可能因此被限制或停用。Convoy 與 Meta 無關，亦未獲 Meta 批准。選擇此方式即表示你明白上述風險，並由你自行決定及承擔使用此方式的責任。如不接受，請改用「手動上載」。
 
 此警告用於告知風險；它本身不會免除任何其他人的法律責任，也不改變第5及6節。關鍵字及非核准聯絡人提醒繼續運作，但不含訊息文字。
 
@@ -57,7 +57,7 @@
 
 **匯入後在充電時分析。** 成功匯入後，子女手機會在下一次充電時開始分析新匯入的對話，不必等手機閒置。分析仍然只在充電時進行；暫停、撤回、關閉模式或更改收集方式會取消這項安排。
 
-**可選的重複匯出（Meta 的功能）。** 該步驟說明亦提供可選的連結，開啟 Instagram 自己的「匯出至外部服務」設定，每星期把訊息匯出到子女自己的 Google Drive 或 Dropbox。這是 Meta 的功能，不是 IG Guard 的功能；設定後，訊息副本會存放在子女自己的雲端硬碟，受該服務供應商的條款約束，並須在該處另行刪除。Instagram 會要求輸入 Instagram 密碼；IG Guard 永遠不會看到或取得該密碼。IG Guard 不會讀取該雲端硬碟；匯入仍須子女以同一個檔案選擇器自行選取檔案。開啟連結前，App 會先顯示此說明並要求確認。此功能未在香港青少年帳戶上測試；Instagram 可能不提供或不包括訊息。
+**可選的重複匯出（Meta 的功能）。** 該步驟說明亦提供可選的連結，開啟 Instagram 自己的「匯出至外部服務」設定，每星期把訊息匯出到子女自己的 Google Drive 或 Dropbox。這是 Meta 的功能，不是 Convoy 的功能；設定後，訊息副本會存放在子女自己的雲端硬碟，受該服務供應商的條款約束，並須在該處另行刪除。Instagram 會要求輸入 Instagram 密碼；Convoy 永遠不會看到或取得該密碼。Convoy 不會讀取該雲端硬碟；匯入仍須子女以同一個檔案選擇器自行選取檔案。開啟連結前，App 會先顯示此說明並要求確認。此功能未在香港青少年帳戶上測試；Instagram 可能不提供或不包括訊息。
 
 ### 2C. 模型
 
@@ -150,7 +150,7 @@ The parent chooses the method, and the child must agree on their own phone. A ch
 **Automatic capture.** The app reads Instagram notifications and conversation screens on the child's phone (Notification access and Accessibility). The parent must tick this warning before the choice is sent, and the child's consent page repeats it:
 
 > **Automatic capture may breach Instagram's Terms of Use**
-> This method reads Instagram notifications and conversation screens on your child's phone. Instagram's Terms of Use prohibit collecting information in an automated way without its permission. Your child's Instagram account could be restricted or disabled as a result. IG Guard is independent of Meta and has no Meta approval. By choosing this method you confirm that you understand this risk and that the decision to use it, and the responsibility for it, are yours. If you do not accept this, choose Manual upload.
+> This method reads Instagram notifications and conversation screens on your child's phone. Instagram's Terms of Use prohibit collecting information in an automated way without its permission. Your child's Instagram account could be restricted or disabled as a result. Convoy is independent of Meta and has no Meta approval. By choosing this method you confirm that you understand this risk and that the decision to use it, and the responsibility for it, are yours. If you do not accept this, choose Manual upload.
 
 This warning tells you about a risk. It does not by itself remove anyone else's legal responsibility, and it does not change sections 5 and 6. Keyword and unapproved-contact alerts keep working, without message text.
 
@@ -166,7 +166,7 @@ This warning tells you about a risk. It does not by itself remove anyone else's 
 
 **Analysis when charging after an import.** After a successful import, the child phone starts analysing the newly imported chats at the next charge, without waiting for the phone to be idle. Analysis still runs only while charging; pausing, withdrawing, switching the mode off or changing the method cancels this.
 
-**Optional repeating export (Meta's feature).** The guide sheet also offers optional links that open Instagram's own "Export to external service" set-up to export messages every week to the child's own Google Drive or Dropbox. This is Meta's feature, not IG Guard's. Once set up, a copy of the messages sits in the child's own cloud drive under that provider's terms and must be deleted there separately. Instagram asks for the Instagram password; IG Guard never sees or receives it. IG Guard does not read that cloud drive; the child still imports by picking the file in the same file picker. Before a link opens, the app shows this explanation and asks for confirmation. This has not been tested on a Hong Kong teen account; Instagram may not offer it or may not include messages.
+**Optional repeating export (Meta's feature).** The guide sheet also offers optional links that open Instagram's own "Export to external service" set-up to export messages every week to the child's own Google Drive or Dropbox. This is Meta's feature, not Convoy's. Once set up, a copy of the messages sits in the child's own cloud drive under that provider's terms and must be deleted there separately. Instagram asks for the Instagram password; Convoy never sees or receives it. Convoy does not read that cloud drive; the child still imports by picking the file in the same file picker. Before a link opens, the app shows this explanation and asks for confirmation. This has not been tested on a Hong Kong teen account; Instagram may not offer it or may not include messages.
 
 ### 2C. The model
 

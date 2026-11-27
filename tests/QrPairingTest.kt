@@ -56,7 +56,6 @@ class QrPairingTest {
         assertEquals(oldToken, GuardEngine.getOrCreateFamilyToken(ctx))
     }
 
-    /** The old child's capture confirmation does not carry over to a new QR pairing; the parent's own policy stays. */
     @Test fun aNewQrPairingForgetsTheOldChildsCaptureConfirmation() {
         parentPhone()
         prefs.edit().putString("capture_policy_id", "policy-1").putString("capture_child_ack_id", "policy-1").commit()
@@ -234,7 +233,6 @@ class QrPairingTest {
         assertFalse(GuardEngine.childPairingCancelled(ctx)); assertEquals(GuardEngine.ChildTrust.PAIRING, GuardEngine.childTrust(ctx))
     }
 
-    /** A crash after the first verified record was stored but before its commit: the resent record still completes the pairing. */
     @Test fun aResentFirstRecordAfterACrashBeforeTheCommitStillCompletesThePairing() {
         parentPhone()
         val run = parentUpToDigits()
@@ -252,7 +250,6 @@ class QrPairingTest {
         val pendingMs = prefs.getLong("child_pairing_pending_ms", 0L); val state = prefs.getString("child_record_state_json", null)
         assertTrue(pendingMs > 0L)
         assertEquals(RelayConsumption.CONSUMED, deliver())
-        // The crash: the record is in the database, the commit that follows it never happened.
         prefs.edit().putLong("child_pairing_pending_ms", pendingMs).apply { if (state == null) remove("child_record_state_json") else putString("child_record_state_json", state) }.commit()
         assertEquals(RelayConsumption.CONSUMED, deliver())
         assertFalse("the resent verified record completes the pairing", GuardEngine.childPairingPending(ctx))

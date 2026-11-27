@@ -173,7 +173,7 @@ class Tier2UiTest {
         val shield = ctx.resources.getIdentifier("ic_guard_shield", "drawable", ctx.packageName)
         assertNotEquals(0, shield); assertEquals(what, shield, n.smallIcon.resId); assertEquals(what, GuardEngine.NOTIFICATION_COLOR, n.color)
         val title = n.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString(); val text = n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString() ?: ""
-        assertTrue("$what: $title", title.startsWith("IG Guard · "))
+        assertTrue("$what: $title", title.startsWith("Convoy · "))
         for (dev in listOf("🔒", "AES", "GCM", "✅", "❌")) assertFalse("$what: $title $text", (title + text).contains(dev))
     }
 

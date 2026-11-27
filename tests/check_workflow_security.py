@@ -148,7 +148,6 @@ class DeploymentIsolation(unittest.TestCase):
         self.assertFalse(JOBS['relay-deploy']['concurrency']['cancel-in-progress'])
 
     def test_hotfix_steps_say_to_rerun_a_superseded_deploy(self):
-        # The shared deploy group keeps one pending run: a newer push cancels a queued hotfix deploy.
         doc = (REPO / 'docs/cloudflare-relay-setup.md').read_text(encoding='utf-8')
         self.assertRegex(doc, r'hotfix tag.s `relay-deploy` was cancelled or superseded.*re-run that tag.s workflow')
 
@@ -203,15 +202,14 @@ class ReleaseVersionAndHotfixSafety(unittest.TestCase):
         self.assertIn('versionName "$VER_NAME"', TEXT)
         self.assertLess(self.version_code('5.2.9', 999), self.version_code('6.0', 1))
         self.assertLess(self.version_code('6.0.3', 277), self.version_code('6.0.3', 278))
-        self.assertLess(self.version_code('6.0.3', 999), self.version_code('6.0.3', 1000))  # a hotfix built after run 999 still upgrades
-        self.assertLess(self.version_code('20.99.99', 9999), 2_100_000_000)  # Android's versionCode limit
-        self.assertGreater(self.version_code('6.0.3', 1), 100 + 999)  # above every code of the old 100+run scheme
+        self.assertLess(self.version_code('6.0.3', 999), self.version_code('6.0.3', 1000))
+        self.assertLess(self.version_code('20.99.99', 9999), 2_100_000_000)
+        self.assertGreater(self.version_code('6.0.3', 1), 100 + 999)
 
     def test_a_hotfix_that_does_not_contain_main_does_not_deploy_the_relay(self):
         steps_ = JOBS['relay-deploy']['steps']
         self.assertEqual(0, steps_[0].get('with', {}).get('fetch-depth'))
         deploy = next(st['run'] for st in steps_ if 'npm run deploy' in st.get('run', ''))
-        # Every deploy (main or hotfix): a re-run of an older main run must not put its older relay back either.
         guard = 'if ! git merge-base --is-ancestor origin/main HEAD; then'
         self.assertIn(guard, deploy)
         self.assertLess(deploy.index(guard), deploy.index('npm run deploy'))

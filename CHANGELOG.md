@@ -2,6 +2,18 @@
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 
+### External review fixes
+
+Changes from an external legal and security review of 6.0.3, not yet released or tested on a phone:
+
+- The app is renamed Convoy (Meta's brand rules forbid "IG" in a third-party name). The package id is unchanged, so it upgrades over 6.0.
+- Capture stops while the monitoring notice cannot show; the parent is told. Sender names chosen by others no longer decide "self", trusted or flagged.
+- Removed: forced Back out of chats and mute screens, hiding Instagram notifications, and flagging a contact on one keyword match. Keywords are never matched against names.
+- A released child phone always forgets the old family. "Add a child" warns and releases the old child.
+- A parent command dated ahead of the child's clock waits instead of being lost; the relay names a stale time; the Worker checks proofs before routing; a parent refuses its own reflected command.
+- Pre-6.0 pairings stop receiving records from 1 April 2027.
+- The first-launch page starts with a short child-facing summary; manual upload is labelled recommended; the training-data notice names the 30 real grooming transcripts (collected with consent) and PAN-12; parents are told when the section 52 exemption ends. Terms revision 2026-11-26-v10.
+
 Version 6.0.3 fixes eleven problems found in a second audit; all were present in 6.0 or earlier. Full notes, with what is not fixed and what was not tested: [6.0.3 release notes](docs/releases/6.0.3.md). Version code: 100 plus the GitHub Actions run number of the release run; the installed app shows it. Terms revision `2026-11-26-v10`, unchanged, so no notice appears. A phone cannot go back to 6.0.2 afterwards without clearing the app's data (database format 10).
 
 - Parent: the records-not-delivered warning no longer comes early; a refused multi-part record no longer keeps its parts; the child's own account name is taken only from a newer record; "Add a child" shows an error where it crashed when the signing key cannot be loaded.

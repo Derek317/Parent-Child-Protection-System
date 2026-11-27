@@ -166,7 +166,6 @@ class AlertStatistics(val state: JSONObject, private val now: Long) {
 }
 
 /**
- * IG Guard — explicit, user-controlled Android special access
  * Family-Friendly Instagram DM Safety Guard
  * Co-authored & maintained with @citreae_313
  * Example protected teen account handle: @zuck
@@ -464,7 +463,7 @@ object GuardEngine {
         val notifOn = isNotificationListenerEnabledStatic(ctx)
         val accOn = isAccessibilityEnabledStatic(ctx)
 
-        val statusSummary = "裝置 ${Build.MODEL} IG Guard 運作中（通知讀取：${if (notifOn) "已開啟" else "已關閉"} · 畫面保護：${if (accOn) "已開啟" else "選用"}）· 下次回報約 ${nextMins} 分鐘後（時間隨機）" + (if (collectionAllowed(ctx) && !monitoringNoticeAllowed(ctx)) NOTICE_OFF_MARK else "") + if (RiskLocal.captureHeld(ctx)) CAPTURE_HELD_MARK else ""
+        val statusSummary = "裝置 ${Build.MODEL} Convoy 運作中（通知讀取：${if (notifOn) "已開啟" else "已關閉"} · 畫面保護：${if (accOn) "已開啟" else "選用"}）· 下次回報約 ${nextMins} 分鐘後（時間隨機）" + (if (collectionAllowed(ctx) && !monitoringNoticeAllowed(ctx)) NOTICE_OFF_MARK else "") + if (RiskLocal.captureHeld(ctx)) CAPTURE_HELD_MARK else ""
         // Under manual upload the teen may switch notification access off, which is then no tampering. A held capture is not that: access is expected to stay on.
         val reason = if (notifOn || RiskLocal.uploadMethodOn(ctx)) "heartbeat_ok" else "tamper_attempt"
 
@@ -511,7 +510,6 @@ object GuardEngine {
         if (sentAt <= 0 || sentAt > now + RiskLimits.REPORT_FUTURE_MS) return
         val timestamp = minOf(sentAt, now)
         if (timestamp <= prefs(ctx).getLong("parent_last_child_hb_ms", 0L)) return
-        // Only a heartbeat that is not itself overdue re-arms the offline alert; a child clock >100 min slow would re-fire it every time.
         prefs(ctx).edit().putLong("parent_last_child_hb_ms", timestamp)
             .putString("parent_last_child_hb_text", "${nowDateTimeStr()} — $summary")
             .apply { if (now - timestamp <= 100 * 60_000L) putBoolean("parent_hb_missing_alerted", false) }.apply()
@@ -645,12 +643,8 @@ object GuardEngine {
             else FamilyRelay.childAuthorization(relayPublicKey(ctx),scope,token)
         }
     }
-    /** A refused proof: the relay accepts only times within 2 min of its own. True when its Date header shows this phone's clock (with
-     *  the offset already learned) off by more; the offset is then kept for the signers, so the retry is accepted. */
-    /** Puts the saved relay clock offset into the signers; a new process has none in memory until this runs. */
     fun loadRelayClock(ctx:Context) { FamilyRelay.clockOffsetMs=prefs(ctx).getLong(RELAY_CLOCK_OFFSET,0L) }
     fun noteRelayClock(ctx:Context,serverMs:Long,now:Long=System.currentTimeMillis()):Boolean {
-        // Judged against the offset the refused proof was signed with (memory), not the saved one: a new process may not have loaded it.
         if(kotlin.math.abs(serverMs-now-FamilyRelay.clockOffsetMs)<=120_000L)return false
         FamilyRelay.clockOffsetMs=serverMs-now
         prefs(ctx).edit().putLong(RELAY_CLOCK_OFFSET,serverMs-now).apply()
@@ -1135,7 +1129,7 @@ object GuardEngine {
         val active = collectionAllowed(ctx) && (isNotificationListenerEnabledStatic(ctx) || isAccessibilityEnabledStatic(ctx))
         val notification = Notification.Builder(ctx, "child_disclosure")
             .setSmallIcon(notificationIcon(ctx)).setColor(NOTIFICATION_COLOR)
-            .setContentTitle(if (!collectionAllowed(ctx)) "IG Guard · 擷取及傳送已停止" else if (active) "IG Guard · 子女監察模式" else "IG Guard · 子女模式等待設定")
+            .setContentTitle(if (!collectionAllowed(ctx)) "Convoy · 擷取及傳送已停止" else if (active) "Convoy · 子女監察模式" else "Convoy · 子女模式等待設定")
             .setContentText(if(!collectionAllowed(ctx))"不擷取新內容，也不傳送待傳記錄。" else RiskLocal.disclosure(ctx,if(fullCaptureEnabled(ctx))captureScopeSummary(ctx) else "IG 警報會加密傳送給已配對的家長。點按查看權限及狀態。"))
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
         try { manager.notify(7001, notification) } catch (_: SecurityException) { /* Permission changed while posting. */ }
@@ -2126,7 +2120,6 @@ object GuardEngine {
             else -> {}
         }
         val verified = gate as? ChildRecords.GateResult.Verified
-        // A verified record completes the pairing at once: a crash before the final commit must not let the resend, then skipped as stored, undo it.
         if(verified!=null&&prefs(ctx).contains(PAIRING_PENDING_MS))check(prefs(ctx).edit().remove(PAIRING_PENDING_MS).commit())
         val controlId=if(verified!=null)(if(verified.type in ConversationCapture.contentTypes)"" else "control:"+verified.id)
             else if(decrypted.optBoolean("relay_control"))decrypted.optString("event_id") else ""
@@ -3009,7 +3002,7 @@ class ParentAlertService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val fgNotif = Notification.Builder(this, "ig_guard_monitor")
-            .setContentTitle("IG Guard · 家長守護連線中")
+            .setContentTitle("Convoy · 家長守護連線中")
             .setContentText(if (GuardEngine.pinnedChildKey(this) != null) "已核實配對 · 加密即時守護" else "核對圖案：${GuardEngine.getSafetyEmojis(this)} · 加密即時守護")
             .setSmallIcon(GuardEngine.notificationIcon(this)).setColor(GuardEngine.NOTIFICATION_COLOR)
             .setContentIntent(openIntent)
@@ -3033,7 +3026,7 @@ class ParentAlertService : Service() {
                 put("reason", "tamper_attempt")
                 put("ts_ms", System.currentTimeMillis())
                 put("sender", "子女手機離線/解除安裝警告")
-                put("text", "已超過 100 分鐘未收到子女手機的定時心跳回報！子女可能已熄機、斷網或解除安裝 IG Guard。")
+                put("text", "已超過 100 分鐘未收到子女手機的定時心跳回報！子女可能已熄機、斷網或解除安裝 Convoy。")
                 put("time", GuardEngine.nowDateTimeStr())
             }
             if (GuardEngine.recordParentAlert(applicationContext, missingAlert, "offline:${missingAlert.optLong("ts_ms")}")) {
@@ -3083,10 +3076,10 @@ class ParentAlertService : Service() {
             else -> "有新的家庭提醒，請開啟 App 查看。"
         }
         val publicNotice = Notification.Builder(this, "ig_guard_alerts")
-            .setContentTitle("IG Guard · 家庭提醒").setContentText("解鎖後開啟 App 查看。")
+            .setContentTitle("Convoy · 家庭提醒").setContentText("解鎖後開啟 App 查看。")
             .setSmallIcon(GuardEngine.notificationIcon(this)).setColor(GuardEngine.NOTIFICATION_COLOR).build()
         val notif = Notification.Builder(this, "ig_guard_alerts")
-            .setContentTitle(if(reason == "sexual_or_grooming_content") "IG Guard · 有一則需要留意的對話" else "IG Guard · 家庭提醒")
+            .setContentTitle(if(reason == "sexual_or_grooming_content") "Convoy · 有一則需要留意的對話" else "Convoy · 家庭提醒")
             .setContentText(generic).setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(publicNotice)
             .setOnlyAlertOnce(!elevate).addExtras(Bundle().apply{putInt("ig_review_priority",maxOf(priority,previous?.extras?.getInt("ig_review_priority",0)?:0))})
             .setSmallIcon(GuardEngine.notificationIcon(this)).setColor(GuardEngine.NOTIFICATION_COLOR).setContentIntent(openIntent).setAutoCancel(true).build()
@@ -3160,14 +3153,14 @@ class MainActivity : Activity() {
         try {
             if(Build.VERSION.SDK_INT>=30) {
                 val signal=android.os.CancellationSignal();parentAuthSignal=signal;val ticket=++parentAuthTicket
-                android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle(if(fresh)"再次驗證以繼續" else "開啟 IG Guard 家長資料")
+                android.hardware.biometrics.BiometricPrompt.Builder(this).setTitle(if(fresh)"再次驗證以繼續" else "開啟 Convoy 家長資料")
                     .setAllowedAuthenticators(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
                     .build().authenticate(signal,mainExecutor,object:android.hardware.biometrics.BiometricPrompt.AuthenticationCallback(){
                         override fun onAuthenticationSucceeded(result:android.hardware.biometrics.BiometricPrompt.AuthenticationResult){if(ticket==parentAuthTicket)completeParentAuthentication(true)}
                         override fun onAuthenticationError(code:Int,message:CharSequence){if(ticket==parentAuthTicket)completeParentAuthentication(false)}
                     })
             } else {
-                val request=keyguard.createConfirmDeviceCredentialIntent(if(fresh)"再次驗證以繼續" else "IG Guard 家長資料",if(fresh)"驗證後才會執行此操作。" else "驗證後查看家庭記錄及配對設定。")
+                val request=keyguard.createConfirmDeviceCredentialIntent(if(fresh)"再次驗證以繼續" else "Convoy 家長資料",if(fresh)"驗證後才會執行此操作。" else "驗證後查看家庭記錄及配對設定。")
                     ?: throw SecurityException("Device authentication is unavailable")
                 startActivityForResult(request,parentAuthRequest)
             }
@@ -3783,7 +3776,7 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(60) }
         if (section.endsWith("_setup")) row.addView(iconButton("arrow-left", "返回身份選擇") { navigateTo("role") })
         else row.addView(icon("shield-check", t.accentSeafoam, 28))
-        row.addView(label("IG Guard", 18f, t.textPrimary, true).apply { setPadding(dp(8), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(label("Convoy", 18f, t.textPrimary, true).apply { setPadding(dp(8), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         lateinit var themeToggle: View
         themeToggle = iconButton(if (GuardEngine.isBrightTheme(this)) "moon" else "sun", "切換淺色或深色模式") {
             switchTheme(!GuardEngine.isBrightTheme(this), themeToggle)
@@ -4275,7 +4268,7 @@ class MainActivity : Activity() {
         scanProblem = when {
             PairingCrypto.parsePairingQr(text, now) != null -> null
             fields.size == 4 && fields[0] == PairingCrypto.QR_PREFIX && (fields[3].toLongOrNull() ?: Long.MAX_VALUE) <= now -> "QR 碼已過期。請在家長手機重新顯示 QR 碼。\nThe QR code has expired. Show a new one on the parent phone."
-            else -> "這不是 IG Guard 配對碼。\nThis is not an IG Guard pairing code."
+            else -> "這不是 Convoy 配對碼。\nThis is not a Convoy pairing code."
         }
         scannedQr = if (scanProblem == null) text else null
         fillChildPairing()
@@ -4284,7 +4277,7 @@ class MainActivity : Activity() {
         "家長手機已停止這次配對（已取消或 QR 碼已過期）。請在家長手機重新顯示 QR 碼，再掃描一次。\nThe parent phone stopped this pairing (cancelled, or its QR code expired). Show a new QR code on the parent phone and scan it again."
         else if (link.refused) "中繼站未能完成配對，請重新配對。\nThe relay could not complete the pairing. Please pair again." else when (reason) {
         Pairing.CancelReason.EXPIRED -> "配對已逾時：QR 碼已過期，或家長未確認。請重新配對。\nPairing timed out: the QR code expired or the parent did not confirm. Please pair again."
-        Pairing.CancelReason.BAD_MESSAGE -> "這不是有效的 IG Guard 配對碼，或配對訊息未能核實。請重新掃描家長手機上的新 QR 碼。\nNot a valid IG Guard pairing code, or a pairing message could not be verified. Scan a new QR code."
+        Pairing.CancelReason.BAD_MESSAGE -> "這不是有效的 Convoy 配對碼，或配對訊息未能核實。請重新掃描家長手機上的新 QR 碼。\nNot a valid Convoy pairing code, or a pairing message could not be verified. Scan a new QR code."
         Pairing.CancelReason.KEY_UNAVAILABLE -> "此手機未能建立配對金鑰，請稍後再試。\nThis phone could not create its pairing key. Please try later."
         else -> "配對已取消。\nPairing cancelled."
     }
@@ -4652,7 +4645,7 @@ class MainActivity : Activity() {
             }
             actions(actionButton(if(stored.optBoolean("_saved"))"取消儲存" else "儲存此訊息",t.btnSecondaryBg,t.btnSecondaryText) {
                 FamilyEvidence(this@MainActivity).use{it.save(scope,id,!stored.optBoolean("_saved"))};dialog.dismiss();renderUi()
-            },actionButton("複製完整記錄",t.btnSecondaryBg,t.btnSecondaryText) { copyText("IG Guard 證據","對話：$sender\n作者：${evidenceSpeaker(stored)}\n時間：${evidenceClock(stored)}\n來源：${evidenceSource(stored)}\n\n${stored.optString("text")}") })
+            },actionButton("複製完整記錄",t.btnSecondaryBg,t.btnSecondaryText) { copyText("Convoy 證據","對話：$sender\n作者：${evidenceSpeaker(stored)}\n時間：${evidenceClock(stored)}\n來源：${evidenceSource(stored)}\n\n${stored.optString("text")}") })
             addView(actionButton("明確保留供檢視（一次，90 天）",t.btnSecondaryBg,t.btnSecondaryText){
                 val kept=FamilyEvidence(this@MainActivity).use{it.preserveForReview(scope,id)}
                 Toast.makeText(this@MainActivity,if(kept)"已限期保留 90 天。" else "已保留或已到期；不會延長既有期限。",Toast.LENGTH_LONG).show()
@@ -4843,7 +4836,7 @@ class MainActivity : Activity() {
         if (!activityVisible || !parentUnlocked() || !AppConsent.termsUpdateNoticePending(this)) return
         AppConsent.markTermsUpdateNoticeSeen(this)
         alert().setTitle("條款已更新")
-            .setMessage("IG Guard 的使用條款已更新（修訂 ${AppConsent.VERSION}）。你原來的同意記錄保持不變，不需要重新同意；請在方便時查看新條款。")
+            .setMessage("Convoy 的使用條款已更新（修訂 ${AppConsent.VERSION}）。你原來的同意記錄保持不變，不需要重新同意；請在方便時查看新條款。")
             .setNegativeButton("知道了", null)
             .setPositiveButton("查看條款") { _, _ ->
                 val t = currentTheme()
@@ -5884,7 +5877,7 @@ class MainActivity : Activity() {
                 "子女手機 (${Build.MODEL}) 已開啟 IG 私訊保護！系統將自動偵測並同步子女 IG 帳號。",
                 bypassDedupe = true
             )
-            Toast.makeText(this, "IG Guard 保護已啟動並通知家長手機。", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Convoy 保護已啟動並通知家長手機。", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -5933,7 +5926,7 @@ class MainActivity : Activity() {
 
     private fun openAppDetailsSettings() {
         alert().setTitle("受限設定協助 · Samsung / Android")
-            .setMessage("1. 先在通知存取或無障礙頁嘗試開啟 IG Guard，閱讀系統顯示的限制。\n\n2. 若系統要求允許受限設定，再開啟本 App 的資訊頁。在支援此流程的裝置，右上角 ⋮ 才可能出現「允許受限設定」。依系統提示確認身份。\n\n3. 返回本 App，再次開啟原來的權限。\n\n若沒有該選項，請遵從裝置顯示的說明；選項取決於系統版本及安裝來源。這項操作不代表 Play Protect 或銀行 App 已認可本 App。")
+            .setMessage("1. 先在通知存取或無障礙頁嘗試開啟 Convoy，閱讀系統顯示的限制。\n\n2. 若系統要求允許受限設定，再開啟本 App 的資訊頁。在支援此流程的裝置，右上角 ⋮ 才可能出現「允許受限設定」。依系統提示確認身份。\n\n3. 返回本 App，再次開啟原來的權限。\n\n若沒有該選項，請遵從裝置顯示的說明；選項取決於系統版本及安裝來源。這項操作不代表 Play Protect 或銀行 App 已認可本 App。")
             .setNegativeButton("返回", null)
             .setPositiveButton("開啟 App 資訊") { _, _ ->
                 launchSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))

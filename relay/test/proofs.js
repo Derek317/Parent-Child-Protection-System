@@ -31,7 +31,6 @@ export function childIdentity() {
     privateKey: keys.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64url') };
 }
 
-// v2 proof: the parent signs with its key and names `child.publicKey`; the child signs with `signer` (default: its own key).
 export function headerV2(f, role, child, { nonce = randomUUID(), ts = Date.now(), signer = child, capability = f.capability } = {}) {
   const auth = role === 'parent'
     ? { v: 2, role, room: f.room, scope: f.scope, public_key: f.publicKey, capability_hash: f.capability_hash, child_key: child.publicKey, ts_ms: ts, nonce }
