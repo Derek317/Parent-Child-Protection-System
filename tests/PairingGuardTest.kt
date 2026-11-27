@@ -488,7 +488,6 @@ class PairingGuardTest {
             c.pause().stop().destroy()
         }
     }
-    /** Create family stores the PBKDF2 verifier off the main thread; the button is disabled meanwhile and the role is set last. */
     @Test fun createFamilyHashesThePasswordOffTheMainThread() {
         AppConsent.accept(ctx,AppConsent.acknowledgments)
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
