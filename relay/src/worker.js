@@ -37,8 +37,12 @@ export default {
     if (!match || url.search) return json(404, 'not_found');
     if (request.method !== 'DELETE' && (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')) return json(426, 'websocket_required');
     try {
-      parseAuthorization(request.headers.get('Authorization'));
-    } catch { return json(401, 'unauthorized'); }
+      const auth = parseAuthorization(request.headers.get('Authorization'));
+      if (auth.room !== match[1] || (request.method === 'DELETE' && auth.role !== 'parent')) return json(401, 'unauthorized');
+      if (auth.role === 'parent') await verifyParentAuthorization(auth, match[1]);
+      else if (auth.v === 2) await verifyChildAuthorization(auth, match[1]);
+      else if (typeof auth.capability !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(auth.capability)) return json(401, 'unauthorized');
+    } catch (error) { return json(401, error?.message === 'stale_time' ? 'stale_time' : 'unauthorized'); }
     try {
       return await env.FAMILIES.get(env.FAMILIES.idFromName(match[1])).fetch(request);
     } catch { return json(503, 'relay_unavailable'); }
@@ -134,7 +138,7 @@ export class FamilyRoom extends DurableObject {
       if(auth.role === 'parent')await verifyParentAuthorization(auth, room);
       // Before any room state is read: a child proof that does not verify touches nothing.
       else if (auth.v === 2) await verifyChildAuthorization(auth, room);
-    } catch { return json(401, 'unauthorized'); }
+    } catch (error) { return json(401, error?.message === 'stale_time' ? 'stale_time' : 'unauthorized'); }
     try {
       this.cleanupRegistration();
       if (this.retired()) {

@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import kotlin.random.Random
 
-enum class RelayConsumption { CONSUMED, REJECTED, RETRY }
+enum class RelayConsumption { CONSUMED, REJECTED, RETRY, CLOCK_BEHIND }
 
 /** One authenticated session; SQLite on the phones owns unconfirmed evidence. */
 object CloudRelay {
@@ -215,7 +215,9 @@ object CloudRelay {
                 val keyedChild=route==null && origin.first=="child" && GuardEngine.childKeyAlias(ctx)!=null
                 socket=client.newWebSocket(request,object:WebSocketListener(){
                     override fun onMessage(ws:WebSocket,text:String){executor.execute{incoming(ws,text)}}
-                    override fun onFailure(ws:WebSocket,error:Throwable,response:Response?){executor.execute{
+                    override fun onFailure(ws:WebSocket,error:Throwable,response:Response?){
+                        val staleTime=response?.code==401 && try{JSONObject(response.peekBody(1024).string()).optJSONObject("error")?.optString("code")=="stale_time"}catch(_:Exception){false}
+                        executor.execute{
                         if(socket!==ws){response?.close();return@execute}
                         val code=response?.code
                         val delay=if(code in listOf(401,403))300_000L else response?.header("Retry-After")?.toLongOrNull()?.times(1000)
@@ -223,6 +225,7 @@ object CloudRelay {
                         val clockOff=code==401 && response?.headers?.getDate("Date")?.let{GuardEngine.noteRelayClock(ctx,it.time)}==true
                         when {
                             clockOff && route==null -> fail("手機時間與中繼相差超過 2 分鐘 · 請檢查手機的日期和時間 · 已按中繼時間重試",5_000L,exact=true)
+                            staleTime && route==null -> fail("中繼表示手機時間不正確 · 請檢查手機的日期和時間",delay)
                             route!=null && code in listOf(401,403,410) -> {stop();route.onRefused(code!!)}
                             (route!=null || keyedChild) && code==409 -> fail("正在等待家長手機完成配對 · 15 秒後重試",PAIRING_RETRY_MS,exact=true)
                             // Its key is not the one registered for this locked room: nothing is wiped, the person is told.
@@ -323,6 +326,7 @@ object CloudRelay {
                         val outer=JSONObject().put("event","message").put("id",message.getString("delivery_id")).put("message",message.getString("wire"))
                         val result=GuardEngine.processIncomingRelayLine(ctx,outer.toString(),origin.first,parentAlert,token,origin.third)
                         if(result==RelayConsumption.RETRY){fail("本機尚未完成儲存 · 中繼記錄保留並重試");return}
+                        if(result==RelayConsumption.CLOCK_BEHIND){fail("家長指令的時間比此手機快超過 2 分鐘 · 請檢查手機的日期和時間 · 指令保留在中繼，稍後重試");return}
                         // A committed rotation/reset may change the current session; consume on THIS old socket first.
                         if(message.getBoolean("buffered"))ws.send(JSONObject().put("type","consume").put("id",message.getString("id")).put("digest",message.getString("digest")).toString())
                         if(!current())stop()

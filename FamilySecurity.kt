@@ -249,6 +249,13 @@ object FamilySecurity {
         if (text.length > 16_384 || !verifySigned(text.toByteArray(Charsets.UTF_8), envelope.getString("signature"), parentPublicKey)) null
         else JSONObject(text).takeIf { validCommand(it, scope, now) }
     } catch (_: Exception) { null }
+    const val EARLY_COMMAND_BOUND_MS = 24 * 60 * 60_000L
+    fun commandAhead(envelope: JSONObject, parentPublicKey: String, scope: String, now: Long): Boolean = try {
+        val ts = JSONObject(envelope.getString("payload")).optLong("ts_ms")
+        ts > now + 120_000L && ts <= now + EARLY_COMMAND_BOUND_MS && readCommand(envelope, parentPublicKey, scope, ts) != null
+    } catch (_: Exception) { false }
+    fun signedBy(envelope: JSONObject, publicKey: String): Boolean =
+        try { verifySigned(envelope.getString("payload").toByteArray(Charsets.UTF_8), envelope.getString("signature"), publicKey) } catch (_: Exception) { false }
     /** ECDSA-P256-SHA256 over [signed] with the base64url DER [signature]; false for an invalid key text. May throw on malformed input. */
     private fun verifySigned(signed: ByteArray, signature: String, publicKeyText: String): Boolean =
         validPublicKey(publicKeyText) && Signature.getInstance("SHA256withECDSA").run {

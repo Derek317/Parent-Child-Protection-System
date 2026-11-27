@@ -143,6 +143,12 @@ class UnlockClockTest {
         GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
         assertEquals(1,queuedAlerts().count{it.optString("reason")=="tamper_attempt"})
     }
+    @Test fun aRollbackBeyondTheCommandToleranceAlerts() {
+        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
+        advance(10*minute);wall-=3*minute
+        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
+        assertEquals(1,queuedAlerts().count{it.optString("reason")=="tamper_attempt"})
+    }
     @Test fun smallClockCorrectionsAndForwardJumpsDoNotAlert() {
         GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
         advance(10*minute);wall-=2*minute

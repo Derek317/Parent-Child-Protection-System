@@ -177,6 +177,23 @@ class ParentFreshAuthTest {
             assertEquals(7,FamilyEvidence(ctx).use{it.retentionPreview(scope).retentionDays})
         } finally {c.pause().stop().destroy()}
     }
+    @Test fun addingAChildWhileOneIsPairedWarnsFirst() {
+        prefs.edit().putString("pinned_child_key",FamilySecurity.newSigningIdentity().publicKey).commit()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            call(a,"navigateTo","family")
+            drain(a)
+            fun addChild()=all(a.window.decorView).first{it.isClickable && it.contentDescription?.toString()?.startsWith("加入子女")==true}.performClick().also{idle()}
+            addChild()
+            assertFalse("the warning comes before any authentication",prompted(a))
+            val warning=ShadowDialog.getLatestDialog() as android.app.AlertDialog
+            assertTrue(texts(warning).joinToString(),texts(warning).any{it.contains("解除並停止傳送") && it.contains("released and stop sending")})
+            warning.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).performClick();idle()
+            assertFalse(prompted(a))
+            addChild();alertPositive()
+            assertTrue("accepted: the usual fresh authentication, then the QR",prompted(a))
+        } finally {c.pause().stop().destroy()}
+    }
     @Test fun addingAChildAndGeneratingAnUnlockCodeNeedFreshAuthentication() {
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
         try {

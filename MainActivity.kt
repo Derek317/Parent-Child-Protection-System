@@ -298,9 +298,10 @@ object GuardEngine {
     // Parent: the event id of a signed remote reset queued for a pinned child, and the mark set once the relay holds it.
     private const val REMOTE_RESET_EVENT = "child_remote_reset_event"
     private const val CHILD_REMOTE_RESET = "child_remote_reset"
+    private const val RELEASED_FAMILY_TOKENS = "released_family_tokens"
     /** Parent: the last rollback was the parent's own cancel, not the 10-minute expiry (PAIRING_FAILED is set either way). */
     private const val PAIRING_CANCELLED = "child_pairing_cancelled"
-    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, REMOTE_RESET_EVENT, CHILD_REMOTE_RESET, PAIRING_CANCELLED) + DeliveryHealth.PARENT_KEYS
+    private val parentChildKeys = listOf(PINNED_CHILD_KEY, PAIRING_PENDING_MS, PAIRING_FAILED, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, REMOTE_RESET_EVENT, CHILD_REMOTE_RESET, PAIRING_CANCELLED, RELEASED_FAMILY_TOKENS) + DeliveryHealth.PARENT_KEYS
 
     internal val EMOJI_PALETTE = arrayOf(
         "🐼", "🦁", "🐬", "🦊", "🐨", "🐯", "🦄", "🐝",
@@ -395,9 +396,37 @@ object GuardEngine {
         return JSONObject().put("e2ee", b64).toString()
     }
 
-    fun decryptPayload(token: String, wireStr: String): JSONObject? = try {
+    private val V2_MAGIC = "IGE2".toByteArray(Charsets.US_ASCII)
+    private val V2_ID = Regex("[A-Za-z0-9:_-]{1,200}")
+    private fun v2Key(token: String, senderRole: String) = SecretKeySpec(PairingCrypto.hkdfSha256(deriveAesKey(token).encoded, ByteArray(0),
+        "igguard-e2ee-v2\n$senderRole".toByteArray(Charsets.UTF_8), 32), "AES")
+    private fun v2Aad(room: String, senderRole: String, recordId: String) = "igguard-e2ee-v2\n$room\n$senderRole\n$recordId".toByteArray(Charsets.UTF_8)
+    internal fun encryptPayloadV2(token: String, plainJson: String, room: String, senderRole: String, recordId: String): String {
+        require(senderRole in setOf("parent", "child") && V2_ID.matches(recordId))
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, v2Key(token, senderRole), GCMParameterSpec(128, iv))
+        cipher.updateAAD(v2Aad(room, senderRole, recordId))
+        val id = recordId.toByteArray(Charsets.US_ASCII)
+        return JSONObject().put("e2ee", Base64.encodeToString(V2_MAGIC + byteArrayOf(id.size.toByte()) + id + iv + cipher.doFinal(plainJson.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)).toString()
+    }
+    private fun decryptV2(token: String, combined: ByteArray, receiverRole: String, room: String): JSONObject? = try {
+        val length = combined[4].toInt() and 255
+        val recordId = String(combined.copyOfRange(5, 5 + length), Charsets.US_ASCII)
+        val sender = if (receiverRole == "parent") "child" else "parent"
+        require(V2_ID.matches(recordId) && combined.size >= 5 + length + 28)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, v2Key(token, sender), GCMParameterSpec(128, combined.copyOfRange(5 + length, 17 + length)))
+        cipher.updateAAD(v2Aad(room, sender, recordId))
+        JSONObject(String(cipher.doFinal(combined.copyOfRange(17 + length, combined.size)), Charsets.UTF_8))
+            .takeIf { it.optString("event_id") == recordId.substringBeforeLast(':') }
+    } catch (_: Exception) { null }
+
+    fun decryptPayload(token: String, wireStr: String, receiverRole: String? = null, room: String? = null): JSONObject? = try {
         val combined = Base64.decode(JSONObject(wireStr).getString("e2ee"), Base64.NO_WRAP)
-        if (combined.size < 28) null
+        val v2 = if (receiverRole != null && room != null && combined.size > 5 && combined.copyOfRange(0, 4).contentEquals(V2_MAGIC)) decryptV2(token, combined, receiverRole, room) else null
+        if (v2 != null) v2
+        else if (combined.size < 28) null
         else {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, deriveAesKey(token), GCMParameterSpec(128, combined.copyOfRange(0, 12)))
@@ -675,8 +704,12 @@ object GuardEngine {
         val current=getOrCreateFamilyToken(ctx)
         val pending=try{JSONObject(prefs(ctx).getString("pending_rotation_json","{}").orEmpty())}catch(_:Exception){JSONObject()}
         val old=pending.optString("old_token")
-        if(isParentMode(ctx) && current==pending.optString("new_token") && FamilySecurity.validToken(old))listOf(current,old).distinct() else listOf(current)
+        val routes=if(isParentMode(ctx) && current==pending.optString("new_token") && FamilySecurity.validToken(old))listOf(current,old).distinct() else listOf(current)
+        (routes+releasedFamilyTokens(ctx)).distinct()
     }
+    private fun releasedFamilyTokens(ctx:Context):List<String> = if(!isParentMode(ctx))emptyList()
+        else prefs(ctx).getString(RELEASED_FAMILY_TOKENS,"").orEmpty().split(',').filter{FamilySecurity.validToken(it) && FamilyEvidence(ctx).use{db->db.pendingCount(getChannelTopicForToken(it))>0}}
+    fun pairingReplacesChild(ctx:Context):Boolean = childTrust(ctx).let{it==ChildTrust.VERIFIED || it==ChildTrust.NOT_VERIFIED}
 
     private val COMMON_PASSWORD_PARTS = listOf("password", "passw0rd", "qwerty", "123456", "abc123", "iloveyou", "igguard")
     /**
@@ -706,7 +739,7 @@ object GuardEngine {
 
     private const val LOCKOUT_MS = 10 * 60_000L
     private const val UNLOCK_CODE_MS = 15 * 60_000L
-    private const val CLOCK_BACK_TOLERANCE_MS = 5 * 60_000L
+    private const val CLOCK_BACK_TOLERANCE_MS = 120_000L
     private const val CLOCK_ALERT_WINDOW_MS = 60 * 60_000L
 
     /** Remaining wrong-password lockout. Counted on the monotonic clock, so wall-clock changes cannot skip it;
@@ -1367,8 +1400,11 @@ object GuardEngine {
             if (FamilySecurity.canonicalKeyText(parentKey) == key) return null
             val eventId = result.complete.optString("event_id")
             if (!eventId.startsWith("control:")) return null
+            val replaced = if (pairingReplacesChild(ctx)) getOrCreateFamilyToken(ctx) else null
+            if (replaced != null) try { rotateKeyAndNotifyChild(ctx, true); lastResetEvent?.let { deliveryCallbacks.remove(it) } } catch (_: Exception) { addCheckpointLog(ctx, "CP3-PAIR", "未能為被取代的子女手機保留解除指令") }
+            val released = (releasedFamilyTokens(ctx) + listOfNotNull(replaced)).distinct().joinToString(",")
             setFamilyToken(ctx, result.token, preserveFamilyHistory = true, qrOnly = true)
-            val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json")
+            val editor = prefs(ctx).edit().putString(PINNED_CHILD_KEY, key).putLong(PAIRING_PENDING_MS, now).remove("pending_rotation_json").putString(RELEASED_FAMILY_TOKENS, released)
             for (stale in listOf(PAIRING_FAILED, PAIRING_CANCELLED, CHILD_REMOTE_RESET, REMOTE_RESET_EVENT, CHILD_RECORD_STATE, TAMPER_NOTICE_MS, QUIET_DROPS, "parent_last_child_hb_ms", "parent_last_child_hb_text", "parent_hb_missing_alerted", "capture_child_ack_id") + DeliveryHealth.PARENT_KEYS) editor.remove(stale)
             check(editor.commit())
             relayGeneration++; CloudRelay.disconnect()
@@ -2040,7 +2076,8 @@ object GuardEngine {
 
         val innerStr = outer.optString("message")
         val token = getOrCreateFamilyToken(ctx)
-        val decoded = decryptPayload(token, innerStr) ?: return RelayConsumption.REJECTED
+        val room = try { FamilyRelay.room(relayPublicKey(ctx), getChannelTopicForToken(token)) } catch (_: Exception) { null }
+        val decoded = decryptPayload(token, innerStr, role, room) ?: return RelayConsumption.REJECTED
         // Legacy (the unsigned 5.2 format) only for a family without the sticky FAMILY_QR_ONLY fact. With it and no pinned key (rolled
         // back, cancelled, remotely reset, or any other unpinning) no record is taken, signed or not, until a new QR pairing pins a key.
         // The rollback/reset marks only choose the overview text.
@@ -2060,6 +2097,10 @@ object GuardEngine {
             }
             if(decoded.optBoolean("receipt_requested"))completed.put("receipt_requested",true) else completed
         } else decoded
+        if (role == "parent" && decrypted.optJSONObject("envelope")?.let { FamilySecurity.signedBy(it, parentIdentity(ctx).publicKey) } == true) {
+            if (decoded.optString("type") == "alert_fragment") FamilyEvidence(ctx).use { it.discardFragments(getChannelTopicForToken(token), decoded.optString("event_id")) }
+            return RelayConsumption.REJECTED
+        }
         // Parent: every frame passes the child-record gate first (design 3.3). With a pinned key only a record signed by it goes on;
         // without one (a 5.2 pairing) the unsigned format is processed as before and the child is shown as not verified.
         val now = System.currentTimeMillis()
@@ -2092,7 +2133,9 @@ object GuardEngine {
         val envelope=if(verified!=null)verified.record else if(controlId.isNotEmpty())decrypted.optJSONObject("envelope") ?: return RelayConsumption.REJECTED else decrypted
         val inner = if (verified != null) verified.record else if (envelope.has("payload")) {
             if (role != "child") return RelayConsumption.REJECTED
-            FamilySecurity.readCommand(envelope, prefs(ctx).getString("parent_command_public_key", "") ?: "", getChannelTopicForToken(token), System.currentTimeMillis()) ?: return RelayConsumption.REJECTED
+            val parentKey = prefs(ctx).getString("parent_command_public_key", "") ?: ""
+            FamilySecurity.readCommand(envelope, parentKey, getChannelTopicForToken(token), System.currentTimeMillis())
+                ?: return if (FamilySecurity.commandAhead(envelope, parentKey, getChannelTopicForToken(token), System.currentTimeMillis())) RelayConsumption.CLOCK_BEHIND else RelayConsumption.REJECTED
         } else {
             if (envelope.optString("type") in FamilySecurity.controlTypes) return RelayConsumption.REJECTED
             if(controlId.isNotEmpty() && (role!="parent" || envelope.optString("type") !in setOf("capture_ack","sync_child_handle","scores_mode_report")))return RelayConsumption.REJECTED
@@ -4074,7 +4117,14 @@ class MainActivity : Activity() {
 
     private var parentPairing: ParentPairingLink? = null
     /** P1: a fresh device authentication first, then the QR sheet. */
-    private fun startParentPairing() = requireFreshParentAuth { showParentPairingSheet() }
+    private fun startParentPairing() {
+        if (!GuardEngine.pairingReplacesChild(this)) { requireFreshParentAuth { showParentPairingSheet() }; return }
+        alert(critical = true).setTitle("取代目前的子女手機？ · Replace the current child phone?")
+            .setMessage("每個家庭只配對一部子女手機。完成新的配對後，目前的子女手機會被解除並停止傳送記錄；它會在下次連線時收到解除指令。\n" +
+                "A family pairs one child phone. Once the new pairing completes, the current child phone will be released and stop sending records; it gets the release when it next connects.")
+            .setNegativeButton("取消 / Cancel", null)
+            .setPositiveButton("繼續配對 / Continue") { _, _ -> requireFreshParentAuth { showParentPairingSheet() } }.show()
+    }
     /** P2-P6 on one sheet. FLAG_SECURE comes from showSheet; this sheet alone also keeps the screen on. Closing it for any reason but the
      *  accept's own authentication prompt ends the pairing and retires its room. */
     private fun showParentPairingSheet() {
