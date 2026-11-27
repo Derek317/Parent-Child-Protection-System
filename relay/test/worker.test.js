@@ -4,13 +4,11 @@ import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { family, header, headerV2, childIdentity } from './proofs.js';
 
-// The Worker alone, with plain node: only its import of the Workers runtime is replaced, by an empty base class.
 registerHooks({ resolve: (specifier, context, next) => specifier === 'cloudflare:workers'
   ? { url: 'data:text/javascript,export class DurableObject {}', shortCircuit: true } : next(specifier, context) });
 globalThis.WebSocketRequestResponsePair ??= class {};
 const { default: worker, FamilyRoom } = await import('../src/worker.js');
 
-/** Calls the Worker; returns its answer and how many requests reached a Durable Object. */
 async function route(authorization, { room, method = 'GET' } = {}) {
   let reached = 0;
   const env = { FAMILIES: { idFromName: name => name, get: () => ({ fetch: async () => { reached++; return new Response(null, { status: 204 }); } }) } };
@@ -53,7 +51,6 @@ test('a genuine proof reaches its room; a genuine one outside the time window is
   }
 });
 
-/** A room on node:sqlite in place of Durable Object storage: enough for its storage and alarm logic, no sockets. */
 function room() {
   const db = new DatabaseSync(':memory:');
   let alarm = null;

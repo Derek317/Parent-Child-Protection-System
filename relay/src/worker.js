@@ -10,8 +10,6 @@ const WINDOW = 8;
 // class answered with a long retry would make the app close the socket and back off for hours.
 const DAY = 86_400_000;
 const DAILY_DATA_BUDGET = 2000;
-// A retired room refuses its old key and capability this long, then is forgotten entirely, so markers do not pile up for ever.
-// By then its phones have been told daily for a year to pair again, and no 2-minute proof from that time can be replayed.
 const RETIRED_TTL = 365 * DAY;
 // New packet ids per sending role (parent, child) per UTC day, forwarded or buffered: each leaves a packet_lifetimes row for
 // TTL + REGISTRATION_TTL. Per role, so one phone can never spend the other's. A phone's data is refused once its new ids that
@@ -39,9 +37,6 @@ export default {
     const match = /^\/v1\/rooms\/([a-f0-9]{64})$/.exec(url.pathname);
     if (!match || url.search) return json(404, 'not_found');
     if (request.method !== 'DELETE' && (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')) return json(426, 'websocket_required');
-    // Verified here, before any Durable Object exists for the room: everything that needs no room state. A parent proof binds its
-    // key to the room id; a v2 child proof is signed by its child key. A v1 child proof carries only a capability, which only the
-    // room can check: for it this checks the shape and the room id, so it can still instantiate a room (rate limited at the edge).
     try {
       const auth = parseAuthorization(request.headers.get('Authorization'));
       if (auth.room !== match[1] || (request.method === 'DELETE' && auth.role !== 'parent')) return json(401, 'unauthorized');
@@ -98,7 +93,6 @@ export class FamilyRoom extends DurableObject {
     return row ? JSON.parse(row.value) : null;
   }
 
-  // A deleted or expired room is not usable again: this content-free marker, the time it was retired, is the only thing kept, for RETIRED_TTL.
   retired() {
     return this.hasSchema() && this.sql.exec("SELECT 1 FROM metadata WHERE key='retired'").toArray().length > 0;
   }
@@ -115,7 +109,6 @@ export class FamilyRoom extends DurableObject {
     }
   }
 
-  /** When the room was retired, or null. A marker from before the time was kept ('1') counts from now. */
   retiredAt() {
     if (!this.hasSchema()) return null;
     const row = this.sql.exec("SELECT value FROM metadata WHERE key='retired'").toArray()[0];
@@ -126,7 +119,6 @@ export class FamilyRoom extends DurableObject {
     return Date.now();
   }
 
-  // Afterwards the room is as if never registered (hasSchema() is false).
   pruneRetired() {
     const at = this.retiredAt();
     if (at === null || at + RETIRED_TTL > Date.now()) return;
@@ -168,7 +160,7 @@ export class FamilyRoom extends DurableObject {
     try {
       this.cleanupRegistration();
       if (this.retired()) {
-        await this.ensureAlarm(); // a marker from before markers expired gets its alarm here
+        await this.ensureAlarm();
         // A valid signing proof is required even for an idempotent purge acknowledgment.
         if (request.method === 'DELETE') return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
         return json(410, 'room_retired', REGISTRATION_TTL);

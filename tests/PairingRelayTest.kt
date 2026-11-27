@@ -76,7 +76,6 @@ class PairingRelayTest {
         } finally { server.shutdown() }
     }
 
-    /** Audit M4(c): a relay that names the clock (stale_time, still 401) is believed even when its Date header shows no difference. */
     @Test fun aStaleTimeRefusalSaysCheckTheTimeNotPairAgain() {
         QrPairing.pairChild(ctx)
         val (server, _) = refuse(401, "stale_time", System.currentTimeMillis())

@@ -42,7 +42,6 @@ class CommandLifetimeTest {
     private fun laterCommand() = assertEquals("a later command prunes the 24-hour ids", RelayConsumption.CONSUMED,
         deliver(record(command("sync_trusted", 0).put("trusted_csv", "friend_one"))))
 
-    /** Audit M4(a): a child whose clock runs behind leaves an early command at the relay for redelivery instead of losing it. */
     @Test fun aCommandAheadOfTheChildsClockWaitsAtTheRelay() {
         QrPairing.pairChild(ctx, parent)
         val early = command("sync_trusted", -10 * 60_000L).put("trusted_csv", "friend_one")
@@ -161,8 +160,6 @@ class CommandLifetimeTest {
         assertEquals("again: the same answer, never RETRY", RelayConsumption.REJECTED, deliver(older))
     }
 
-    /** A child clock more than 10 days ahead refuses the command; more than 2 minutes behind never acts on it either, but leaves it
-     *  at the relay until the clock is right (audit M4(a)). Both fail closed. */
     @Test fun aChildClockOutsideTheWindowRefusesTheCommand() {
         QrPairing.pairChild(ctx, parent); val current = token
         assertEquals("child clock 10 days and a minute ahead", RelayConsumption.REJECTED, deliver(record(rotation(10 * day + 60_000L))))

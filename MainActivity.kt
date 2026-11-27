@@ -292,7 +292,6 @@ object GuardEngine {
     // Parent: the event id of a signed remote reset queued for a pinned child, and the mark set once the relay holds it.
     private const val REMOTE_RESET_EVENT = "child_remote_reset_event"
     private const val CHILD_REMOTE_RESET = "child_remote_reset"
-    /** Parent: tokens of rooms whose child a QR pairing replaced, comma-separated; each is a delivery route while its release waits (audit M3). */
     private const val RELEASED_FAMILY_TOKENS = "released_family_tokens"
     /** Parent: the last rollback was the parent's own cancel, not the 10-minute expiry (PAIRING_FAILED is set either way). */
     private const val PAIRING_CANCELLED = "child_pairing_cancelled"
@@ -398,15 +397,11 @@ object GuardEngine {
         return JSONObject().put("e2ee", b64).toString()
     }
 
-    // Audit L3, envelope v2: "IGE2" | record id length | record id | iv | AES-GCM ciphertext, under a per-direction key derived
-    // from the v1 key, with the room, the sender's role and the record id as associated data. Read here; nothing sends it yet:
-    // no phone can tell that its peer reads v2 (6.0 cannot), so every record still leaves as v1 (encryptPayload).
     private val V2_MAGIC = "IGE2".toByteArray(Charsets.US_ASCII)
     private val V2_ID = Regex("[A-Za-z0-9:_-]{1,200}")
     private fun v2Key(token: String, senderRole: String) = SecretKeySpec(PairingCrypto.hkdfSha256(deriveAesKey(token).encoded, ByteArray(0),
         "igguard-e2ee-v2\n$senderRole".toByteArray(Charsets.UTF_8), 32), "AES")
     private fun v2Aad(room: String, senderRole: String, recordId: String) = "igguard-e2ee-v2\n$room\n$senderRole\n$recordId".toByteArray(Charsets.UTF_8)
-    /** A v2 envelope from [senderRole] in [room] for the outbox record [recordId] ("event id:part"). */
     internal fun encryptPayloadV2(token: String, plainJson: String, room: String, senderRole: String, recordId: String): String {
         require(senderRole in setOf("parent", "child") && V2_ID.matches(recordId))
         val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
@@ -416,7 +411,6 @@ object GuardEngine {
         val id = recordId.toByteArray(Charsets.US_ASCII)
         return JSONObject().put("e2ee", Base64.encodeToString(V2_MAGIC + byteArrayOf(id.size.toByte()) + id + iv + cipher.doFinal(plainJson.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)).toString()
     }
-    /** v2 for [receiverRole] in [room]: only the peer's direction, and only a record whose event id is the one it was sealed for. */
     private fun decryptV2(token: String, combined: ByteArray, receiverRole: String, room: String): JSONObject? = try {
         val length = combined[4].toInt() and 255
         val recordId = String(combined.copyOfRange(5, 5 + length), Charsets.US_ASCII)
@@ -429,7 +423,6 @@ object GuardEngine {
             .takeIf { it.optString("event_id") == recordId.substringBeforeLast(':') }
     } catch (_: Exception) { null }
 
-    /** v1, or v2 when [receiverRole] and [room] are given. A v1 IV may start like v2 by chance: then v1 is tried too. */
     fun decryptPayload(token: String, wireStr: String, receiverRole: String? = null, room: String? = null): JSONObject? = try {
         val combined = Base64.decode(JSONObject(wireStr).getString("e2ee"), Base64.NO_WRAP)
         val v2 = if (receiverRole != null && room != null && combined.size > 5 && combined.copyOfRange(0, 4).contentEquals(V2_MAGIC)) decryptV2(token, combined, receiverRole, room) else null
@@ -714,10 +707,8 @@ object GuardEngine {
         val routes=if(isParentMode(ctx) && current==pending.optString("new_token") && FamilySecurity.validToken(old))listOf(current,old).distinct() else listOf(current)
         (routes+releasedFamilyTokens(ctx)).distinct()
     }
-    /** Parent: rooms of replaced children that still hold something queued for them (their signed release). */
     private fun releasedFamilyTokens(ctx:Context):List<String> = if(!isParentMode(ctx))emptyList()
         else prefs(ctx).getString(RELEASED_FAMILY_TOKENS,"").orEmpty().split(',').filter{FamilySecurity.validToken(it) && FamilyEvidence(ctx).use{db->db.pendingCount(getChannelTopicForToken(it))>0}}
-    /** Parent: a QR pairing now replaces a paired child, which completeParentPairing then releases (audit M3). */
     fun pairingReplacesChild(ctx:Context):Boolean = childTrust(ctx).let{it==ChildTrust.VERIFIED || it==ChildTrust.NOT_VERIFIED}
 
     private val COMMON_PASSWORD_PARTS = listOf("password", "passw0rd", "qwerty", "123456", "abc123", "iloveyou", "igguard")
@@ -748,7 +739,6 @@ object GuardEngine {
 
     private const val LOCKOUT_MS = 10 * 60_000L
     private const val UNLOCK_CODE_MS = 15 * 60_000L
-    // The same 2 minutes as FamilySecurity.validCommand: a rollback that makes signed commands look early is reported.
     private const val CLOCK_BACK_TOLERANCE_MS = 120_000L
     private const val CLOCK_ALERT_WINDOW_MS = 60 * 60_000L
 
@@ -1400,9 +1390,6 @@ object GuardEngine {
             if (FamilySecurity.canonicalKeyText(parentKey) == key) return null
             val eventId = result.complete.optString("event_id")
             if (!eventId.startsWith("control:")) return null
-            // Audit M3: one child per family. The child replaced here gets the signed remote reset in its own room, queued before the
-            // switch (the history move takes only child records); that room stays a delivery route (v1 proof, its child lock kept)
-            // while the reset waits, so a failed send is retried from the outbox and never holds up this pairing.
             val replaced = if (pairingReplacesChild(ctx)) getOrCreateFamilyToken(ctx) else null
             if (replaced != null) try { rotateKeyAndNotifyChild(ctx, true) } catch (_: Exception) { addCheckpointLog(ctx, "CP3-PAIR", "未能為被取代的子女手機保留解除指令") }
             val released = (releasedFamilyTokens(ctx) + listOfNotNull(replaced)).distinct().joinToString(",")
@@ -2119,8 +2106,6 @@ object GuardEngine {
             }
             if(decoded.optBoolean("receipt_requested"))completed.put("receipt_requested",true) else completed
         } else decoded
-        // Audit L3: a v1 envelope has no direction, so a relay can hand the parent its own signed command back. Refused quietly:
-        // only the parent signs commands, so it is never the child tampering.
         if (role == "parent" && decrypted.optJSONObject("envelope")?.let { FamilySecurity.signedBy(it, parentIdentity(ctx).publicKey) } == true) {
             if (decoded.optString("type") == "alert_fragment") FamilyEvidence(ctx).use { it.discardFragments(getChannelTopicForToken(token), decoded.optString("event_id")) }
             return RelayConsumption.REJECTED
@@ -4203,7 +4188,6 @@ class MainActivity : Activity() {
     /** P1: a fresh device authentication first, then the QR sheet. */
     private fun startParentPairing() {
         if (!GuardEngine.pairingReplacesChild(this)) { requireFreshParentAuth { showParentPairingSheet() }; return }
-        // Audit M3: the new pairing replaces the paired child, which is then released (GuardEngine.completeParentPairing).
         alert(critical = true).setTitle("取代目前的子女手機？ · Replace the current child phone?")
             .setMessage("每個家庭只配對一部子女手機。完成新的配對後，目前的子女手機會被解除並停止傳送記錄；它會在下次連線時收到解除指令。\n" +
                 "A family pairs one child phone. Once the new pairing completes, the current child phone will be released and stop sending records; it gets the release when it next connects.")

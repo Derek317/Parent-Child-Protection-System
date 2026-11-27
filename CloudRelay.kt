@@ -15,7 +15,6 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import kotlin.random.Random
 
-/** CLOCK_BEHIND: a signed parent command dated ahead of this phone's clock; like RETRY it is left at the relay for redelivery. */
 enum class RelayConsumption { CONSUMED, REJECTED, RETRY, CLOCK_BEHIND }
 
 /** One authenticated session; SQLite on the phones owns unconfirmed evidence. */
@@ -217,7 +216,6 @@ object CloudRelay {
                 socket=client.newWebSocket(request,object:WebSocketListener(){
                     override fun onMessage(ws:WebSocket,text:String){executor.execute{incoming(ws,text)}}
                     override fun onFailure(ws:WebSocket,error:Throwable,response:Response?){
-                        // Read here: OkHttp closes the body when this callback returns. An older relay sends no stale_time.
                         val staleTime=response?.code==401 && try{JSONObject(response.peekBody(1024).string()).optJSONObject("error")?.optString("code")=="stale_time"}catch(_:Exception){false}
                         executor.execute{
                         if(socket!==ws){response?.close();return@execute}

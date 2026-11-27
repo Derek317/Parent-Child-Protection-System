@@ -72,7 +72,6 @@ const importKey = encoded => crypto.subtle.importKey('spki', decode64(encoded), 
 const verifySignature = async (key, signature, proof) => {
   if (!await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, rawSignature(signature), encoder.encode(proof))) throw new Error('Unauthorized');
 };
-// Checked only after the signature: only the holder of the key learns that its clock, not its key, was refused (HTTP 401 stale_time).
 const requireFresh = (auth, now) => { if (Math.abs(now - auth.ts_ms) > 120_000) throw new Error('stale_time'); };
 
 export async function verifyParentAuthorization(auth, room, now = Date.now()) {

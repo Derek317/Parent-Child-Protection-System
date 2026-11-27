@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { createHash, createHmac, createPrivateKey, generateKeyPairSync, sign, randomUUID } from 'node:crypto';
 
-// Proof builders without Miniflare, so tests of the Worker alone run with plain node.
 export const vector = JSON.parse(await readFile(new URL('./protocol-vector.json', import.meta.url)));
 export const sha = value => createHash('sha256').update(value).digest('hex');
 export const wire = value => JSON.stringify({ e2ee: Buffer.from('0'.repeat(28) + value).toString('base64') });

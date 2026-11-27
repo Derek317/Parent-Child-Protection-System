@@ -177,7 +177,6 @@ class ParentFreshAuthTest {
             assertEquals(7,FamilyEvidence(ctx).use{it.retentionPreview(scope).retentionDays})
         } finally {c.pause().stop().destroy()}
     }
-    /** Audit M3: with a child paired, "Add a child" first warns that the current child phone will be released and stop sending. */
     @Test fun addingAChildWhileOneIsPairedWarnsFirst() {
         prefs.edit().putString("pinned_child_key",FamilySecurity.newSigningIdentity().publicKey).commit()
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()

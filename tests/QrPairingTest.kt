@@ -96,17 +96,15 @@ class QrPairingTest {
 
     private fun routes(): List<*> = GuardEngine::class.java.getDeclaredMethod("relayRouteTokens", android.content.Context::class.java)
         .apply { isAccessible = true }.invoke(GuardEngine, ctx) as List<*>
-    /** Audit M3: pairing another child releases the paired one through its own room. A signed remote reset waits in the old room's
-     *  parent outbox, which stays a delivery route after the switch (v1 proof: the old child's lock stays); the new child never gets it. */
     @Test fun replacingAPairedChildReleasesItThroughItsOwnRoom() {
         parentPhone()
         val first = parentUpToDigits()
         assertTrue(first.link.enterDigits((first.child.state as CS.ShowingDigits).digits)); first.child.confirm(now + 3_000)!!
         assertTrue(first.link.accept())
-        prefs.edit().remove("child_pairing_pending_ms").commit()                    // the first child confirmed
+        prefs.edit().remove("child_pairing_pending_ms").commit()
         assertEquals(GuardEngine.ChildTrust.VERIFIED, GuardEngine.childTrust(ctx))
         val oldToken = GuardEngine.getOrCreateFamilyToken(ctx); val oldScope = GuardEngine.getChannelTopicForToken(oldToken)
-        FamilyEvidence(ctx).use { it.discardPending(oldScope, "parent") }          // its M3 was delivered
+        FamilyEvidence(ctx).use { it.discardPending(oldScope, "parent") }
         val second = parentUpToDigits()
         assertTrue(second.link.enterDigits((second.child.state as CS.ShowingDigits).digits)); val family = second.child.confirm(now + 3_000)!!
         assertTrue("a release never holds up the new pairing", second.link.accept())
