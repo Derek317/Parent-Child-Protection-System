@@ -64,10 +64,10 @@ if args[:2]==['release','upload'] and os.environ.get('FAKE_UPLOAD_FAIL')=='1':sy
         self.assertIn('--verify-tag', create['args'])
         self.assertIn('Two-way conversation archive.', create['notes'])
         upload = next(r for r in rows if r['args'][:2] == ['release', 'upload'])
-        self.assertEqual({'IG-Guard-4.7.apk', 'SHA256SUMS'}, set(upload['assets']))
-        payload = bytes.fromhex(upload['assets']['IG-Guard-4.7.apk'])
+        self.assertEqual({'Convoy-4.7.apk', 'SHA256SUMS'}, set(upload['assets']))
+        payload = bytes.fromhex(upload['assets']['Convoy-4.7.apk'])
         checksum = bytes.fromhex(upload['assets']['SHA256SUMS']).decode()
-        self.assertEqual(hashlib.sha256(payload).hexdigest()+'  IG-Guard-4.7.apk\n', checksum)
+        self.assertEqual(hashlib.sha256(payload).hexdigest()+'  Convoy-4.7.apk\n', checksum)
         self.assertIn('includes the analysis model (about 1.1 GB)', create['notes'])
         self.assertIn('repository does not contain the model file', create['notes'])
 
@@ -145,7 +145,7 @@ if args[:2]==['release','upload'] and os.environ.get('FAKE_UPLOAD_FAIL')=='1':sy
         edit=next(row for row in rows if row['args'][:2]==['release','edit'])
         self.assertEqual('4.7',edit['args'][2]);self.assertIn(self.sha,edit['notes'])
         upload=next(row for row in rows if row['args'][:2]==['release','upload'])
-        self.assertIn('IG-Guard-4.7.apk',upload['assets'])
+        self.assertIn('Convoy-4.7.apk',upload['assets'])
         self.assertEqual(original,self.git('rev-parse','refs/tags/4.7').strip())
 
     def test_hotfix_never_changes_which_release_is_latest(self):

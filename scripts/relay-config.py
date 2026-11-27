@@ -91,7 +91,7 @@ def main():
             elif isinstance(error,json.JSONDecodeError):
                 code='RELAY_RESPONSE';message='The endpoint returned a non-JSON health response. Check that this Worker, rather than a default page, is deployed at the configured URL.'
             else:
-                code='RELAY_PROTOCOL';message='The health response does not identify IG Guard relay protocol 1. Check the deployed Worker and endpoint.'
+                code='RELAY_PROTOCOL';message='The health response does not identify the Convoy relay protocol 1. Check the deployed Worker and endpoint.'
         prefix='::error title=Relay verification::' if os.environ.get('GITHUB_ACTIONS')=='true' else ''
         print(f'{prefix}[{code}] {message}',file=sys.stderr)
         return 2

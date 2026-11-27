@@ -45,7 +45,7 @@ if [[ "${BUILD_RESULT:-}" = success && "${ARTIFACT_NAME:-}" = ig-guard-signed-ap
       "${APK_VERIFIED:-}" = true && "${MODEL_PACKAGED:-}" = true && "${DOWNLOAD_RESULT:-}" = success ]]; then
   candidates=(release-artifacts/*.apk)
   if [[ "${#candidates[@]}" = 1 && -s "${candidates[0]}" ]]; then
-    apk_name="IG-Guard-$release_tag.apk"
+    apk_name="Convoy-$release_tag.apk"
     cp "${candidates[0]}" "$release_temp/$apk_name"
     (cd "$release_temp" && sha256sum "$apk_name" > SHA256SUMS)
     release_assets=("$release_temp/$apk_name" "$release_temp/SHA256SUMS")
@@ -61,13 +61,13 @@ else
   printf '\n## Build artifact\nSigned APK unavailable for this run. This publication contains the update log; existing release assets, if any, are unchanged.\n\nBuild result: %s. Workflow: %s\n' "${BUILD_RESULT:-unknown}" "$run_url" >> "$release_notes"
 fi
 if gh release view "$release_tag" --repo "$release_repo" >/dev/null 2>&1; then
-  gh release edit "$release_tag" --repo "$release_repo" --title "IG Guard $release_tag" --notes-file "$release_notes" "${release_flags[@]}"
+  gh release edit "$release_tag" --repo "$release_repo" --title "Convoy $release_tag" --notes-file "$release_notes" "${release_flags[@]}"
 else
   if [ "$hotfix" = true ]; then
     echo "::error::The original release must exist before publishing its hotfix."
     exit 1
   fi
-  gh release create "$release_tag" --repo "$release_repo" --verify-tag --title "IG Guard $release_tag" --notes-file "$release_notes" "${release_flags[@]}"
+  gh release create "$release_tag" --repo "$release_repo" --verify-tag --title "Convoy $release_tag" --notes-file "$release_notes" "${release_flags[@]}"
 fi
 if [[ "${#release_assets[@]}" -gt 0 ]]; then
   if ! gh release upload "$release_tag" "${release_assets[@]}" --repo "$release_repo" --clobber; then

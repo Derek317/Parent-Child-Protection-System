@@ -627,7 +627,7 @@ jobs:
             fail "[SIGNING_BASE64] APK_KEYSTORE_BASE64 is not valid Base64."
           fi
           unset APK_KEYSTORE_BASE64
-          out="$RUNNER_TEMP/release-apk/IG-Guard-with-model.apk"
+          out="$RUNNER_TEMP/release-apk/Convoy-with-model.apk"
           # The script checks the model's size and SHA-256 against RiskModel.kt, signs v2+v3 and verifies; stdin is not a terminal, so it never prompts.
           if ! python3 tools/package_with_model.py --apk "${apks[0]}" --model "$model" --out "$out" --keystore "$keystore" \
               --ks-alias "$APK_KEY_ALIAS" --build-tools "$ANDROID_HOME/build-tools/34.0.0" < /dev/null; then

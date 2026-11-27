@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build ONE installable IG Guard APK that carries the local risk model, on the owner's own PC.
+"""Build ONE installable Convoy APK that carries the local risk model, on the owner's own PC.
 
 Run this on the machine that holds the model. Nothing is uploaded and nothing is downloaded. The output contains the model:
 never commit it or the model file to the git repository. The public release is built by the release workflow; a package built
@@ -433,7 +433,7 @@ def report(result: dict) -> None:
     if result["warnings"]:
         say()
         say("WARNING: the new signing certificate is DIFFERENT from " + " and from ".join(result["warnings"]) + ".")
-        say("         Android will refuse to update an installed IG Guard that was signed with another certificate.")
+        say("         Android will refuse to update an installed Convoy that was signed with another certificate.")
         say("         To install this APK the old app must be uninstalled first, and the app's data on that phone is lost.")
         say("         If you meant to keep the existing installation, sign with the same keystore as the GitHub release.")
     say()
@@ -454,7 +454,7 @@ def read_password(env_name: str, prompt: str, fallback: Optional[str] = None) ->
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Package the IG Guard release APK together with the local risk model (run on your own PC).")
+    p = argparse.ArgumentParser(description="Package the Convoy release APK together with the local risk model (run on your own PC).")
     p.add_argument("--apk", required=True, help="the release APK from the GitHub build (signed or unsigned)")
     p.add_argument("--model", required=True, help="the model .gguf file")
     p.add_argument("--out", required=True, help="where to write the packaged APK, e.g. dist/ig-guard-with-model.apk (must end in .apk)")
