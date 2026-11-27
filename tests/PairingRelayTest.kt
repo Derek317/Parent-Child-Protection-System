@@ -117,8 +117,9 @@ class PairingRelayTest {
         QrPairing.pairChild(ctx)
         GuardEngine.cpChildKeyRefused = true
         val server = MockWebServer()
+        val relaySide = java.util.concurrent.atomic.AtomicReference<WebSocket>()
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send(JSONObject().put("type", "ready").put("protocol", 1).toString()) }
+            override fun onOpen(webSocket: WebSocket, response: Response) { relaySide.set(webSocket); webSocket.send(JSONObject().put("type", "ready").put("protocol", 1).toString()) }
         }))
         server.start()
         val connection = CloudRelay.Connection(ctx, GuardEngine.captureRelaySession(ctx), GuardEngine.getOrCreateFamilyToken(ctx), server.url("/").toString())
@@ -126,7 +127,7 @@ class PairingRelayTest {
             connection.start()
             waitUntil { !GuardEngine.cpChildKeyRefused }
             assertFalse(GuardEngine.cpChildKeyRefused)
-        } finally { connection.close(); server.shutdown() }
+        } finally { connection.close(); relaySide.get()?.close(1000, null); server.shutdown() }
     }
 
     @Test fun anOldPairingKeepsV1AndItsOrdinaryBackoff() {
