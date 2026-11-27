@@ -41,6 +41,8 @@ Production parent commands use non-exportable Android Keystore signing identitie
 
 IG Guard is independent of Meta and has no Meta approval. Official Instagram API and portability integrations are not implemented. Current capture uses Android notifications and accessibility, and depends on what Instagram exposes. In the scores-only mode a family can instead choose manual upload, where the app reads nothing from Instagram and the teen imports Instagram's own data export.
 
+Not yet checked on a phone: Instagram Teen Accounts silence notifications overnight by default, so notification-based capture may see nothing at night. Manual upload of Instagram's own export is not affected.
+
 See the [code-backed data-flow description](docs/privacy-data-flow.md) and [preliminary Hong Kong legal assessment](docs/hong-kong-privacy-assessment.md). These describe the implementation and questions to resolve; they are not legal certification. Android permission grants, a parent-role selection and encryption alone do not establish lawful authority to monitor someone.
 
 ## Key Features & Architecture
