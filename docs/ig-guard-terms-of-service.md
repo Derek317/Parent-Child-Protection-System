@@ -71,7 +71,7 @@
 
 **以 QR 碼配對。** 新的配對只用 QR 碼：父母手機顯示一次性 QR 碼，子女手機當面掃描。QR 碼每次都是新的，3分鐘內有效，只可使用一次；內含一次性秘密及父母手機的公鑰，不含任何長期秘密。掃描後，兩部手機之間自行協定新的家庭秘密；該秘密不會顯示、輸入，亦不會經聊天程式傳送。子女手機會顯示6位數字，父母須在父母手機輸入（最多3次），再按「接受」，並以父母手機本身的螢幕鎖或生物辨識（指紋、圖案或 PIN）確認；子女在自己的手機確認。兩部手機亦顯示四個圖案，只作視覺輔助。如有兩部手機回應同一個 QR 碼，配對即停止。聊天邀請（配對文字或連結）不再用於新的配對，子女手機會拒絕它們。
 
-**此版本之前的配對。** 之前已配對的手機繼續運作；父母手機會持續顯示「未核實」提示，直至兩部手機再以 QR 碼配對。
+**此版本之前的配對。** 之前已配對的手機繼續運作至 2027 年 3 月 31 日；父母手機會持續顯示「未核實」提示，直至兩部手機再以 QR 碼配對。由 2027 年 4 月 1 日（香港時間）起，父母手機不再接收這類配對的記錄，須以 QR 碼重新配對。
 
 **子女手機的簽署金鑰。** 子女手機在 Android Keystore 建立自己的簽署金鑰，不可匯出。子女手機傳給父母的每一則記錄（心跳、提醒、擷取的訊息、分數報告、確認回覆）都以此金鑰簽署。父母手機以此方式核實某部子女手機後，沒有該金鑰有效簽署的記錄會被拒絕，其內容不會儲存，父母會收到一則不含內容的通知（最多每小時一則）。簽署有效但過舊、日期設在太遠的未來或類型不符的記錄，會被靜默丟棄。子女手機的已簽署心跳另帶兩個計數、一個旗標及一個發送時間，說明有多少回報仍未確認送達父母手機、最舊的一則已等候多久，以及是否曾有回報逾期仍未送達（不含內容，不含發送者）；父母手機據此顯示一則不含內容的提醒，但由回報停止送達起計，提醒通常最長約 2.5 小時後才出現（心跳每 30 至 95 分鐘一次，另加 60 分鐘的等候規則）；如父母手機本身的連線不斷中斷，最長約 3 小時再加一次心跳的間隔。
 
@@ -180,7 +180,7 @@ The model can be wrong in both directions. It cannot reliably tell sexual conver
 
 **Pairing by QR code.** New pairings use only a QR code: the parent phone shows a one-time QR code and the child phone scans it in person. The code is new each time, valid for 3 minutes and works once. It holds a one-time secret and the parent phone's public key; it holds no long-term secret. After the scan the two phones agree a new family secret between themselves; it is never shown, typed or sent through a chat app. The child phone then shows 6 digits, the parent types them on the parent phone (3 tries), and then accepts, confirming with the parent phone's own screen lock or biometric (fingerprint, pattern or PIN); the child confirms on its own phone. Four pictures are also shown on both phones as a visual aid only. If two phones answer the same QR code, pairing stops. Chat invitations (the pairing text or link) are no longer used for new pairings, and a child phone refuses them.
 
-**Pairings made before this version.** They keep working. The parent phone shows a permanent "not verified" (未核實) notice until the two phones are paired again with the QR code.
+**Pairings made before this version.** They keep working until 31 March 2027. The parent phone shows a permanent "not verified" (未核實) notice until the two phones are paired again with the QR code. From 1 April 2027 (Hong Kong time) the parent phone takes no record from such a pairing, and the phones must be paired again with the QR code.
 
 **The child phone's signing key.** The child phone creates its own signing key in the Android Keystore; it cannot be exported. Every record the child phone sends to the parent (heartbeats, alerts, captured messages, scores reports, acknowledgements) is signed with it. Once the parent phone has verified a child phone this way, a record without a valid signature from that key is refused, its content is not stored, and the parent gets a notice without content (at most one per hour). A correctly signed record that is too old, dated too far ahead, or of an unexpected kind is dropped quietly. The child phone's signed heartbeat also carries two counters and one flag about reports not yet confirmed as delivered to the parent phone (how many, how long the oldest has waited, and whether one ever expired undelivered), with no content and no sender; the parent phone uses them to show a notice without content, which normally can take up to about 2.5 hours after delivery stops (a heartbeat every 30 to 95 minutes plus the 60-minute rule), and at most about 3 hours plus one heartbeat interval if the parent phone's own connection keeps dropping.
 
