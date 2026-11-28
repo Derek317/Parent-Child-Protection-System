@@ -13,6 +13,7 @@
 - Code: removed the archive contact list and capture window helpers that only tests used.
 - QR pairing: a relay refusal caused by a wrong phone clock now retries with the relay's time instead of ending the pairing.
 - Relay connection: the reconnect back-off starts again once the relay is ready, so after a few ordinary drops the phone no longer waits about 5 minutes to reconnect.
+- Child alerts: an alert that could not be queued no longer blocks the same alert as a duplicate for the next seconds.
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 

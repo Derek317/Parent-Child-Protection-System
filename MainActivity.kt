@@ -1733,13 +1733,9 @@ object GuardEngine {
         val cleanText = if (scrubbed) "" else text
         val dedupeKey = "$topic|${reason.lowercase(Locale.US)}|${cleanSender.lowercase(Locale.US).removePrefix("@")}|${cleanText.lowercase(Locale.US)}"
         val windowMs = if (fromNotification) NOTIF_BURST_DEDUPE_MS else SCREEN_DEDUPE_MS
+        val bypass = bypassDedupe || reason == "test_alert" || reason == "heartbeat_ok"
 
-        if (!shouldSendAlert(
-                dedupeKey,
-                windowMs = windowMs,
-                bypassDedupe = bypassDedupe || reason == "test_alert" || reason == "heartbeat_ok"
-            )
-        ) {
+        if (!shouldSendAlert(dedupeKey, windowMs = windowMs, bypassDedupe = bypass)) {
             addCheckpointLog(ctx, "CP2-DEDUPE", "略過重複警報")
             onComplete?.invoke(false, "Duplicate suppressed")
             return
@@ -1764,6 +1760,7 @@ object GuardEngine {
         }.toString()
 
         postEncryptedToChannel(ctx, topic, token, plain, onComplete,expectedSession)
+        if (!bypass && !runCatching { FamilyEvidence(ctx).use { it.hasQueuedEvent(topic, eventId) } }.getOrDefault(false)) recentAlerts.remove(dedupeKey)
     }
 
     fun syncTrustedFromParent(ctx: Context) {

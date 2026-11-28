@@ -128,6 +128,17 @@ class ChildRecordWiringTest {
             assertEquals("a repost of queued messages must not touch the signing key", emptyMap<String, Int>(), calls)
         } finally { TestKeyStore.onLoad = {} }
     }
+    @Test fun anAlertThatCouldNotBeQueuedIsNotSuppressedAsADuplicate() {
+        val r = QrPairing.pairChild(ctx)
+        val before = wires(r.token).size
+        TestKeyStore.failEcSigning = true
+        try { GuardEngine.sendAlertFromChild(ctx, "stranger_message", "stranger", "hi there", fromNotification = true) } finally { TestKeyStore.failEcSigning = false }
+        assertEquals("the signing failure queued nothing", before, wires(r.token).size)
+        var suppressed = false
+        GuardEngine.sendAlertFromChild(ctx, "stranger_message", "stranger", "hi there", fromNotification = true) { ok, message -> if (!ok && message == "Duplicate suppressed") suppressed = true }
+        assertFalse("the retry is not a duplicate of an alert that was never queued", suppressed)
+        assertTrue(wires(r.token).size > before)
+    }
     @Test fun aChildWithoutAQrPairingSendsThe52FormatUnchanged() {
         GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
         val invite = QrPairing.legacyInvite(ctx)
