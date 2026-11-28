@@ -186,6 +186,12 @@ object GuardEngine {
      *  ends. Without it, a record queued for a new family while an older worker was ending (a pairing, rotation or reset)
      *  waited for a later trigger. */
     private val deliveryAskedMeanwhile = java.util.concurrent.atomic.AtomicReference<Context?>(null)
+    private val outboxRetryTimer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { Thread(it, "outbox-retry").apply { isDaemon = true } }
+    private var outboxRetryWake: java.util.concurrent.ScheduledFuture<*>? = null
+    private fun wakeWhenNextRetryIsDue(app: Context, at: Long) = synchronized(outboxRetryTimer) {
+        outboxRetryWake?.cancel(false)
+        outboxRetryWake = outboxRetryTimer.schedule({ retryPendingAlerts(app) }, maxOf(0L, at - System.currentTimeMillis()), java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
     /** Tests only: runs on a delivery worker as it ends, before it gives the delivery slot back. */
     @Volatile internal var beforeDeliveryWorkerEndsForTest: (() -> Unit)? = null
     /** A QR-join password check runs off the main thread; set and cleared on it, so the UI-thread checks refuse meanwhile and every attempt stays in order. */
@@ -2044,6 +2050,7 @@ object GuardEngine {
                 app.sendBroadcast(Intent(ACTION_UI_REFRESH).setPackage(app.packageName))
                 // A new capture arriving as the worker exits must not be stranded.
                 if(transferAllowed(app) && captureRelaySession(app)==session && relayRouteTokens(app).any{token->FamilyEvidence(app).use{it.due(getChannelTopicForToken(token),System.currentTimeMillis(),session.first).isNotEmpty()}})retryPendingAlerts(app)
+                if(transferAllowed(app) && captureRelaySession(app)==session)relayRouteTokens(app).mapNotNull{token->FamilyEvidence(app).use{it.nextRetry(getChannelTopicForToken(token),session.first,System.currentTimeMillis())}}.minOrNull()?.let{wakeWhenNextRetryIsDue(app,it)}
                 // Someone asked while this worker held the slot (for example a pairing that changed the family): run that one
                 // request now. At most one run per request, so a worker that ends with an error cannot keep starting others.
                 deliveryAskedMeanwhile.getAndSet(null)?.let{retryPendingAlerts(it)}

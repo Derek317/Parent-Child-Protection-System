@@ -826,6 +826,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         val high=rows("priority>0",24);val context=rows("priority=0",32-high.size)
         return if(context.isEmpty())rows("priority>0",32) else high+context
     }
+    fun nextRetry(scope: String,role: String,now: Long): Long? = readableDatabase.rawQuery("SELECT MIN(retry_at) FROM outbox WHERE scope=? AND role=? AND retry_at>? AND EXISTS(SELECT 1 FROM outbox_lifetimes l WHERE l.scope=outbox.scope AND l.id=outbox.event_id AND l.expires>? AND l.blocked=0)",arrayOf(scope,role,now.toString(),now.toString())).use{if(it.moveToFirst() && !it.isNull(0))it.getLong(0) else null}
     fun pendingCount(scope: String): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM outbox WHERE scope=?",arrayOf(scope)).use{it.moveToFirst();it.getInt(0)}
     fun pendingEvent(scope:String,id:String):Boolean = readableDatabase.rawQuery("SELECT 1 FROM outbox WHERE scope=? AND id=? AND EXISTS(SELECT 1 FROM outbox_lifetimes l WHERE l.scope=outbox.scope AND l.id=outbox.event_id AND l.expires>? AND l.blocked=0)",arrayOf(scope,id,System.currentTimeMillis().toString())).use{it.moveToFirst()}
     fun controlConsumed(scope:String,id:String) {

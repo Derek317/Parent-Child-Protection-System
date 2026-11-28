@@ -1,5 +1,9 @@
 # Changelog
 
+## 6.0.4-hotfix.1 — documented 28 November 2026 (Hong Kong)
+
+- Relay: a record whose send failed (for example when the connection closed under it) is now sent again as soon as its retry time comes, instead of waiting for a new record, a heartbeat or a reconnect to ask for delivery.
+
 ## 6.0.4 — documented 28 November 2026 (Hong Kong)
 
 Fixes from an external bug review and a follow-up audit. Full notes: [6.0.4 release notes](docs/releases/6.0.4.md).

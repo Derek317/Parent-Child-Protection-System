@@ -51,6 +51,8 @@ internal class FakeRelay : Dispatcher() {
     val refusals = mutableListOf<String>()
     /** Test switch: publishes are recorded but never answered or stored (a relay that does not take M3). */
     @Volatile var holdPublishes = false
+    /** Test switch: this many publishes drop the socket instead of being taken (a connection that closes under the send). */
+    val dropPublishes = java.util.concurrent.atomic.AtomicInteger()
     /** Test switch: every DELETE gets this status instead of the room logic; [deletes] counts DELETE requests. */
     @Volatile var deleteAnswer: Int? = null
     val deletes = java.util.concurrent.atomic.AtomicInteger()
@@ -129,6 +131,7 @@ internal class FakeRelay : Dispatcher() {
             val p = JSONObject(text)
             when (p.optString("type")) {
                 "publish" -> {
+                    if (dropPublishes.getAndUpdate { maxOf(0, it - 1) } > 0) { webSocket.cancel(); return }
                     if (holdPublishes) { room.published += role to p.getString("id"); return }
                     // worker.js:257-304: key = target prefix + rank + sha256(id); control is always buffered, other kinds go
                     // straight to an online peer.
@@ -284,6 +287,16 @@ class TwoPhoneRelayTest {
             override fun onMessage(webSocket: WebSocket, text: String) { JSONObject(text).optString("id").let { if (it.isNotEmpty()) received += it } }
         })
         try { waitUntil("redelivered to the child's family connection") { received.containsAll(keys) } } finally { socket.cancel() }
+    }
+
+    /** M3's first send dies with its socket: the outbox row is resent once it is due, without any other event asking for delivery. */
+    @Test fun m3IsResentWhenItsRetryIsDueAfterAFailedSend() {
+        val p = Phones(); p.upToDigits()
+        relay.dropPublishes.set(1)
+        assertTrue(p.parent.enterDigits(p.digits)); assertTrue(p.parent.accept())
+        val token = GuardEngine.getOrCreateFamilyToken(ctx); val family = roomOf(token)
+        waitUntil("the first send failed", seen = { whyNotSent(token) }) { relay.dropPublishes.get() == 0 && FamilyEvidence(ctx).use { db -> db.readableDatabase.rawQuery("SELECT 1 FROM outbox WHERE scope=? AND attempts>0", arrayOf(GuardEngine.getChannelTopicForToken(token))).use { it.moveToFirst() } } }
+        waitUntil("M3 at the relay once its retry is due", seconds = 35, seen = { whyNotSent(token) }) { synchronized(relay) { family.published.size == 1 } }
     }
 
     /** A delivery worker of the family before the pairing is still ending when the parent accepts: M3 must not wait for a later trigger. */
