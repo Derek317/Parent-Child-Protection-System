@@ -380,6 +380,10 @@ jobs:
                   testLogging { events 'started', 'failed'; exceptionFormat 'full' }
                   // The names of the failed tests once more as the last lines of the test output, where a pasted log tail shows them.
                   def failedTests = []
+                  timeout = java.time.Duration.ofMinutes(30)
+                  def started = new File(rootDir, 'tests-started.txt'); def finished = new File(rootDir, 'tests-finished.txt')
+                  beforeTest { d -> started << "${d.className} > ${d.name}\n" }
+                  afterTest { d, r -> finished << "${d.className} > ${d.name}\n" }
                   afterTest { d, r -> if (r.resultType == TestResult.ResultType.FAILURE) failedTests << "${d.className} > ${d.name}: " + (r.exception?.toString() ?: '').readLines().take(4).join(' ').take(600) }
                   afterSuite { d, r -> if (!d.parent && failedTests) { println "FAILED TESTS:\n" + failedTests.join('\n'); failedTests.each { println '::error title=Failed test::' + it.replace('%', '%25') } } }
                   dependsOn 'copyRobolectricJars'
@@ -398,6 +402,13 @@ jobs:
           EOF
           gradle testDebugUnitTest lintDebug --no-daemon
 
+
+      - name: Name tests that never finished
+        if: failure()
+        run: |
+          [ -f tests-started.txt ] || exit 0
+          sort tests-started.txt > /tmp/started; sort tests-finished.txt 2>/dev/null > /tmp/finished || true
+          comm -23 /tmp/started /tmp/finished | while read -r t; do echo "::error title=Test never finished::$t"; done
   relay-deploy:
     needs: [plan, relay-test, app-test]
     if: ${{ needs.plan.outputs.protected == 'true' && (github.ref == 'refs/heads/main' || contains(github.ref, '-hotfix.')) }}

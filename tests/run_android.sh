@@ -81,6 +81,10 @@ android { testOptions {
         testLogging { events 'started', 'failed'; exceptionFormat 'full' }
         // The names of the failed tests once more as the last lines of the test output, where a pasted log tail shows them.
         def failedTests = []
+        timeout = java.time.Duration.ofMinutes(30)
+        def started = new File(rootDir, 'tests-started.txt'); def finished = new File(rootDir, 'tests-finished.txt')
+        beforeTest { d -> started << "${d.className} > ${d.name}\n" }
+        afterTest { d, r -> finished << "${d.className} > ${d.name}\n" }
         afterTest { d, r -> if (r.resultType == TestResult.ResultType.FAILURE) failedTests << "${d.className} > ${d.name}" }
         afterSuite { d, r -> if (!d.parent && failedTests) println "FAILED TESTS:\n" + failedTests.join('\n') }
         dependsOn 'copyRobolectricJars'
