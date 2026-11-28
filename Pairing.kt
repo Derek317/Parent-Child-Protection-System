@@ -360,7 +360,7 @@ class ChildPairing(
         clear()
         val created = key
         key = null
-        if (created != null) deleteKey(created.alias)
+        if (created != null) try { deleteKey(created.alias) } catch (_: Exception) { }
         return null
     }
     private fun clear() { secret = null; ephemeral = null; token = null; replyPayload = null }

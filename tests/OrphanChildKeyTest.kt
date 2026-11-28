@@ -33,6 +33,15 @@ class OrphanChildKeyTest {
         ctx.noBackupFilesDir.listFiles()?.filter { it.name.startsWith("ig_guard.") }?.forEach { it.delete() }
     }
 
+    @Test fun aKeystoreFailureWhileCancellingAPairingDoesNotThrow() {
+        val parent = FamilySecurity.newSigningIdentity()
+        val qr = QrPairing.bareParent(parent).start(parent.publicKey, System.currentTimeMillis()).qrText
+        val machine = GuardEngine.newChildPairing(ctx)
+        assertNotNull(machine.start(qr, "Pixel 7", System.currentTimeMillis()))
+        TestKeyStore.failReads = true
+        try { machine.cancel() } finally { TestKeyStore.failReads = false }
+        assertTrue(machine.state is ChildPairingState.Cancelled)
+    }
     @Test fun anOrphanKeyAndMarkerAreRemovedAtAppStartInEveryRole() {
         for (role in listOf("parent", "unconfigured")) {
             if (role == "parent") parentPhone()
