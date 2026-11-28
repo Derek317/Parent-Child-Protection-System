@@ -93,7 +93,7 @@ def bootstrap(rows, replicates=BOOTSTRAP_REPLICATES, seed=BOOTSTRAP_SEED):
 
 
 def info(rows):
-    """For information only: five-way exact match and share of unresolved chats answered U."""
+    """For information only: four-way (levels 0-3) exact match over chats with a level, and the share of unresolved chats answered U."""
     known = [r for r in rows if r["level"] is not None and r["answer"] is not None]
     unres = [r for r in rows if r["truth"] == "unresolved" and r["answer"] is not None]
     match = sum(r["answer"] == str(r["level"]) for r in known)
