@@ -743,7 +743,7 @@ object GuardEngine {
     private const val CLOCK_ALERT_WINDOW_MS = 60 * 60_000L
 
     /** Remaining wrong-password lockout. Counted on the monotonic clock, so wall-clock changes cannot skip it;
-     * a reboot restarts the whole lockout instead of ending it (elapsedRealtime cannot be compared across boots). */
+     * each check stores what is left, and after a reboot the lockout resumes from the last stored value. */
     private fun lockoutRemainingMs(ctx: Context): Long {
         val p = prefs(ctx); val now = monotonicClock(); val boot = bootMarker(ctx)
         var until = p.getLong("pw_lockout_rt", 0L)
@@ -756,15 +756,16 @@ object GuardEngine {
             return length
         }
         if (p.getString("pw_lockout_boot", "") != boot || now < p.getLong("pw_lockout_start_rt", 0L)) {
-            until = now + LOCKOUT_MS
+            until = now + p.getLong("pw_lockout_left_ms", LOCKOUT_MS).coerceIn(0L, LOCKOUT_MS)
             p.edit().putLong("pw_lockout_rt", until).putLong("pw_lockout_start_rt", now).putString("pw_lockout_boot", boot).apply()
         }
         val left = until - now
         if (left <= 0L) { clearLockout(ctx); return 0L }
+        p.edit().putLong("pw_lockout_left_ms", left).apply()
         return left
     }
     private fun clearLockout(ctx: Context) {
-        prefs(ctx).edit().remove("pw_lockout_rt").remove("pw_lockout_start_rt").remove("pw_lockout_boot").remove("pw_lockout_until_ms").apply()
+        prefs(ctx).edit().remove("pw_lockout_rt").remove("pw_lockout_start_rt").remove("pw_lockout_boot").remove("pw_lockout_left_ms").remove("pw_lockout_until_ms").apply()
     }
     fun checkPasswordLockoutRemainingSec(ctx: Context): Long = (lockoutRemainingMs(ctx) + 999L) / 1000L
 
@@ -778,7 +779,7 @@ object GuardEngine {
         val count = prefs(ctx).getInt("pw_failed_count", 0) + 1
         if (count >= 5) {
             prefs(ctx).edit().putInt("pw_failed_count", 0).remove("pw_lockout_until_ms")
-                .putLong("pw_lockout_rt", monotonicClock() + LOCKOUT_MS).putLong("pw_lockout_start_rt", monotonicClock())
+                .putLong("pw_lockout_rt", monotonicClock() + LOCKOUT_MS).putLong("pw_lockout_start_rt", monotonicClock()).putLong("pw_lockout_left_ms", LOCKOUT_MS)
                 .putString("pw_lockout_boot", bootMarker(ctx)).apply()
             sendAlertFromChild(
                 ctx,
@@ -898,7 +899,7 @@ object GuardEngine {
             "parent_password_verifier","parent_command_public_key","trusted_csv","flagged_offenders_csv","child_self_handle","child_self_handle_ts_ms","sent_setup_ok",
             "parent_last_child_hb_ms","parent_last_child_hb_text","parent_hb_missing_alerted","weekly_stats_json","parent_alerts_json",
             "synced_15m_code","synced_15m_exp","unlock_until_ms","synced_15m_rt","synced_15m_start_rt","synced_15m_boot",
-            "unlock_until_rt","unlock_start_rt","unlock_boot","pw_lockout_rt","pw_lockout_start_rt","pw_lockout_boot")+parentChildKeys)editor.remove(key)
+            "unlock_until_rt","unlock_start_rt","unlock_boot","pw_lockout_rt","pw_lockout_start_rt","pw_lockout_boot","pw_lockout_left_ms")+parentChildKeys)editor.remove(key)
         check(editor.remove("fresh_family_recovery_json").commit())
         pauseTamperUntilMs=0L;relayGeneration++;CloudRelay.disconnect()
     }
@@ -1195,7 +1196,7 @@ object GuardEngine {
                 if (!preserveFamilyHistory) {
                     for (key in listOf("control_state_json", "last_control_ts_ms", "pending_rotation_json", "synced_15m_code", "synced_15m_exp", "unlock_until_ms",
                         "synced_15m_rt", "synced_15m_start_rt", "synced_15m_boot", "unlock_until_rt", "unlock_start_rt", "unlock_boot",
-                        "pw_lockout_rt", "pw_lockout_start_rt", "pw_lockout_boot",
+                        "pw_lockout_rt", "pw_lockout_start_rt", "pw_lockout_boot", "pw_lockout_left_ms",
                         "capture_policy_id","capture_local_ack_id","capture_child_ack_id","capture_sequence",
                         "parent_master_password", "parent_share_verifier", "parent_password_verifier", "parent_command_public_key", "trusted_csv", "flagged_offenders_csv",
                         "child_self_handle", "child_self_handle_ts_ms", "pw_failed_count", "pw_lockout_until_ms", "sent_setup_ok", "next_heartbeat_at_ms", "checkpoint_logs") + parentChildKeys) editor.remove(key)
@@ -2469,6 +2470,7 @@ class IgNotificationListener : NotificationListenerService() {
     private val periodicCheckRunnable = object : Runnable {
         override fun run() {
             if (GuardEngine.isChildMode(this@IgNotificationListener)) {
+                GuardEngine.checkPasswordLockoutRemainingSec(this@IgNotificationListener)
                 GuardEngine.checkAndSendChildHeartbeatIfDue(this@IgNotificationListener)
                 GuardEngine.retryPendingAlerts(applicationContext)
                 thread { GuardEngine.pollChannelOnce(applicationContext, since = "all") }

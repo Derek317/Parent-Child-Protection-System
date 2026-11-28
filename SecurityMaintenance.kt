@@ -19,6 +19,7 @@ object ArchiveMaintenance {
     /** shortcut: the poll only starts the relay connection and the job ends, so a parent change may wait for the next 15-minute run; upgrade if that proves too slow. */
     fun backgroundTick(ctx:Context) {
         if(!GuardEngine.isChildMode(ctx))return
+        GuardEngine.checkPasswordLockoutRemainingSec(ctx)
         GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
         GuardEngine.retryPendingAlerts(ctx)
         GuardEngine.pollChannelOnce(ctx,since="all")
