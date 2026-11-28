@@ -42,6 +42,16 @@ class AlertStatisticsTest {
         assertEquals(0L,s.dailyTotals().sum())
         s.record("b",event());assertEquals(1L,s.dailyTotals().sum())
     }
+    @Test fun onlyCountedRecordsAreRememberedAndAReplayIsStillNotCounted() {
+        val s=stats()
+        s.record("hb",event("heartbeat_ok"))
+        s.record("ctx",event("conversation_context").put("type","captured_message"))
+        s.record("old",event(ts=now-30*86400000L))
+        assertEquals(0,JSONObject(s.state.toString()).getJSONObject("seen").length())
+        s.record("a",event());s.record("a",event())
+        assertEquals(1L,s.dailyTotals().sum())
+        assertEquals(1,JSONObject(s.state.toString()).getJSONObject("seen").length())
+    }
     @Test fun migrationDoesNotDoubleCountRelayReplay() {
         val s=stats()
         s.migrate(listOf(event()))

@@ -141,7 +141,6 @@ class AlertStatistics(val state: JSONObject, private val now: Long) {
     /** Returns false for a previously accepted event, even after statistics reset. */
     fun record(id: String, alert: JSONObject): Boolean {
         if (seen.has(id)) return false
-        seen.put(id, now)
         if (legacy.has(fingerprint(alert))) return false
         val reason = alert.optString("reason", "other")
         if(alert.optString("type")=="captured_message" && !ConversationCapture.actionable(alert))return true
@@ -152,6 +151,7 @@ class AlertStatistics(val state: JSONObject, private val now: Long) {
         val bucket = days.optJSONObject(date) ?: JSONObject().also { days.put(date, it) }
         val type = reason.takeIf { it in reasons } ?: "other"
         bucket.put(type, bucket.optLong(type) + 1L)
+        seen.put(id, now)
         return true
     }
 
