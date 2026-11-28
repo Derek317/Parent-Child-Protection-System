@@ -193,7 +193,7 @@ class ReleaseVersionAndHotfixSafety(unittest.TestCase):
         return next(st['run'] for job in JOBS.values() for st in job.get('steps', []) if marker in st.get('run', ''))
 
     def version_code(self, version, run):
-        lines = [l.strip() for l in self.run_with('VER_CODE=').splitlines() if l.strip().startswith(('VER_NAME=', 'IFS=. read', 'VER_CODE='))]
+        lines = [l.strip() for l in self.run_with('VER_CODE=').splitlines() if l.strip().startswith(('VER_NAME=', 'IFS=. read', 'if [ ${{ github.run_number }}', 'VER_CODE='))]
         script = chr(10).join(lines).replace('${{ github.run_number }}', str(run)).replace('VER_NAME=6.0.3', f'VER_NAME={version}', 1)
         out = subprocess.run(['bash', '-c', script + chr(10) + 'echo "$VER_CODE"'], env={'PATH': '/usr/bin:/bin'}, capture_output=True, text=True, check=True)
         return int(out.stdout.strip())
@@ -204,6 +204,10 @@ class ReleaseVersionAndHotfixSafety(unittest.TestCase):
         self.assertLess(self.version_code('6.0.3', 277), self.version_code('6.0.3', 278))
         self.assertLess(self.version_code('6.0.3', 999), self.version_code('6.0.3', 1000))
         self.assertLess(self.version_code('20.99.99', 9999), 2_100_000_000)
+
+    def test_the_build_stops_instead_of_wrapping_at_run_10000(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.version_code('6.0.3', 10000)
         self.assertGreater(self.version_code('6.0.3', 1), 100 + 999)
 
     def test_a_hotfix_that_does_not_contain_main_does_not_deploy_the_relay(self):
