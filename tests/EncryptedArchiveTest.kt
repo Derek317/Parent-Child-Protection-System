@@ -90,7 +90,7 @@ class EncryptedArchiveTest {
                 assertEquals(body,db.messages("family",EvidenceQuery(text="100%_done")).single().getString("text"))
                 assertEquals("e2ee-wire",db.due("family",Long.MAX_VALUE).single().wire)
                 assertTrue(db.due("family",Long.MAX_VALUE).single().waitForReceipt)
-                if(version>=2)assertEquals(listOf("private window content"),db.captureWindow("family","private window thread"))
+                if(version>=2)assertEquals(listOf("private window content"),db.captureWindowState("family","private window thread").tokens)
                 assertTrue(db.hasFragment("family","opaque-2",0,legacyParts().first().getString("digest")))
                 assertEquals(1,db.incompleteCount("family"))
                 db.readableDatabase.rawQuery("SELECT accepted,attempts,retry_at FROM outbox",null).use {
@@ -119,8 +119,6 @@ class EncryptedArchiveTest {
             assertEquals((93 downTo 6 step 3).map{"opaque-$it"},first.map{it.getString("_id")})
             assertEquals(listOf("opaque-3","opaque-0"),second.map{it.getString("_id")})
             assertEquals(key,first.first().getString("_conversation_key"));assertEquals(partner,first.first().getString("_conversation_label"))
-            assertEquals(32,db.contacts("family",query).single().count)
-            assertEquals(partner,db.contacts("family",query).single().sender)
             val summary=db.conversations("family",query).single()
             assertEquals(32,summary.count);assertEquals(key,summary.key);assertEquals(partner,summary.label);assertEquals(account,summary.account);assertEquals(body,summary.preview)
             assertEquals(31,db.messages("family",EvidenceQuery(sender=partner,text=partner)).size)
@@ -147,7 +145,7 @@ class EncryptedArchiveTest {
             var assembled:JSONObject?=null
             for(part in parts.drop(1))assembled=db.fragment("new",part)?:assembled
             assertEquals(payload.getString("text"),assembled!!.getString("text"))
-            assertEquals(listOf("private capture token"),db.captureWindow("new",thread))
+            assertEquals(listOf("private capture token"),db.captureWindowState("new",thread).tokens)
         }
     }
 
@@ -220,7 +218,7 @@ class EncryptedArchiveTest {
         FamilyEvidence(ctx).use { db ->
             for(i in 0..19)db.append("old","opaque-$i",record(i,large))
             db.rotate("old","new"){it}
-            assertEquals(20,db.contacts("new",EvidenceQuery()).single().count)
+            assertEquals(20,db.messages("new",EvidenceQuery()).size)
             for(i in 0..19)assertEquals(large,db.find("new","opaque-$i")!!.getString("text"))
             assertEquals(0,db.otherArchiveCount("new"))
         }

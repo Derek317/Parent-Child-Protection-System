@@ -95,13 +95,13 @@ class RetentionTest {
             db.fragment("f",parts.first());db.setCaptureWindow("f","thread",listOf("secret"))
             db.enqueue("f","partial:0","cipher");db.deleteMessage("f","partial")
             assertEquals(0,db.pendingCount("f"));assertEquals(0,db.incompleteCount("f"))
-            assertTrue(db.captureWindow("f","thread").isEmpty());assertTrue(db.hasSeen("f","partial"))
+            assertTrue(db.captureWindowState("f","thread").tokens.isEmpty());assertTrue(db.hasSeen("f","partial"))
             assertTrue(parts.all{db.fragment("f",it)==null})
             db.fragment("f",AlertFrames.split(event("expires",now,"secret".repeat(1000))).first())
             db.setCaptureWindow("f","thread",listOf("secret"))
             db.pruneExpired("f",now+3*day+1000)
             assertEquals(0,db.incompleteCount("f"));assertTrue(db.hasSeen("f","expires"))
-            assertTrue(db.captureWindow("f","thread").isEmpty())
+            assertTrue(db.captureWindowState("f","thread").tokens.isEmpty())
         }
     }
 

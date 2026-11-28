@@ -23,7 +23,7 @@ class EvidenceStoreTest {
             for(i in 0..100) assertTrue(db.append("family","event-$i",event(i,if(i==0)long else "message $i")))
             assertEquals(long,db.find("family","event-0")!!.getString("text"))
             assertEquals(31,db.messages("family",EvidenceQuery()).size)
-            assertEquals(101,db.contacts("family",EvidenceQuery()).single().count)
+            assertEquals(11,db.messages("family",EvidenceQuery(page=3)).size)
         }
     }
     @Test fun filtersSearchOldRecordsAndPaginationHasNoTieDuplicates(){
@@ -230,6 +230,6 @@ class EvidenceStoreTest {
     @Test fun archiveStillReceivesMoreThanSixtyEngineAlerts(){
         GuardEngine.setRole(ctx,"parent")
         for(i in 0..75) assertTrue(GuardEngine.recordParentAlert(ctx,event(i),"event-$i"))
-        FamilyEvidence(ctx).use { assertEquals(76,it.contacts(GuardEngine.getChannelTopic(ctx),EvidenceQuery()).single().count) }
+        FamilyEvidence(ctx).use { assertEquals(16,it.messages(GuardEngine.getChannelTopic(ctx),EvidenceQuery(page=2)).size) }
     }
 }

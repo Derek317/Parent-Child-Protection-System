@@ -79,7 +79,7 @@ class SecurityMaintenanceTest {
             assertEquals(0,db.pendingCount("outbox-only"));db.enqueue("outbox-only","queued:1","replay")
             assertEquals(0,db.pendingCount("outbox-only"))
             assertEquals(0,db.incompleteCount("fragments-only"));assertTrue(db.hasSeen("fragments-only","partial"))
-            assertTrue(db.captureWindow("windows-only","thread").isEmpty())
+            assertTrue(db.captureWindowState("windows-only","thread").tokens.isEmpty())
             for((scope,id) in listOf("active" to "active","legacy" to "legacy","preserved" to "held"))
                 assertEquals("retained private content",db.find(scope,id)!!.getString("text"))
         }

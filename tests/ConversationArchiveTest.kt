@@ -39,7 +39,7 @@ class ConversationArchiveTest {
             assertEquals("text 1",row.getString("text"));assertTrue(row.getBoolean("_saved"))
             assertEquals("reviewed",row.getString("_review_state"));assertEquals(1001,row.getLong("_sort_stamp"));assertEquals(7,row.getLong("_sort_order"))
             assertEquals("ciphertext",db.due("f",Long.MAX_VALUE).single().wire)
-            assertEquals(listOf("hash"),db.captureWindow("f","thread"));assertEquals(0,db.captureWindowState("f","thread").anchor)
+            assertEquals(listOf("hash"),db.captureWindowState("f","thread").tokens);assertEquals(0,db.captureWindowState("f","thread").anchor)
         }
     }
     @Test fun negativeScreenPositionsPageStablyAndRotationPreservesWindowAnchors(){
@@ -113,7 +113,7 @@ class ConversationArchiveTest {
             assertFalse(db.enqueueCaptured("f","id",listOf("id:0" to "encrypted-wire"),true,0))
             db.setCaptureWindow("f","thread",listOf("hash-a","hash-b"))
         }
-        FamilyEvidence(ctx).use { assertEquals(listOf("hash-a","hash-b"),it.captureWindow("f","thread")) }
+        FamilyEvidence(ctx).use { assertEquals(listOf("hash-a","hash-b"),it.captureWindowState("f","thread").tokens) }
     }
     @Test fun upgradeFromVersionOneKeepsOriginalPayloadBookmarkAndPendingCiphertext() {
         val path=ctx.getDatabasePath("family_evidence.db");path.parentFile!!.mkdirs()
@@ -172,7 +172,6 @@ class ConversationArchiveTest {
             assertEquals(31,FamilyEvidence.contentLookups)
             FamilyEvidence.contentLookups=0
             assertEquals("hello 13",db.messages("f",EvidenceQuery(text="hello 13")).single().getString("text"))
-            assertEquals("partner 13",db.contacts("f",EvidenceQuery(text="hello 13")).single().sender)
             assertEquals("hello 13",db.conversations("f",EvidenceQuery(text="hello 13")).single().preview)
             assertEquals(2,FamilyEvidence.contentLookups)
         }

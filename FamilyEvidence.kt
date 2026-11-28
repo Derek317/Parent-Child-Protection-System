@@ -16,7 +16,6 @@ data class EvidenceQuery(val text: String = "", val filter: String = "all", val 
     val savedOnly: Boolean = false, val since: Long = 0, val page: Int = 0,
     val conversationKey:String?=null,val section:String="all",val review:String="all",val direction:String="all",val before:EvidenceCursor?=null)
 data class EvidenceCursor(val stamp:Long,val order:Long,val id:String)
-data class EvidenceContact(val sender: String, val count: Int, val important: Int, val latest: Long)
 data class ConversationSummary(val key:String,val label:String,val account:String,val count:Int,val unreviewed:Int,val latest:Long,val preview:String,val categories:List<String> = emptyList(),val kind:String="unknown",val unidentified:Boolean=false,val contentFree:Boolean=false)
 data class PendingEvidence(val id: String, val wire: String, val waitForReceipt: Boolean, val kind:String="urgent")
 data class CaptureWindow(val tokens:List<String> = emptyList(),val anchor:Long=0,val start:Long=0)
@@ -375,21 +374,6 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
                 }
             }
         }
-    }
-    fun contacts(scope: String,q: EvidenceQuery): List<EvidenceContact> {
-        val (where,args)=where(scope,q)
-        if(q.text.isBlank())return readableDatabase.rawQuery("SELECT scope,id,sender,COUNT(*),SUM(CASE WHEN reason='sexual_or_grooming_content' THEN 1 ELSE 0 END),MAX(stamp) FROM evidence WHERE $where GROUP BY sender_index",args).use { c ->
-            buildList{while(c.moveToNext())add(EvidenceContact(c.content("sender"),c.getInt(3),c.getInt(4),c.getLong(5)))}
-        }.sortedWith(compareByDescending<EvidenceContact>{it.latest}.thenBy{it.sender}).drop(q.page.coerceAtLeast(0)*30).take(31)
-        val groups=mutableMapOf<String,EvidenceContact>()
-        readableDatabase.rawQuery("SELECT $searchColumns FROM evidence WHERE $where",args).use { c ->
-            while(c.moveToNext())if(matches(c,q)) {
-                val key=c.string("sender_index");val previous=groups[key]
-                groups[key]=EvidenceContact(previous?.sender?:c.content("sender"),(previous?.count?:0)+1,
-                    (previous?.important?:0)+if(c.string("reason")=="sexual_or_grooming_content")1 else 0,maxOf(previous?.latest?:0,c.number("stamp")))
-            }
-        }
-        return groups.values.sortedWith(compareByDescending<EvidenceContact>{it.latest}.thenBy{it.sender}).drop(q.page.coerceAtLeast(0)*30).take(31)
     }
     private data class ConversationGroup(var summary:ConversationSummary,var cursor:EvidenceCursor,var priority:Int)
     fun conversations(scope:String,q:EvidenceQuery):List<ConversationSummary> {
@@ -817,7 +801,6 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
             db.setTransactionSuccessful();return true
         } finally {db.endTransaction()}
     }
-    fun captureWindow(scope:String,thread:String):List<String> = captureWindowState(scope,thread).tokens
     fun captureWindowState(scope:String,thread:String):CaptureWindow {
         val db=readableDatabase
         val key=index(scope,"thread",thread)
