@@ -290,7 +290,7 @@ object CloudRelay {
                 when(message.optString("type")) {
                     "ready" -> {
                         require(message.optInt("protocol")==1)
-                        ready=true;clearCooldown()
+                        ready=true;failures=0;clearCooldown()
                         if(route==null)GuardEngine.cpChildKeyRefused=false
                         if(parentFamily)GuardEngine.parentRelayReady(true)
                         state("加密中繼已連線 · 家長收妥需另行確認")

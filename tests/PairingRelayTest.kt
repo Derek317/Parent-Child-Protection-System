@@ -143,6 +143,23 @@ class PairingRelayTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun aConnectionThatBecameReadyStartsItsBackoffAgainAfterANormalDrop() {
+        QrPairing.pairChild(ctx)
+        val server = MockWebServer()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send(JSONObject().put("type", "ready").put("protocol", 1).toString())
+                Thread.sleep(300); webSocket.close(1000, "network change")
+            }
+        })); server.start()
+        val connection = CloudRelay.Connection(ctx, GuardEngine.captureRelaySession(ctx), GuardEngine.getOrCreateFamilyToken(ctx), server.url("/").toString())
+        CloudRelay.Connection::class.java.getDeclaredField("failures").apply { isAccessible = true }.setInt(connection, 8)
+        try {
+            connection.start()
+            waitUntil { cooldownLeft() > 0 }
+            assertTrue("a drop after a ready connection waits seconds, not minutes: ${cooldownLeft()}", cooldownLeft() in 1L..5_000L)
+        } finally { connection.close(); server.shutdown() }
+    }
     @Test fun aClockRefusalOnAPairingRoomRetriesWithTheRelaysTimeInsteadOfEndingThePairing() {
         GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
         val server = MockWebServer()
