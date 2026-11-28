@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Alerts-only screen scan: a keyword bubble on screen alerts once, not every 45 seconds, and no longer hides the newest message from the stranger check.
+
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 
 ### External review fixes

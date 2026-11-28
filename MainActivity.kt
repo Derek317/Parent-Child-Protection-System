@@ -2677,6 +2677,7 @@ class IgAccessibilityService : AccessibilityService() {
     private var lastScanMs = 0L
     private var lastRemoteSyncMs = 0L
     private var lastCapturedBottomMsg = ""
+    private var lastKeywordSig = ""
     private var pendingScan:Runnable? = null
 
     private val debounceHandler = Handler(Looper.getMainLooper())
@@ -2865,14 +2866,17 @@ class IgAccessibilityService : AccessibilityService() {
         // Check for sexual/grooming keywords on incoming left-aligned DM bubbles
         val sexualHit = incomingLeftBubbles.firstOrNull { GuardEngine.SEXUAL_PATTERN.containsMatchIn(it.text) }
         if (sexualHit != null) {
-            GuardEngine.sendAlertFromChild(
-                this,
-                reason = "sexual_or_grooming_content",
-                sender = topHeaderSender,
-                text = sexualHit.text,
-                expectedSession=observationSession
-            )
-            return
+            val keywordSig = "$topHeaderSender|${sexualHit.text}"
+            if (keywordSig != lastKeywordSig) {
+                lastKeywordSig = keywordSig
+                GuardEngine.sendAlertFromChild(
+                    this,
+                    reason = "sexual_or_grooming_content",
+                    sender = topHeaderSender,
+                    text = sexualHit.text,
+                    expectedSession=observationSession
+                )
+            }
         }
 
         // Check latest incoming left-aligned DM bubble from stranger

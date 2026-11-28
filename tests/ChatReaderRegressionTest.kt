@@ -102,6 +102,26 @@ class ChatReaderRegressionTest {
         assertEquals(listOf("send nudes"),rows().map{it.optString("text")})
         assertEquals(setOf("alice"),GuardEngine.getFlaggedOffenders(ctx))
     }
+    private fun scanAfterEachDedupeWindow(vararg shots:AccessibilityNodeInfo){
+        val recent=GuardEngine::class.java.getDeclaredField("recentAlerts").apply{isAccessible=true}.get(GuardEngine) as MutableMap<*,*>
+        val c=Robolectric.buildService(IgAccessibilityService::class.java).create()
+        try{shots.forEach{root->
+            synchronized(GuardEngine){recent.clear()}
+            RootShadow.root=root
+            c.get().onAccessibilityEvent(AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply{packageName="com.instagram.android"})
+        }}finally{c.destroy()}
+    }
+    private fun strangerScreen(vararg lines:String)=screen("stranger1",body=lines.mapIndexed{i,t->node(t,30,300+i*100,450,350+i*100)})
+    @Test fun aVisibleKeywordBubbleDoesNotHideTheNewestStrangerMessage(){
+        LocalVault.preferences(ctx).edit().remove("capture_local_ack_id").commit()
+        scanAfterEachDedupeWindow(strangerScreen("hi","send nudes"),strangerScreen("hi","send nudes","where do you live?"))
+        assertEquals(listOf("sexual_or_grooming_content","stranger_message"),rows().sortedBy{it.optLong("ts_ms")}.map{it.optString("reason")})
+    }
+    @Test fun oneOldKeywordBubbleRescannedForFourMinutesAlertsOnce(){
+        LocalVault.preferences(ctx).edit().remove("capture_local_ack_id").commit()
+        scanAfterEachDedupeWindow(*(0..5).map{strangerScreen("hi","send nudes")}.toTypedArray())
+        assertEquals(1,rows().count{it.optString("reason")=="sexual_or_grooming_content"})
+    }
     @Test fun alertOnlyModeAlertsOnKeywordsWithoutBackOrFlagging(){
         LocalVault.preferences(ctx).edit().remove("capture_local_ack_id").commit()
         assertTrue(scanActions(screen("Bob",body=listOf(node("send nudes")))).isEmpty())
