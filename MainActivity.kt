@@ -2678,6 +2678,7 @@ class IgAccessibilityService : AccessibilityService() {
     private var lastScanMs = 0L
     private var lastRemoteSyncMs = 0L
     private var lastCapturedBottomMsg = ""
+    private var lastKeywordSig = ""
     private var pendingScan:Runnable? = null
 
     private val debounceHandler = Handler(Looper.getMainLooper())
@@ -2866,14 +2867,17 @@ class IgAccessibilityService : AccessibilityService() {
         // Check for sexual/grooming keywords on incoming left-aligned DM bubbles
         val sexualHit = incomingLeftBubbles.firstOrNull { GuardEngine.SEXUAL_PATTERN.containsMatchIn(it.text) }
         if (sexualHit != null) {
-            GuardEngine.sendAlertFromChild(
-                this,
-                reason = "sexual_or_grooming_content",
-                sender = topHeaderSender,
-                text = sexualHit.text,
-                expectedSession=observationSession
-            )
-            return
+            val keywordSig = "$topHeaderSender|${sexualHit.text}"
+            if (keywordSig != lastKeywordSig) {
+                lastKeywordSig = keywordSig
+                GuardEngine.sendAlertFromChild(
+                    this,
+                    reason = "sexual_or_grooming_content",
+                    sender = topHeaderSender,
+                    text = sexualHit.text,
+                    expectedSession=observationSession
+                )
+            }
         }
 
         // Check latest incoming left-aligned DM bubble from stranger
@@ -3602,7 +3606,7 @@ class MainActivity : Activity() {
         if (GuardEngine.isChildMode(this) && GuardEngine.isNotificationListenerEnabledStatic(this)) {
             try { NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java)) } catch (_: Exception) {}
         }
-        syncRoleServices(); checkInitialPairingConfirmation(); renderUi()
+        syncRoleServices(); checkInitialPairingConfirmation(); renderUi(); fillChildPairing()
         pairingScanner?.takeIf { it.isAttachedToWindow }?.start()
         if (GuardEngine.isChildMode(this)) {
             GuardEngine.retryPendingAlerts(this,force=true)
@@ -4268,11 +4272,15 @@ class MainActivity : Activity() {
         if (showPairingBlock()) return
         childPairing?.cancel(); childPairing = null
         scannedQr = null; scanProblem = null; cameraAsked = false; cameraDenied = false; cameraBroken = false; childJoinPassword = null; childPairingStored = null
+        var mine: Dialog? = null
         showTrackedSheet("加入家庭 · Join a family", onDismiss = {
-            pairingScanner?.stop(); pairingScanner = null
-            if (childPairing?.machine?.state != ChildPairingState.Paired) { childPairing?.cancel(); childPairing = null; childJoinPassword = null }
-            scannedQr = null; childSheetBody = null; childSheetDialog = null
+            if (childSheetDialog === mine) {
+                pairingScanner?.stop(); pairingScanner = null
+                if (childPairing?.machine?.state != ChildPairingState.Paired) { childPairing?.cancel(); childPairing = null; childJoinPassword = null }
+                scannedQr = null; childSheetBody = null; childSheetDialog = null
+            }
         }) { dialog ->
+            mine = dialog
             childSheetBody = this; childSheetDialog = dialog
             fillChildPairing()
         }
@@ -4288,6 +4296,7 @@ class MainActivity : Activity() {
             else -> "這不是 Convoy 配對碼。\nThis is not a Convoy pairing code."
         }
         scannedQr = if (scanProblem == null) text else null
+        childSheetBody?.tag = null
         fillChildPairing()
     }
     private fun childCancelText(link: ChildPairingLink, reason: Pairing.CancelReason): String = if (link.parentStopped)
