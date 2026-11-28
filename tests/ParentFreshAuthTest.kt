@@ -177,6 +177,16 @@ class ParentFreshAuthTest {
             assertEquals(7,FamilyEvidence(ctx).use{it.retentionPreview(scope).retentionDays})
         } finally {c.pause().stop().destroy()}
     }
+    @Test fun theTrustedListAcceptsFullWidthCommasAsSeparators() {
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            call(a,"navigateTo","family")
+            drain(a)
+            all(a.window.decorView).filterIsInstance<android.widget.EditText>().first{it.hint?.toString()=="輸入好友帳號，以逗號分隔"}.setText("alice，bob")
+            all(a.window.decorView).filterIsInstance<Button>().first{it.text.toString()=="儲存並加密同步"}.performClick();idle()
+            assertEquals(setOf("alice","bob"),GuardEngine.getTrustedHandles(ctx))
+        } finally {c.pause().stop().destroy()}
+    }
     @Test fun addingAChildWhileOneIsPairedWarnsFirst() {
         prefs.edit().putString("pinned_child_key",FamilySecurity.newSigningIdentity().publicKey).commit()
         val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()

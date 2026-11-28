@@ -4090,7 +4090,7 @@ class MainActivity : Activity() {
         rootContainer.addView(label("編輯信任名單", 14f, t.textPrimary, true, topPad = 22, bottomPad = 10))
         val handles = inputBox(t, "輸入好友帳號，以逗號分隔", current.joinToString(", ")); rootContainer.addView(handles)
         rootContainer.addView(actionButton("儲存並加密同步", t.btnPrimaryBg, t.btnPrimaryText) {
-            val updated = handles.text.toString().split(",")
+            val updated = handles.text.toString().split(',', '，')
             clearTrustDraft(); GuardEngine.setTrustedHandles(this, updated); GuardEngine.syncTrustedFromParent(this)
             Toast.makeText(this, "信任名單已儲存並同步。", Toast.LENGTH_SHORT).show(); renderUi()
         })
