@@ -143,6 +143,12 @@ class UnlockClockTest {
         GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
         assertEquals(1,queuedAlerts().count{it.optString("reason")=="tamper_attempt"})
     }
+    @Test fun heartbeatsDoNotStopForHoursAfterTheWallClockMovesBack() {
+        prefs.edit().putLong("next_heartbeat_at_ms",System.currentTimeMillis()+3*60*minute).commit()
+        GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
+        assertTrue(queuedAlerts().any{it.optString("sender")=="子女手機定時回報"})
+        assertTrue(prefs.getLong("next_heartbeat_at_ms",0L)<=System.currentTimeMillis()+95*minute)
+    }
     @Test fun aRollbackBeyondTheCommandToleranceAlerts() {
         GuardEngine.checkAndSendChildHeartbeatIfDue(ctx)
         advance(10*minute);wall-=3*minute

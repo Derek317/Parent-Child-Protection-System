@@ -16,6 +16,7 @@
 - Child alerts: an alert that could not be queued no longer blocks the same alert as a duplicate for the next seconds.
 - Scores-only mode: two different messages from one sender in quick succession are two alerts again, not one suppressed as a duplicate.
 - Child pairing: a Keystore failure while cancelling a pairing no longer crashes the app; the left-over key is removed at the next app start.
+- Child heartbeat: after the phone clock is set back, a heartbeat scheduled hours ahead is sent now instead of leaving the parent with a false "offline" warning.
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 

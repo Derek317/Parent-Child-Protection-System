@@ -435,11 +435,12 @@ object GuardEngine {
     } catch (_: Exception) { null }
 
     // ================= 2. RANDOM 30-95 MIN HEARTBEAT RELAY & WATCHDOG =================
+    private const val LONGEST_HEARTBEAT_DELAY_MS = 95 * 60_000L
     fun scheduleNextRandomHeartbeat(ctx: Context): Long {
         // The parent warns after 100 min of silence. Without a connected notification listener (its 1-minute loop) only the 15-minute job
         // sends, and Android may run it up to about 30 min apart: 65 + 30 stays inside 100, where 95 + 30 raised a false "child offline" alert (bug-review B-5).
         val onlyTheJobSends = !(isNotificationListenerEnabledStatic(ctx) && cpNotifConnected)
-        val randomDelayMs = Random.Default.nextLong(30 * 60_000L, (if (onlyTheJobSends) 65 else 95) * 60_000L + 1L)
+        val randomDelayMs = Random.Default.nextLong(30 * 60_000L, (if (onlyTheJobSends) 65 * 60_000L else LONGEST_HEARTBEAT_DELAY_MS) + 1L)
         val nextAt = System.currentTimeMillis() + randomDelayMs
         prefs(ctx).edit()
             .putLong("next_heartbeat_at_ms", nextAt)
@@ -457,7 +458,7 @@ object GuardEngine {
             nextAt = scheduleNextRandomHeartbeat(ctx)
             if (!force) return
         }
-        if (!force && now < nextAt) return
+        if (!force && now < nextAt && nextAt - now <= LONGEST_HEARTBEAT_DELAY_MS) return
 
         val nextScheduled = scheduleNextRandomHeartbeat(ctx)
         val nextMins = maxOf(30L, (nextScheduled - now) / 60_000L)
