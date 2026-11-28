@@ -30,9 +30,9 @@ function authorization(role,bad=false){
   }
   return 'IGGuard '+Buffer.from(JSON.stringify(auth)).toString('base64url');
 }
-async function connect(role,bad=false){
+async function connect(role,bad=false,header=authorization(role,bad)){
   const url='wss://'+endpoint.host+'/v1/rooms/'+room;
-  const socket=new WebSocket(url,{headers:{Authorization:authorization(role,bad)},handshakeTimeout:15_000});sockets.push(socket);
+  const socket=new WebSocket(url,{headers:{Authorization:header},handshakeTimeout:15_000});sockets.push(socket);
   const queue=[],waiters=[];
   let failure;
   socket.on('message',data=>{
@@ -53,12 +53,19 @@ async function connect(role,bad=false){
       const w={predicate,resolve,reject};w.timer=setTimeout(()=>{waiters.splice(waiters.indexOf(w),1);reject(new Error('Live relay check timed out'))},20_000);waiters.push(w);
     });
   };
-  await next(v=>v.type==='ready');
-  return {socket,next,send:value=>socket.send(JSON.stringify(value))};
+  const ready=await next(v=>v.type==='ready');
+  return {ready,socket,next,send:value=>socket.send(JSON.stringify(value))};
+}
+function authorizationV2(role,childKey,childPrivateKey){
+  const auth={v:2,role,room,scope,child_key:childKey,ts_ms:Date.now(),nonce:randomUUID()};
+  if(role==='parent')Object.assign(auth,{public_key:publicKey,capability_hash:capHash});else auth.capability=capability;
+  const text=['igguard-relay-auth-v2',role,room,scope,auth.ts_ms,auth.nonce,...(role==='parent'?[capHash,childKey]:[capHash])].join('\n');
+  auth.signature=sign('sha256',Buffer.from(text),role==='parent'?keys.privateKey:childPrivateKey).toString('base64url');
+  return 'IGGuard '+Buffer.from(JSON.stringify(auth)).toString('base64url');
 }
 function requireValue(value){if(!value)throw new Error('Live relay behavior did not match the verified protocol')}
 try{
-  let parent=await connect('parent');const child=await connect('child');
+  let parent=await connect('parent');requireValue(parent.ready.features?.includes('child_proof'));const child=await connect('child');
   let rejected=false;try{await connect('child',true)}catch{rejected=true}requireValue(rejected);
   parent.socket.close();await child.next(v=>v.type==='peer' && !v.online);
   const eventId=randomUUID();const event={type:'alert',event_id:eventId,reason:'test_alert',sender:'Relay self-test',text:'Synthetic encrypted delivery check',ts_ms:Date.now(),receipt_requested:true};
@@ -76,7 +83,12 @@ try{
   const receipt=decrypt((await child.next(v=>v.type==='message')).wire).envelope;
   requireValue(verify('sha256',Buffer.from(receipt.payload),keys.publicKey,Buffer.from(receipt.signature,'base64url')));
   requireValue(JSON.parse(receipt.payload).event_id===eventId);
-  console.log('Live relay verified: owner authentication, wrong-capability rejection, offline ciphertext delivery, decryption and signed parent receipt.');
+  const childKeys=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
+  const childKey=childKeys.publicKey.export({type:'spki',format:'der'}).toString('base64url');
+  parent=await connect('parent',false,authorizationV2('parent',childKey));
+  const childV2=await connect('child',false,authorizationV2('child',childKey,childKeys.privateKey));
+  requireValue(childV2.ready.features?.includes('child_proof') && childV2.ready.peer_online);
+  console.log('Live relay verified: owner authentication, wrong-capability rejection, offline ciphertext delivery, decryption, signed parent receipt, child-key registration and v2 child connection.');
 }catch(error){
   if(process.env.GITHUB_ACTIONS==='true'){
     const code=/\[RELAY_SOCKET_HTTP_[1-5][0-9]{2}\]/.exec(error.message)?.[0] || '[RELAY_PROTOCOL_CHECK]';
@@ -85,4 +97,6 @@ try{
   throw error;
 }finally{
   for(const socket of sockets)socket.terminate();
+  const removed=await fetch('https://'+endpoint.host+'/v1/rooms/'+room,{method:'DELETE',headers:{Authorization:authorization('parent')}}).catch(()=>null);
+  console.log(removed?.status===204?'Test room deleted.':'Warning: test room was not deleted ('+(removed?.status??'no response')+').');
 }

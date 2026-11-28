@@ -35,15 +35,14 @@ def pick_rows(n):
     by_lang = {}
     for r in rows:
         by_lang.setdefault(r["language"], []).append(r)
-    # Cantonese first (at least 8), then the others; stride through each language so levels vary.
-    want = {"zh-Hant-yue": max(8, (n - 1) // 3 + 1)}
+    want = {"zh-Hant-yue": min(n - 1, max(8, (n - 1) // 3 + 1))}
     rest = n - 1 - want["zh-Hant-yue"]
     want["en"] = rest // 2
     want["mixed"] = rest - want["en"]
     chosen = []
     for lang, k in want.items():
         pool = by_lang[lang]
-        step = max(1, len(pool) // k)
+        step = max(1, len(pool) // max(k, 1))
         chosen += [pool[(i * step + 1) % len(pool)] for i in range(k)]
     return chosen
 

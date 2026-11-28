@@ -54,6 +54,12 @@ class CountsAndAuroc(unittest.TestCase):
         self.assertEqual((i["exact_match"]["k"], i["exact_match"]["n"]), (1, 2))
         self.assertEqual((i["unresolved_answered_U"]["k"], i["unresolved_answered_U"]["n"]), (1, 2))
 
+    def test_exact_match_is_four_way_and_ignores_unresolved(self):
+        rows = [row("unresolved", False, answer="U"), row("risk", True, answer="U", level=2)]
+        i = metrics.info(rows)
+        self.assertEqual((i["exact_match"]["k"], i["exact_match"]["n"]), (0, 1))
+        self.assertEqual((i["unresolved_answered_U"]["k"], i["unresolved_answered_U"]["n"]), (1, 1))
+
 
 class PassMark(unittest.TestCase):
     def build(self, overall_risk, overall_benign, langs):

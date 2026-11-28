@@ -52,6 +52,10 @@ def sha256_file(p):
     return h.hexdigest()
 
 
+def script_sha256(p=Path(__file__)):
+    return hashlib.sha256(Path(p).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def base_sha():
     return json.load(open(PROVENANCE, encoding="utf-8"))["files"]["model.safetensors"]["sha256"]
 
@@ -253,7 +257,7 @@ def cmd_fit():
               "rows_rewritten": rows, "target_c_for_B": C_B, "cutoff": 0.5,
               "changed_entries": changed, "changed_total": sum(changed.values()),
               "live_vs_reconstructed_max_abs_diff_tune": maxdiff, "selection": chosen, "grid": report,
-              "script_sha256": sha256_file(Path(__file__)),
+              "script_sha256": script_sha256(),
               "selection_rule": "ridge strength per variant by family-grouped 5-fold CV balanced accuracy at cutoff 0.5 "
                                 "inside train; variant by tune balanced accuracy then AUROC; no other data used"}
     json.dump(frozen, open(FROZEN, "w", encoding="utf-8"), indent=2)
@@ -276,7 +280,7 @@ def score_set(model, rows):
 def cmd_score():
     frozen = json.load(open(FROZEN, encoding="utf-8"))
     assert sha256_file(PATCH) == frozen["patch_sha256"], "patch changed after freezing"
-    assert sha256_file(Path(__file__)) == frozen["script_sha256"], "d1_edit.py changed after freezing"
+    assert script_sha256() == frozen["script_sha256"], "d1_edit.py changed after freezing"
     sets = {n: load_set(spec) for n, spec in SETS}
     model = load_model()
     results = {"frozen_patch_sha256": frozen["patch_sha256"], "sets": {}}

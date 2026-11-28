@@ -10,7 +10,7 @@ The [migration design](superpowers/specs/2026-11-08-cloudflare-relay-design.md) 
 4. Keep account login, API tokens and APK signing secrets in your own account/secret settings. The app will contain only the public relay endpoint, with each family authenticated separately by its existing pairing and signing identity.
 
 No Cloudflare account is needed for the parents or children using the app. Both phones keep using Convoy.
-5. Add a Cloudflare WAF rate-limiting rule: URI path starts with `/v1/rooms/`, counted per IP, about 30 requests per 10 seconds, then block for 60 seconds. The Worker refuses unsigned or mismatched room requests before routing, and the rule keeps floods from using up the plan's quota.
+5. A WAF rate-limiting rule is not possible on `workers.dev`. The Worker rejects requests without a valid parent signature or a correctly shaped child proof (a v1 child proof is only shape-checked, not verified), so floods still count against the plan's quota. See [Step 6 of ci-secrets-hardening.md](ci-secrets-hardening.md#step-6-rate-limiting-in-front-of-the-relay-owner-action) for the options.
 
 ## Deploy through GitHub Actions
 

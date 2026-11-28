@@ -3,6 +3,12 @@
 set -euo pipefail
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 build_dir="${IG_GUARD_BUILD_DIR:-/workspace/.android-dev/project}"
+build_root="$(mkdir -p -- "$build_dir" && cd -- "$build_dir" && pwd -P)"
+repo_root="$(cd -- "$repo_dir" && pwd -P)"
+if [[ "$repo_root" == "${build_root%/}" || "$repo_root" == "${build_root%/}"/* ]]; then
+    echo "refusing to run: IG_GUARD_BUILD_DIR ($build_dir) is or contains the checkout ($repo_dir)" >&2
+    exit 1
+fi
 export ANDROID_HOME="${ANDROID_HOME:-/workspace/.android-dev/sdk}"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-/workspace/.android-dev/gradle-home}"
 export IG_GUARD_SOURCE="$repo_dir"

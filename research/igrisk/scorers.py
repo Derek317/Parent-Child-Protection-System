@@ -138,5 +138,10 @@ def score_labels(row, ctx):
     answer = ctx["labels"].get(row["id"])
     if answer is None:
         raise ValueError(f"No label for {row['id']}")
+    answer = str(answer).strip().upper()
+    if answer in ("", "NONE", "NULL"):
+        answer = "U"
+    if answer not in ANSWERS:
+        raise ValueError(f"Label for {row['id']} is not one of {ANSWERS}: {answer!r}")
     p = {k: 1.0 if k == answer else 0.0 for k in ANSWERS}
     return _from_probs(p, 1.0)

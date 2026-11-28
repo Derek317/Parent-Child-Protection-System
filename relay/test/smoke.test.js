@@ -25,6 +25,9 @@ test('the release smoke command verifies the real TLS WebSocket and offline rece
     });
     assert.equal(result.code,0,result.output);
     assert.match(result.output,/signed parent receipt/);
+    assert.match(result.output,/child-key registration/);
+    assert.match(result.output,/v2 child connection/);
+    assert.match(result.output,/Test room deleted/);
     const denied=createServer({key:await readFile(key),cert:await readFile(cert)},(_,res)=>{res.writeHead(403);res.end()});
     denied.on('upgrade',(_,socket)=>socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n'));
     await new Promise(resolve=>denied.listen(0,'127.0.0.1',resolve));

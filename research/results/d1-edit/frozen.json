@@ -151,6 +151,6 @@
       "tune_benign_flagged": 0.37777777777777777
     }
   },
-  "script_sha256": "e662340f5ca9f88cd6ddba7047d7ee615fcb1232e5f61822ff5eff588d216adc",
+  "script_sha256": "d1563e7c785b3774cd0176ece5bb59f719c29b3d46dff2cb8db480760d3b793b",
   "selection_rule": "ridge strength per variant by family-grouped 5-fold CV balanced accuracy at cutoff 0.5 inside train; variant by tune balanced accuracy then AUROC; no other data used"
 }

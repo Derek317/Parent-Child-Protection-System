@@ -190,12 +190,13 @@ def do_verify(data_dir):
     rec = data_dir / "SEALED.sha256"
     if not rec.exists():
         return ["SEALED.sha256 not found"], []
-    bad, ok = [], []
+    bad, ok, seen = [], [], set()
     with open(rec, "r", encoding="utf-8") as fh:
         for line in fh:
             if not line.strip():
                 continue
             digest, name = line.rstrip("\n").split("  ", 1)
+            seen.add(name)
             f = data_dir / name
             if not f.exists():
                 bad.append(f"{name}: file missing")
@@ -203,6 +204,7 @@ def do_verify(data_dir):
                 bad.append(f"{name}: hash MISMATCH")
             else:
                 ok.append(f"{name}: ok")
+    bad.extend(f"{name}: not in SEALED.sha256" for name in HASHED if name not in seen)
     return bad, ok
 
 

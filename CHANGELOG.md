@@ -18,6 +18,9 @@
 - Child pairing: a Keystore failure while cancelling a pairing no longer crashes the app; the left-over key is removed at the next app start.
 - Child heartbeat: after the phone clock is set back, a heartbeat scheduled hours ahead is sent now instead of leaving the parent with a false "offline" warning.
 - Trusted friends list: a full-width comma (，) now separates names like an ordinary comma.
+- Relay setup guide: no longer tells the owner to add a WAF rate-limit rule, which workers.dev cannot do; it points to the options in the secrets-hardening guide and states the Worker check accurately.
+- Relay live check after deploy: also verifies the child-proof feature, a v2 child connection with a registered child key, and deletes its test room afterwards.
+- Local Android test runner: refuses to run when its build folder is or contains the checkout, instead of deleting sources from it.
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 
