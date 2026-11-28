@@ -94,11 +94,36 @@ class QrViewsTest {
     }
 
     @Test fun previewMatrixTurnsLandscapeBufferUprightAndFillsPortraitView() {
-        val m = previewMatrix(1080f, 1920f, 1280f, 720f, 90)
+        val m = previewMatrix(1080f, 1920f, 1280f, 720f, 90, 0)
         val r = RectF(0f, 0f, 1080f, 1920f).also { m.mapRect(it) }
         assertEquals(0f, r.left, 1f); assertEquals(0f, r.top, 1f); assertEquals(1080f, r.right, 1f); assertEquals(1920f, r.bottom, 1f)
         // A 4:3 buffer cannot fit without cropping: the footprint must cover the view.
-        val c = RectF(0f, 0f, 1080f, 1920f).also { previewMatrix(1080f, 1920f, 1280f, 960f, 90).mapRect(it) }
+        val c = RectF(0f, 0f, 1080f, 1920f).also { previewMatrix(1080f, 1920f, 1280f, 960f, 90, 0).mapRect(it) }
         assertTrue(c.width() >= 1079f && c.height() >= 1919f)
+    }
+
+    private fun mapped(m: android.graphics.Matrix, x: Float, y: Float) = floatArrayOf(x, y).also { m.mapPoints(it) }
+
+    private fun assertUprightAndUnsquashed(vw: Float, vh: Float, bw: Float, bh: Float, sensor: Int, screen: Int, upX: Float, upY: Float) {
+        val m = previewMatrix(vw, vh, bw, bh, sensor, screen)
+        val up = mapped(m, vw / 2f, 0f)
+        val right = mapped(m, vw, vh / 2f)
+        val cx = vw / 2f; val cy = vh / 2f
+        val upLen = Math.hypot((up[0] - cx).toDouble(), (up[1] - cy).toDouble())
+        val rightLen = Math.hypot((right[0] - cx).toDouble(), (right[1] - cy).toDouble())
+        assertEquals("the camera's up must point to the screen's $upX,$upY", upX.toDouble(), (up[0] - cx) / upLen, 0.01)
+        assertEquals("the camera's up must point to the screen's $upX,$upY", upY.toDouble(), (up[1] - cy) / upLen, 0.01)
+        val (uprightW, uprightH) = if (sensor % 180 != 0) bh to bw else bw to bh
+        assertEquals("the preview keeps the stream's aspect ratio", (uprightH / uprightW).toDouble(), upLen / rightLen, 0.01)
+    }
+
+    @Test fun previewIsUprightAndUnsquashedOnAPortraitPhone() {
+        assertUprightAndUnsquashed(1080f, 600f, 1280f, 720f, 90, 0, 0f, -1f)
+    }
+
+    @Test fun previewIsUprightAndUnsquashedOnTheTabletInPortraitAndLandscape() {
+        assertUprightAndUnsquashed(1116f, 525f, 1920f, 1080f, 90, 0, 0f, -1f)
+        assertUprightAndUnsquashed(1836f, 525f, 1920f, 1080f, 90, 90, -1f, 0f)
+        assertUprightAndUnsquashed(1836f, 525f, 1920f, 1080f, 90, 270, 1f, 0f)
     }
 }

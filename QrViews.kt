@@ -105,19 +105,19 @@ internal fun decodeLuminance(y: ByteArray, width: Int, height: Int, rowStride: I
     }
 }
 
-/**
- * Maps the preview the TextureView stretched to its bounds back to upright and center-crops it to fill the view.
- * [rotationDeg] is the clockwise turn that makes the buffer upright (sensor orientation minus display rotation).
- */
-internal fun previewMatrix(vw: Float, vh: Float, bw: Float, bh: Float, rotationDeg: Int): Matrix {
+/** Maps the preview the TextureView stretched to its bounds back to upright and center-crops it to fill the view. */
+internal fun previewMatrix(vw: Float, vh: Float, bw: Float, bh: Float, sensorDegrees: Int, screenDegrees: Int): Matrix {
+    val uprightW = if (sensorDegrees % 180 != 0) bh else bw
+    val uprightH = if (sensorDegrees % 180 != 0) bw else bh
+    val rotationDeg = (360 - screenDegrees) % 360
     val cx = vw / 2f
     val cy = vh / 2f
     val swap = rotationDeg % 180 != 0
-    val footW = if (swap) bh else bw
-    val footH = if (swap) bw else bh
+    val footW = if (swap) uprightH else uprightW
+    val footH = if (swap) uprightW else uprightH
     val fill = max(vw / footW, vh / footH)
     return Matrix().apply {
-        postScale(bw / vw, bh / vh, cx, cy) // undo the stretch: buffer at its natural pixel size
+        postScale(uprightW / vw, uprightH / vh, cx, cy)
         postRotate(rotationDeg.toFloat(), cx, cy)
         postScale(fill, fill, cx, cy)
     }
@@ -311,8 +311,7 @@ class QrScannerView(context: Context) : FrameLayout(context) {
     private fun applyTransform(run: Run, vw: Int, vh: Int) {
         if (vw <= 0 || vh <= 0) return
         val screen = rotationOf(display?.rotation ?: Surface.ROTATION_0)
-        val turn = (run.sensorDegrees - screen + 360) % 360
-        texture.setTransform(previewMatrix(vw.toFloat(), vh.toFloat(), run.size.width.toFloat(), run.size.height.toFloat(), turn))
+        texture.setTransform(previewMatrix(vw.toFloat(), vh.toFloat(), run.size.width.toFloat(), run.size.height.toFloat(), run.sensorDegrees, screen))
     }
 
     private fun rotationOf(r: Int) = when (r) { Surface.ROTATION_90 -> 90; Surface.ROTATION_180 -> 180; Surface.ROTATION_270 -> 270; else -> 0 }

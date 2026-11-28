@@ -6,6 +6,7 @@
 - Child: values the parent's strict checks refuse are no longer sent: a very confident score is capped at 100, the delivery-health numbers use plain digits on every phone language, and a phone clock that steps back no longer makes new captured messages from an open chat get rejected.
 - Alerts-only screen scan: a keyword bubble on screen alerts once, not every 45 seconds, and no longer hides the newest message from the stranger check.
 - Child pairing sheet: Scan again, two bad QR codes in a row and a camera grant from Settings no longer leave a dead or frozen sheet.
+- Child pairing sheet: the camera preview is drawn upright and no longer squashed, in portrait and in landscape.
 - Compromise recovery: the old relay room is deleted only after the relay confirmed the release, so an unconfirmed release can still reach the child phone.
 - Child pairing: a child clock too far behind for the pairing check now refuses the QR code up front and asks to check the date and time, instead of failing later with "bad message".
 - Child capture: messages Instagram shows again are skipped before signing, and the signing key is loaded once per batch instead of once per message.
