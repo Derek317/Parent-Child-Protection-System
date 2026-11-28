@@ -124,6 +124,14 @@ class UnlockClockTest {
         wall+=24*60*minute
         assertEquals(600L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
     }
+    @Test fun theBackgroundTickAloneRecordsTheEndOfALockoutBeforeReboot() {
+        repeat(5){GuardEngine.recordPasswordAttempt(ctx,false)}
+        mono+=11*minute
+        ArchiveMaintenance.backgroundTick(ctx)
+        boot="8";mono=2_000L
+        mono+=3*60*minute
+        assertEquals(0L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
+    }
     @Test fun anEndedLockoutNobodyLookedAtStaysEndedAfterReboot() {
         repeat(5){GuardEngine.recordPasswordAttempt(ctx,false)}
         val c=Robolectric.buildService(IgNotificationListener::class.java).create()
