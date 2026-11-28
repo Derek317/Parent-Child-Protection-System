@@ -25,7 +25,7 @@ object PairingCrypto {
     const val QR_PREFIX = "IGGQ1"
     const val QR_LIFETIME_MS = 3 * 60_000L
     /** A QR expiring later than lifetime + this (clock difference between the two phones) is refused. */
-    const val QR_CLOCK_SKEW_MS = 10 * 60_000L
+    const val QR_CLOCK_SKEW_MS = Pairing.CLOCK_SKEW_MS
     private const val QR_MAX_LENGTH = 400
     private val encoder = Base64.getUrlEncoder()
     private val decoder = Base64.getUrlDecoder()
@@ -145,7 +145,7 @@ object PairingCrypto {
         return "$QR_PREFIX.$secret.$parentKey.$expiresAt"
     }
     /** Null on any deviation: no trimming, exactly four '.'-separated fields, expired at [now], or expiring more than
-     * lifetime + clock skew (13 minutes) after [now]. */
+     * lifetime + clock skew after [now]. */
     fun parsePairingQr(text: String, now: Long): PairingQr? {
         if (text.length > QR_MAX_LENGTH) return null
         val fields = text.split('.')

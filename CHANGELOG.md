@@ -7,6 +7,7 @@
 - Alerts-only screen scan: a keyword bubble on screen alerts once, not every 45 seconds, and no longer hides the newest message from the stranger check.
 - Child pairing sheet: Scan again, two bad QR codes in a row and a camera grant from Settings no longer leave a dead or frozen sheet.
 - Compromise recovery: the old relay room is deleted only after the relay confirmed the release, so an unconfirmed release can still reach the child phone.
+- Child pairing: a child clock too far behind for the pairing check now refuses the QR code up front and asks to check the date and time, instead of failing later with "bad message".
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 

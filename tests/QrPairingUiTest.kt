@@ -302,6 +302,13 @@ class QrPairingUiTest {
         for (name in listOf("childSheetBody", "childSheetDialog")) assertNotNull(name, field(a, name).get(a))
         assertTrue(views().isNotEmpty())
     }
+    @Test fun aChildClockTooFarBehindForTheHelloIsToldToFixItsClock() = withChildSheet(true) { a, views ->
+        val parent = FamilySecurity.newSigningIdentity()
+        val qr = QrPairing.bareParent(parent).start(parent.publicKey, System.currentTimeMillis() + 3 * 60_000L).qrText
+        call(a, "onQrScanned", qr)
+        assertTrue(views().none { it.tag == "join_family" })
+        assertTrue(views().filterIsInstance<TextView>().any { it.text.contains("日期和時間") && it.text.contains("date and time") })
+    }
     @Test fun twoBadQrCodesInARowLeaveAScanner() = withChildSheet(true) { a, views ->
         repeat(2) { call(a, "onQrScanned", "not a convoy code"); assertNotNull(field(a, "pairingScanner").get(a)); assertTrue(views().any { it.tag == "qr_scanner" }) }
     }

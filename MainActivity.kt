@@ -4293,6 +4293,7 @@ class MainActivity : Activity() {
         scanProblem = when {
             PairingCrypto.parsePairingQr(text, now) != null -> null
             fields.size == 4 && fields[0] == PairingCrypto.QR_PREFIX && (fields[3].toLongOrNull() ?: Long.MAX_VALUE) <= now -> "QR 碼已過期。請在家長手機重新顯示 QR 碼。\nThe QR code has expired. Show a new one on the parent phone."
+            fields.size == 4 && PairingCrypto.parsePairingQr(text, (fields[3].toLongOrNull() ?: 0L) - 1) != null -> "此手機的時間比家長手機慢。請檢查手機的日期和時間，然後再掃描。\nThis phone's clock is behind the parent phone. Check the date and time, then scan again."
             else -> "這不是 Convoy 配對碼。\nThis is not a Convoy pairing code."
         }
         scannedQr = if (scanProblem == null) text else null

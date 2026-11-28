@@ -155,6 +155,12 @@ class PairingCryptoTest {
             try { bad(); fail() } catch (_: IllegalArgumentException) { }
     }
 
+    @Test fun aQrIsRefusedByAChildClockTheHelloCheckWouldRefuse() {
+        val qr = PairingCrypto.buildPairingQr(S, P, now + PairingCrypto.QR_LIFETIME_MS)
+        assertNotNull(PairingCrypto.parsePairingQr(qr, now - Pairing.CLOCK_SKEW_MS))
+        assertNull(PairingCrypto.parsePairingQr(qr, now - Pairing.CLOCK_SKEW_MS - 1))
+    }
+
     // ---------------- signed child records (software keys; the Keystore path is in ChildSigningKeyTest) ----------------
     private val parent = FamilySecurity.newSigningIdentity()
     private val child = FamilySecurity.newSigningIdentity()
