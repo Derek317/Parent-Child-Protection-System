@@ -3672,7 +3672,7 @@ class MainActivity : Activity() {
             "parent" -> alert(critical = true).setTitle("離開家長身份？")
                 .setMessage("離開後，此手機會刪除家長主密碼與簽署金鑰，之後無法再管理已配對的子女手機。子女手機會一直受到保護，直到收到解除指令。已保存的家庭記錄會留在本機。")
                 .setNegativeButton("取消", null).setPositiveButton("離開家庭") { _, _ ->
-                    requireFreshParentAuth { releaseChildSheet("離開家長身份", "下一步會顯示目前的家長主密碼，並可同時解除子女手機。") { proceed() } }
+                    requireFreshParentAuth { releaseChildSheet("離開家長身份", "下一步會顯示目前的家長主密碼，並可同時解除子女手機。") { _, _ -> proceed() } }
                 }.show()
             else -> proceed()
         }
@@ -5580,7 +5580,7 @@ class MainActivity : Activity() {
      * Before the parent password and signing key disappear: show the password, and by default send a signed reset so the paired
      * child becomes unconfigured. The parent is told plainly what was and was not confirmed.
      */
-    private fun releaseChildSheet(title: String, intro: String, purgeFamily: Boolean = false, proceed: (resetSent: Boolean) -> Unit) {
+    private fun releaseChildSheet(title: String, intro: String, purgeFamily: Boolean = false, proceed: (resetSent: Boolean, confirmed: Boolean) -> Unit) {
         val t = currentTheme(); val password = GuardEngine.getPin(this)
         showSheet(title) { dialog ->
             addView(label(intro, 14f, t.textSecondary, bottomPad = 14))
@@ -5592,9 +5592,9 @@ class MainActivity : Activity() {
             val status = label("", 13f, t.textSecondary, topPad = 8, bottomPad = 8); addView(status)
             lateinit var go: Button
             lateinit var cancel: Button
-            fun finished(message: String, resetSent: Boolean) {
+            fun finished(message: String, resetSent: Boolean, confirmed: Boolean = false) {
                 status.text = message; go.text = "我已記下，繼續"; go.isEnabled = true
-                go.setOnClickListener(sessionClick { dialog.dismiss(); proceed(resetSent) })
+                go.setOnClickListener(sessionClick { dialog.dismiss(); proceed(resetSent, confirmed) })
                 // Once a reset has gone out the child may already be unconfigured: a plain Cancel would hide that.
                 if (resetSent) cancel.text = "留在家長身份，之後重新配對子女手機"
             }
@@ -5608,7 +5608,7 @@ class MainActivity : Activity() {
                         if (isDestroyed) return@runOnUiThread
                         val (late, lateEn) = GuardEngine.releaseDelayNotice()
                         when (outcome) {
-                            GuardEngine.ReleaseOutcome.SENT -> finished("解除指令已送到中繼站；子女手機開啟並連線後會變成未設定狀態。這不代表子女手機已確認；若它沒有解除，請在子女手機輸入上面的主密碼。若你留在家長身份，之後須用 QR 碼重新配對子女手機。$late / The release reached the relay; the child phone becomes unconfigured once it is on and connected. This does not mean the child phone confirmed it; if it is not released, enter the master password above on the child phone. If you stay a parent, you must pair the child phone again with the QR code later. $lateEn", true)
+                            GuardEngine.ReleaseOutcome.SENT -> finished("解除指令已送到中繼站；子女手機開啟並連線後會變成未設定狀態。這不代表子女手機已確認；若它沒有解除，請在子女手機輸入上面的主密碼。若你留在家長身份，之後須用 QR 碼重新配對子女手機。$late / The release reached the relay; the child phone becomes unconfigured once it is on and connected. This does not mean the child phone confirmed it; if it is not released, enter the master password above on the child phone. If you stay a parent, you must pair the child phone again with the QR code later. $lateEn", true, confirmed = true)
                             GuardEngine.ReleaseOutcome.SENT_UNSURE -> finished("解除指令已送出，但此手機正在更新金鑰，子女手機可能沒有收到。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。若子女手機收到了，它會變成未設定狀態，須用 QR 碼重新配對。 / The release was sent, but this phone is updating its key, so the child phone may not have received it. Note the master password above; it must be entered on the child phone to pair with a new family. If the child phone received it, it becomes unconfigured and must be paired again by QR code.", true)
                             GuardEngine.ReleaseOutcome.SENT_UNCONFIRMED -> finished("解除指令可能已送出，但未獲中繼站確認：子女手機之後連線時可能會變成未設定狀態，也可能仍受保護。請記下上面的主密碼；若子女手機沒有解除，請在子女手機輸入它。$late / The release may have been sent, but the relay did not confirm it: the child phone may become unconfigured when it next connects, or may still be protected. Note the master password above; if the child phone is not released, enter it on the child phone. $lateEn", true)
                             GuardEngine.ReleaseOutcome.NOT_SENT -> finished("解除指令未能送出，子女手機仍受保護。請記下上面的主密碼，之後在子女手機輸入才能配對新家庭。", false)
@@ -5639,12 +5639,16 @@ class MainActivity : Activity() {
             }
             fun fresh() {
                 if(!parentUnlocked())return
-                releaseChildSheet("重新安全配對","新的家庭秘密不經舊通道傳送；子女手機須解除舊配對後才能重新配對。") { resetSent -> create(resetSent) }
+                releaseChildSheet("重新安全配對","新的家庭秘密不經舊通道傳送；子女手機須解除舊配對後才能重新配對。") { resetSent, _ -> create(resetSent) }
             }
             addView(actionButton("嘗試刪除舊中繼房間，再建立新配對",t.warningButtonBg,t.warningButtonText){requireFreshParentAuth {
                 if(!parentUnlocked())return@requireFreshParentAuth
                 // The signed release must leave before the room does: a deleted room delivers nothing.
-                releaseChildSheet("刪除舊中繼房間","先向子女手機送出已簽署的解除指令，然後刪除舊中繼房間。子女手機收到後會清除舊配對的金鑰及未傳送記錄；若它離線，需當面重新配對。",purgeFamily=true) { resetSent ->
+                releaseChildSheet("刪除舊中繼房間","先向子女手機送出已簽署的解除指令，然後刪除舊中繼房間。子女手機收到後會清除舊配對的金鑰及未傳送記錄；若它離線，需當面重新配對。",purgeFamily=true) { resetSent, confirmed ->
+                    if(resetSent && !confirmed){
+                        Toast.makeText(this@MainActivity,"解除指令未獲中繼站確認，舊中繼房間未刪除：現在刪除可能令子女手機收不到解除指令。請稍後再試，或改選「只建立新配對」。\nThe relay did not confirm the release, so the old relay room was not deleted: deleting it now could stop the release reaching the child phone. Try again later.",Toast.LENGTH_LONG).show()
+                        return@releaseChildSheet
+                    }
                     val expected=GuardEngine.captureRelaySession(this@MainActivity)
                     CloudRelay.retireRoom(this@MainActivity){ok,message->runOnUiThread{
                         if(isDestroyed || !parentUnlocked() || GuardEngine.captureRelaySession(this@MainActivity)!=expected)return@runOnUiThread

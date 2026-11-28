@@ -373,4 +373,26 @@ class ChildReleaseTest {
             assertFalse(text,text.contains("邀請"))
         } finally {c.pause().stop().destroy();CloudRelay.endpoint=BuildConfig.RELAY_BASE_URL;server.shutdown()}
     }
+    @Test fun anUnconfirmedReleaseKeepsTheOldRoomSoTheReleaseCanStillArrive() {
+        val server=okhttp3.mockwebserver.MockWebServer()
+        server.dispatcher=object:okhttp3.mockwebserver.Dispatcher(){
+            override fun dispatch(request:okhttp3.mockwebserver.RecordedRequest)=okhttp3.mockwebserver.MockResponse().setResponseCode(204)
+        }
+        server.start();CloudRelay.endpoint=server.url("/").toString()
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get()
+        try {
+            val token=GuardEngine.getOrCreateFamilyToken(ctx)
+            GuardEngine.releaseOverride={_,_->GuardEngine.ReleaseOutcome.SENT_UNCONFIRMED}
+            openRecovery(a)
+            button("嘗試刪除舊中繼房間，再建立新配對")!!.performClick();idle();answer(a)
+            button("繼續")!!.performClick()
+            waitFor("result"){button("我已記下，繼續")!=null}
+            button("我已記下，繼續")!!.performClick()
+            waitFor("the kept-room toast"){org.robolectric.shadows.ShadowToast.getTextOfLatestToast()?.contains("舊中繼房間未刪除")==true}
+            Thread.sleep(500);idle()
+            assertEquals("no DELETE may overtake the unconfirmed release",0,server.requestCount)
+            assertEquals(token,GuardEngine.getOrCreateFamilyToken(ctx))
+            assertTrue(org.robolectric.shadows.ShadowToast.getTextOfLatestToast().contains("was not deleted"))
+        } finally {c.pause().stop().destroy();CloudRelay.endpoint=BuildConfig.RELAY_BASE_URL;server.shutdown()}
+    }
 }
