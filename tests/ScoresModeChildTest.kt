@@ -1227,6 +1227,13 @@ class ScoresModeChildTest {
         assertTrue(alertsOut().filter { it.getString("reason") == "tamper_attempt" }.none { it.has("content_free") })
         assertNoPrivateText()
     }
+    @Test fun twoDifferentMessagesFromOneSenderAreTwoAlertsInScoresOnlyMode() {
+        activate(); clearOutbox()
+        GuardEngine.sendAlertFromChild(ctx, "stranger_message", "badguy", "first message $secret", fromNotification = true)
+        GuardEngine.sendAlertFromChild(ctx, "stranger_message", "badguy", "second message $secret", fromNotification = true)
+        assertEquals(2, alertsOut().size)
+        assertNoPrivateText()
+    }
     @Test fun aRealTextlessAlertReachesTheParentMarkedAndRendersTheNoTextLine() {
         activate()
         capture(obs("send nudes ${secret}", conversation = "badguy_account"))

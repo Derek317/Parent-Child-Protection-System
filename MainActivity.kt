@@ -1731,7 +1731,7 @@ object GuardEngine {
         // Scores-only mode: alerts about messages carry the category and the account label, never the text.
         val scrubbed = RiskLocal.scrubsText(ctx, reason)
         val cleanText = if (scrubbed) "" else text
-        val dedupeKey = "$topic|${reason.lowercase(Locale.US)}|${cleanSender.lowercase(Locale.US).removePrefix("@")}|${cleanText.lowercase(Locale.US)}"
+        val dedupeKey = "$topic|${reason.lowercase(Locale.US)}|${cleanSender.lowercase(Locale.US).removePrefix("@")}|${text.lowercase(Locale.US)}"
         val windowMs = if (fromNotification) NOTIF_BURST_DEDUPE_MS else SCREEN_DEDUPE_MS
         val bypass = bypassDedupe || reason == "test_alert" || reason == "heartbeat_ok"
 
