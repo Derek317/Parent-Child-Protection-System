@@ -99,9 +99,41 @@ class UnlockClockTest {
         assertTrue(GuardEngine.checkPasswordLockoutRemainingSec(ctx)>=590)
         wall-=6*60*minute;mono+=5*minute
         assertTrue(GuardEngine.checkPasswordLockoutRemainingSec(ctx)in 290..300)
-        boot="8";mono=2_000L   // reboot restarts the whole lockout rather than ending it
-        assertTrue(GuardEngine.checkPasswordLockoutRemainingSec(ctx)>=590)
+        boot="8";mono=2_000L
+        assertTrue("a reboot resumes the lockout, never ends it",GuardEngine.checkPasswordLockoutRemainingSec(ctx)in 290..300)
         mono+=11*minute
+        assertEquals(0L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
+    }
+    @Test fun lockoutResumesFromItsObservedRemainingTimeAfterReboot() {
+        repeat(5){GuardEngine.recordPasswordAttempt(ctx,false)}
+        mono+=100_000L
+        assertEquals(500L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
+        boot="8";mono=2_000L;wall+=3*60*minute
+        assertEquals(500L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
+        mono+=499_000L
+        assertEquals(1L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
+        mono+=1_000L
+        assertEquals(0L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
+    }
+    @Test fun movingTheWallClockForwardNeverShortensALockoutBeforeOrAfterReboot() {
+        repeat(5){GuardEngine.recordPasswordAttempt(ctx,false)}
+        wall+=5*60*minute
+        assertEquals(600L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
+        boot="8";mono=2_000L;wall+=24*60*minute
+        assertEquals(600L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
+        wall+=24*60*minute
+        assertEquals(600L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
+    }
+    @Test fun anEndedLockoutNobodyLookedAtStaysEndedAfterReboot() {
+        repeat(5){GuardEngine.recordPasswordAttempt(ctx,false)}
+        val c=Robolectric.buildService(IgNotificationListener::class.java).create()
+        try {
+            c.get().onListenerConnected()
+            mono+=11*minute
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(16))
+        } finally { c.destroy() }
+        boot="8";mono=2_000L
+        mono+=3*60*minute
         assertEquals(0L,GuardEngine.checkPasswordLockoutRemainingSec(ctx))
     }
     @Test fun unlockCodeCannotBeReusedAfterRollingTheClockBack() {

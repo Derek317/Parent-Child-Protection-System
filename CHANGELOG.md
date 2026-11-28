@@ -2,6 +2,7 @@
 
 ## 6.0.4 — not released yet
 
+- Child: a wrong-password lockout counts down only while the phone runs and resumes after a reboot from the time it had left; a lockout that already ended no longer comes back after a reboot, and moving the clock forward still cannot shorten one.
 - Child: a queued message text record is now recognised inside the signed wrapper of a QR-paired child, so agreeing to scores-only mode discards it; changing capture options discards only queued text, not tamper alerts, heartbeats or score reports.
 - Child: values the parent's strict checks refuse are no longer sent: a very confident score is capped at 100, the delivery-health numbers use plain digits on every phone language, and a phone clock that steps back no longer makes new captured messages from an open chat get rejected.
 - Alerts-only screen scan: a keyword bubble on screen alerts once, not every 45 seconds, and no longer hides the newest message from the stranger check.
