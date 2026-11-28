@@ -536,6 +536,7 @@ class FamilyEvidence(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "f
         db.execSQL("DELETE FROM risk_state WHERE scope=? AND received_at<=?",arrayOf(scope,retention))
     }
     /** Child: content-free marker so a re-read message is neither stored nor alerted twice. True when [id] is new. */
+    fun captured(scope:String,id:String):Boolean = readableDatabase.rawQuery("SELECT 1 FROM capture_seen WHERE scope=? AND id=?",arrayOf(scope,id)).use{it.moveToFirst()}
     fun markCaptured(scope:String,id:String):Boolean =
         writableDatabase.insertWithOnConflict("capture_seen",null,ContentValues().apply{put("scope",scope);put("id",id)},SQLiteDatabase.CONFLICT_IGNORE)!=-1L
     /**

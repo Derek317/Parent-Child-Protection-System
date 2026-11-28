@@ -110,6 +110,24 @@ class ChildRecordWiringTest {
             JSONObject().put("event", "message").put("id", UUID.randomUUID().toString()).put("message", wire).toString(), "parent", null))
     }
 
+    @Test fun aRepostOfAlreadyQueuedMessagesSignsNothing() {
+        QrPairing.pairChild(ctx, parent)
+        prefs.edit().putString("capture_policy_id", UUID.randomUUID().toString()).commit()
+        assertTrue(GuardEngine.confirmFullCapture(ctx))
+        val batch = (1..10).map { CapturedText("stranger", "message $it", "incoming", author = "stranger", sourceKey = "k$it") }
+        val calls = mutableMapOf<String, Int>()
+        TestKeyStore.onLoad = {
+            Thread.currentThread().stackTrace.map { it.methodName }.firstOrNull { it == "loadChildSigningKey" || it == "signChildBytes" }
+                ?.let { calls[it] = (calls[it] ?: 0) + 1 }
+        }
+        try {
+            assertEquals(10, GuardEngine.captureMessages(ctx, batch).size)
+            assertEquals("one key load for the batch, one signature per row", mapOf("loadChildSigningKey" to 1, "signChildBytes" to 10), calls)
+            calls.clear()
+            assertEquals(0, GuardEngine.captureMessages(ctx, batch).size)
+            assertEquals("a repost of queued messages must not touch the signing key", emptyMap<String, Int>(), calls)
+        } finally { TestKeyStore.onLoad = {} }
+    }
     @Test fun aChildWithoutAQrPairingSendsThe52FormatUnchanged() {
         GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
         val invite = QrPairing.legacyInvite(ctx)

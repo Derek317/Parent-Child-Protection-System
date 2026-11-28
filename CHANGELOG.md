@@ -8,6 +8,7 @@
 - Child pairing sheet: Scan again, two bad QR codes in a row and a camera grant from Settings no longer leave a dead or frozen sheet.
 - Compromise recovery: the old relay room is deleted only after the relay confirmed the release, so an unconfirmed release can still reach the child phone.
 - Child pairing: a child clock too far behind for the pairing check now refuses the QR code up front and asks to check the date and time, instead of failing later with "bad message".
+- Child capture: messages Instagram shows again are skipped before signing, and the signing key is loaded once per batch instead of once per message.
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 

@@ -683,10 +683,13 @@ object GuardEngine {
     fun childQuietDrops(ctx:Context):Int = prefs(ctx).getInt(QUIET_DROPS,0)
     /** Child after a QR pairing: [recordText] (built exactly as 5.2 does, without the receipt flag) wrapped and signed with K
      *  (design 3.2); null for a 5.2 pairing, which keeps the unsigned format. A key that cannot be used throws: never a fallback. */
-    private fun signedForParent(ctx:Context,recordText:String,id:String,receiptRequested:Boolean?):JSONObject? {
+    private fun childSigningKey(ctx:Context):FamilySecurity.ChildSigningKey? {
         // A QR pairing never falls back to the unsigned 5.2 format: without a usable K nothing leaves (the caller's error path).
         val alias=childKeyAlias(ctx) ?: if(childQrPaired(ctx))throw SecurityException("Child signing key alias is missing") else return null
-        val key=FamilySecurity.loadChildSigningKey(ctx,alias)
+        return FamilySecurity.loadChildSigningKey(ctx,alias)
+    }
+    private fun signedForParent(ctx:Context,recordText:String,id:String,receiptRequested:Boolean?,key:FamilySecurity.ChildSigningKey?=childSigningKey(ctx)):JSONObject? {
+        key ?: return null
         return ChildRecords.wrapForParent(recordText,id,prefs(ctx).getString("parent_command_public_key","").orEmpty(),key.publicKey,{FamilySecurity.signChildBytes(it,key.alias)},receiptRequested)
     }
     /** Forgets this phone's child signing key (new pairing, reset, role change, purge). A Keystore entry that cannot be deleted
@@ -1517,6 +1520,7 @@ object GuardEngine {
                         val indices=if(windowKey!=null)ConversationCapture.newIndices(previous,hashes)else rows.indices.toList()
                         // A sequence gap after a failed SQLite transaction is harmless; timestamps remain unchanged.
                         if(indices.isNotEmpty())check(prefs(ctx).edit().putLong("capture_sequence",orderBase+indices.size).commit())
+                        val childKey by lazy { childSigningKey(ctx) }
                         for((ordinal,index) in indices.withIndex()) {
                             val c=rows[index]
                             if(c.text.isBlank())continue
@@ -1535,9 +1539,10 @@ object GuardEngine {
                                 if(RiskLocal.captureContentFree(ctx,db,scope,r,riskMode==RiskCapture.ACTIVE,now)){accepted.add(r);if(ConversationCapture.actionable(r))contentFreeAlerts.add(r)}
                                 continue
                             }
+                            if(db.captured(scope,r.getString("event_id")))continue
                             val stamp=r.getLong("ts_ms")
                             r.put("time",SimpleDateFormat("MM-dd HH:mm:ss",Locale.US).format(Date(stamp)))
-                            val outer=signedForParent(ctx,r.toString(),r.getString("event_id"),true) ?: r.put("receipt_requested",true)
+                            val outer=signedForParent(ctx,r.toString(),r.getString("event_id"),true,childKey) ?: r.put("receipt_requested",true)
                             val frames=AlertFrames.split(outer).mapIndexed { n,f -> "${r.getString("event_id")}:$n" to encryptPayload(token,f.toString()) }
                             if(db.enqueueCaptured(scope,r.getString("event_id"),frames,true,ConversationCapture.priority(r)))accepted.add(r)
                         }
