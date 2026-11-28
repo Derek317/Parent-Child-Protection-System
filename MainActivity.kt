@@ -3605,7 +3605,7 @@ class MainActivity : Activity() {
         if (GuardEngine.isChildMode(this) && GuardEngine.isNotificationListenerEnabledStatic(this)) {
             try { NotificationListenerService.requestRebind(ComponentName(this, IgNotificationListener::class.java)) } catch (_: Exception) {}
         }
-        syncRoleServices(); checkInitialPairingConfirmation(); renderUi()
+        syncRoleServices(); checkInitialPairingConfirmation(); renderUi(); fillChildPairing()
         pairingScanner?.takeIf { it.isAttachedToWindow }?.start()
         if (GuardEngine.isChildMode(this)) {
             GuardEngine.retryPendingAlerts(this,force=true)
@@ -4271,11 +4271,15 @@ class MainActivity : Activity() {
         if (showPairingBlock()) return
         childPairing?.cancel(); childPairing = null
         scannedQr = null; scanProblem = null; cameraAsked = false; cameraDenied = false; cameraBroken = false; childJoinPassword = null; childPairingStored = null
+        var mine: Dialog? = null
         showTrackedSheet("加入家庭 · Join a family", onDismiss = {
-            pairingScanner?.stop(); pairingScanner = null
-            if (childPairing?.machine?.state != ChildPairingState.Paired) { childPairing?.cancel(); childPairing = null; childJoinPassword = null }
-            scannedQr = null; childSheetBody = null; childSheetDialog = null
+            if (childSheetDialog === mine) {
+                pairingScanner?.stop(); pairingScanner = null
+                if (childPairing?.machine?.state != ChildPairingState.Paired) { childPairing?.cancel(); childPairing = null; childJoinPassword = null }
+                scannedQr = null; childSheetBody = null; childSheetDialog = null
+            }
         }) { dialog ->
+            mine = dialog
             childSheetBody = this; childSheetDialog = dialog
             fillChildPairing()
         }
@@ -4291,6 +4295,7 @@ class MainActivity : Activity() {
             else -> "這不是 Convoy 配對碼。\nThis is not a Convoy pairing code."
         }
         scannedQr = if (scanProblem == null) text else null
+        childSheetBody?.tag = null
         fillChildPairing()
     }
     private fun childCancelText(link: ChildPairingLink, reason: Pairing.CancelReason): String = if (link.parentStopped)

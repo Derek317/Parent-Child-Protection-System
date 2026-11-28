@@ -285,6 +285,40 @@ class QrPairingUiTest {
         }
     }
 
+    private fun withChildSheet(granted: Boolean, body: (MainActivity, () -> List<View>) -> Unit) {
+        prefs.edit().clear().commit()
+        if (granted) shadowOf(ctx).grantPermissions(android.Manifest.permission.CAMERA) else shadowOf(ctx).denyPermissions(android.Manifest.permission.CAMERA)
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            call(a, "navigateTo", "child_setup"); call(a, "showChildPairingSheet")
+            body(a) { all(sheet(a).window!!.decorView) }
+        } finally { c.pause().stop().destroy() }
+    }
+    @Test fun aStaleDismissFromTheOldSheetLeavesTheNewSheetLive() = withChildSheet(true) { a, views ->
+        val old = sheet(a)
+        call(a, "showChildPairingSheet")
+        val message = Dialog::class.java.getDeclaredField("mDismissMessage").apply { isAccessible = true }.get(old) as android.os.Message
+        (message.obj as android.content.DialogInterface.OnDismissListener).onDismiss(old); idle()
+        for (name in listOf("childSheetBody", "childSheetDialog")) assertNotNull(name, field(a, name).get(a))
+        assertTrue(views().isNotEmpty())
+    }
+    @Test fun twoBadQrCodesInARowLeaveAScanner() = withChildSheet(true) { a, views ->
+        repeat(2) { call(a, "onQrScanned", "not a convoy code"); assertNotNull(field(a, "pairingScanner").get(a)); assertTrue(views().any { it.tag == "qr_scanner" }) }
+    }
+    @Test fun grantingTheCameraInSettingsIsPickedUpOnReturn() {
+        prefs.edit().clear().commit(); shadowOf(ctx).denyPermissions(android.Manifest.permission.CAMERA)
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup(); val a = c.get()
+        try {
+            call(a, "navigateTo", "child_setup"); call(a, "showChildPairingSheet")
+            val views = { all(sheet(a).window!!.decorView) }
+            call(a, "onRequestPermissionsResult", 102, arrayOf(android.Manifest.permission.CAMERA), intArrayOf(PackageManager.PERMISSION_DENIED))
+            assertNotNull(views().firstOrNull { it.tag == "camera_denied" })
+            shadowOf(ctx).grantPermissions(android.Manifest.permission.CAMERA)
+            c.pause(); c.resume(); idle()
+            assertTrue("denied note gone", views().none { it.tag == "camera_denied" })
+        } finally { c.pause().stop().destroy() }
+    }
+
     /** Large system text on a 360 dp phone: the scan button is inside the first screenful, the warning directly under it. */
     @Config(qualifiers = "w360dp-h640dp-mdpi")
     @Test fun theScanButtonIsOnTheFirstScreenAtLargeFontSizes() {
