@@ -11,6 +11,7 @@
 - Child capture: messages Instagram shows again are skipped before signing, and the signing key is loaded once per batch instead of once per message.
 - Parent statistics: only counted alerts are remembered for replay checks, so heartbeats and routine records no longer grow the stored statistics.
 - Code: removed the archive contact list and capture window helpers that only tests used.
+- QR pairing: a relay refusal caused by a wrong phone clock now retries with the relay's time instead of ending the pairing.
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 

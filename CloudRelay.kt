@@ -223,7 +223,7 @@ object CloudRelay {
                         val delay=if(code in listOf(401,403))300_000L else response?.header("Retry-After")?.toLongOrNull()?.times(1000)
                         val clockOff=code==401 && response?.headers?.getDate("Date")?.let{GuardEngine.noteRelayClock(ctx,it.time)}==true
                         when {
-                            clockOff && route==null -> fail("手機時間與中繼相差超過 2 分鐘 · 請檢查手機的日期和時間 · 已按中繼時間重試",5_000L,exact=true)
+                            clockOff -> fail("手機時間與中繼相差超過 2 分鐘 · 請檢查手機的日期和時間 · 已按中繼時間重試",5_000L,exact=true)
                             staleTime && route==null -> fail("中繼表示手機時間不正確 · 請檢查手機的日期和時間",delay)
                             route!=null && code in listOf(401,403,410) -> {stop();route.onRefused(code!!)}
                             (route!=null || keyedChild) && code==409 -> fail("正在等待家長手機完成配對 · 15 秒後重試",PAIRING_RETRY_MS,exact=true)

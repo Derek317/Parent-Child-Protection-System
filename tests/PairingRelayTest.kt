@@ -143,6 +143,24 @@ class PairingRelayTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun aClockRefusalOnAPairingRoomRetriesWithTheRelaysTimeInsteadOfEndingThePairing() {
+        GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(401).setHeader("Date", httpDate(System.currentTimeMillis() + 10 * 60_000L))
+            .setBody("{\"error\":{\"code\":\"stale_time\",\"retry_after_ms\":0}}"))
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send(JSONObject().put("type", "ready").put("protocol", 1).toString()) }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
+        })); server.start()
+        val ready = CountDownLatch(1); var refused: Int? = null
+        val token = PairingCrypto.newPairingSecret()
+        val connection = CloudRelay.openPairingRoom(ctx, CloudRelay.PairingRoute(GuardEngine.relayPublicKey(ctx), token, { GuardEngine.relayAuthorization(ctx, token) },
+            onReady = { ready.countDown() }, onRecord = {}, onRefused = { refused = it }), server.url("/").toString())
+        try {
+            assertTrue("the pairing room reconnects after the clock correction", ready.await(10, TimeUnit.SECONDS))
+            assertNull("a clock refusal does not end the pairing", refused)
+        } finally { connection.close(); server.shutdown(); FamilyRelay.clockOffsetMs = 0L }
+    }
     @Test fun thePairingRoomCarriesM1AndM2AndRefusesAnOldRelay() {
         GuardEngine.setRole(ctx, "parent"); GuardEngine.setPin(ctx, QrPairing.PASSWORD)
         for (childProof in listOf(false, true)) {
