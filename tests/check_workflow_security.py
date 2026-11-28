@@ -194,7 +194,7 @@ class ReleaseVersionAndHotfixSafety(unittest.TestCase):
 
     def version_code(self, version, run):
         lines = [l.strip() for l in self.run_with('VER_CODE=').splitlines() if l.strip().startswith(('VER_NAME=', 'IFS=. read', 'if [ ${{ github.run_number }}', 'VER_CODE='))]
-        script = chr(10).join(lines).replace('${{ github.run_number }}', str(run)).replace('VER_NAME=6.0.3', f'VER_NAME={version}', 1)
+        script = chr(10).join(lines).replace('${{ github.run_number }}', str(run)).replace('VER_NAME=6.0.4', f'VER_NAME={version}', 1)
         out = subprocess.run(['bash', '-c', script + chr(10) + 'echo "$VER_CODE"'], env={'PATH': '/usr/bin:/bin'}, capture_output=True, text=True, check=True)
         return int(out.stdout.strip())
 

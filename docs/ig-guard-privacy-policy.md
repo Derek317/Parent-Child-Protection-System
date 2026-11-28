@@ -1,6 +1,6 @@
 # Convoy Privacy Policy
 
-Updated: **26 November 2026 (Hong Kong)**. This notice describes **Convoy 6.0.3**, bundled Terms revision **2026-11-26-v10**. See the [release notes and known limits](releases/6.0.3.md). Safe Guard operates the project and can be reached at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
+Updated: **28 November 2026 (Hong Kong)**. This notice describes **Convoy 6.0.4**, bundled Terms revision **2026-11-26-v10**. See the [release notes and known limits](releases/6.0.3.md). Safe Guard operates the project and can be reached at [ppefyp2026@gmail.com](mailto:ppefyp2026@gmail.com).
 
 ## Initial choice on each phone
 

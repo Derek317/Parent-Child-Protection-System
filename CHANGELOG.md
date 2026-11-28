@@ -1,6 +1,8 @@
 # Changelog
 
-## 6.0.4 — not released yet
+## 6.0.4 — documented 28 November 2026 (Hong Kong)
+
+Fixes from an external bug review and a follow-up audit. Full notes: [6.0.4 release notes](docs/releases/6.0.4.md).
 
 - Child: a wrong-password lockout counts down only while the phone runs and resumes after a reboot from the time it had left; a lockout that already ended no longer comes back after a reboot, and moving the clock forward still cannot shorten one.
 - Child: a queued message text record is now recognised inside the signed wrapper of a QR-paired child, so agreeing to scores-only mode discards it; changing capture options discards only queued text, not tamper alerts, heartbeats or score reports.
