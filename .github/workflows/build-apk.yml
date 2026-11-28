@@ -400,6 +400,19 @@ jobs:
               testImplementation 'org.robolectric:robolectric:4.14.1'
           }
           EOF
+          (
+            while sleep 20; do
+              [ -f tests-started.txt ] && [ ! -f /tmp/stack-dumped ] || continue
+              [ "$(wc -l < tests-started.txt)" -gt "$(cat tests-finished.txt 2>/dev/null | wc -l)" ] || continue
+              [ $(( $(date +%s) - $(stat -c %Y tests-started.txt) )) -gt 120 ] || continue
+              touch /tmp/stack-dumped
+              hung="$(tail -1 tests-started.txt)"
+              for pid in $("$JAVA_HOME/bin/jps" -l | awk '/GradleWorkerMain/ {print $1}'); do
+                "$JAVA_HOME/bin/jstack" "$pid" > "/tmp/stack-$pid.txt" 2>&1 || continue
+                awk 'BEGIN{RS=""} /Test worker|Main Thread|main"/' "/tmp/stack-$pid.txt" | head -80 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' | sed "s/^/::error title=Stack of hung test $hung::/"
+              done
+            done
+          ) &
           gradle testDebugUnitTest lintDebug --no-daemon
 
 
