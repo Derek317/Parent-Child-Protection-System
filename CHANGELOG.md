@@ -7,6 +7,7 @@
 - Alerts-only screen scan: a keyword bubble on screen alerts once, not every 45 seconds, and no longer hides the newest message from the stranger check.
 - Child pairing sheet: Scan again, two bad QR codes in a row and a camera grant from Settings no longer leave a dead or frozen sheet.
 - Relay setup guide: no longer tells the owner to add a WAF rate-limit rule, which workers.dev cannot do; it points to the options in the secrets-hardening guide and states the Worker check accurately.
+- Relay live check after deploy: also verifies the child-proof feature, a v2 child connection with a registered child key, and deletes its test room afterwards.
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 
