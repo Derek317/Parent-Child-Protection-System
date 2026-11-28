@@ -212,6 +212,7 @@ def main():
                         score = float(baseline(row, pattern))
                     item.update(score=score, decision=decision(score, protocol))
                 except Exception as error:
+                    item.pop("raw", None)
                     item.update(score=None, decision="review", error=f"{type(error).__name__}: {error}")
                 item.update(wall_seconds=time.perf_counter() - before, cpu_seconds=time.process_time() - cpu_before)
                 predictions.append(item)
