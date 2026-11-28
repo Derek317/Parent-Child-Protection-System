@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -148,6 +149,32 @@ class LocalRunner(unittest.TestCase):
             self.assertEqual([], [p for p in stale if p.exists()])
             self.assertEqual(kept, [p for p in kept if p.exists()])
         self.assertNotEqual(0, subprocess.run(['bash', '-c', 'build_dir=; ' + clean[0]], capture_output=True).returncode)
+
+    def run_script(self, repo, build_dir):
+        return subprocess.run(['bash', str(repo / 'tests/run_android.sh')], capture_output=True, text=True,
+                              env={**os.environ, 'IG_GUARD_BUILD_DIR': str(build_dir), 'IG_GUARD_TEST_HOME': str(repo.parent / 'home'),
+                                   'GRADLE_BIN': 'true'})
+
+    def test_a_build_dir_that_is_or_contains_the_checkout_is_refused_before_anything_is_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / 'repo'
+            (repo / 'tests').mkdir(parents=True)
+            shutil.copyfile(REPO / 'tests/run_android.sh', repo / 'tests/run_android.sh')
+            precious = repo / 'app/src/main/Precious.kt'
+            precious.parent.mkdir(parents=True)
+            precious.write_text('x')
+            for build_dir in (repo, str(repo) + '/', repo / 'tests' / '..', repo.parent):
+                result = self.run_script(repo, build_dir)
+                self.assertNotEqual(0, result.returncode, build_dir)
+                self.assertIn('refusing', result.stderr, build_dir)
+                self.assertTrue(precious.exists(), build_dir)
+
+    def test_a_build_dir_outside_the_checkout_is_not_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / 'repo'
+            (repo / 'tests').mkdir(parents=True)
+            shutil.copyfile(REPO / 'tests/run_android.sh', repo / 'tests/run_android.sh')
+            self.assertNotIn('refusing', self.run_script(repo, Path(tmp) / 'build').stderr)
 
 class DependencyVerification(unittest.TestCase):
     def test_every_dependency_is_pinned_by_sha256_for_local_runs_and_linux_ci(self):
