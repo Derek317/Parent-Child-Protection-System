@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Child: a queued message text record is now recognised inside the signed wrapper of a QR-paired child, so agreeing to scores-only mode discards it; changing capture options discards only queued text, not tamper alerts, heartbeats or score reports.
+
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 
 ### External review fixes

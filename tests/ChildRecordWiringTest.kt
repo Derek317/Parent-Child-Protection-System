@@ -59,11 +59,12 @@ class ChildRecordWiringTest {
         val row = JSONObject().put("account_label", "alice").put("score", 42.0).put("review_reason", JSONObject.NULL).put("scored_at_ms", System.currentTimeMillis() - 1000)
         assertNotNull(GuardEngine.queueScoresReport(ctx, JSONObject().put("type", "scores_mode_report").put("sent_at_ms", System.currentTimeMillis())
             .put("state", state).put("conversations", JSONArray().put(row))))                               // scores_mode_report (fragmented)
+        val beforeScoresMode = queued(token)
         // Scores-only mode: a message alert leaves without its text.
         RiskLocal.receivePolicy(ctx, UUID.randomUUID().toString(), true); assertTrue(RiskLocal.accept(ctx))
         GuardEngine.sendAlertFromChild(ctx, "stranger_message", "peer", "secret words", bypassDedupe = true)
 
-        val records = queued(token)
+        val records = beforeScoresMode + queued(token)
         val types = mutableSetOf<String>()
         for ((id, wrapper) in records) {
             assertFalse("no 5.2 envelope after a QR pairing: $id", wrapper.has("relay_control"))

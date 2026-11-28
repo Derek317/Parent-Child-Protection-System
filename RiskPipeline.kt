@@ -621,8 +621,14 @@ internal object RiskLocal {
     /** The child's "OK" on the card. Closes the card only: the time stays, so the 20-hour limit still holds. Nothing is sent to the parent. */
     fun dismissImportRequest(ctx: Context): Boolean = prefs(ctx).edit().putBoolean(IMPORT_REQUEST_DONE, true).commit()
 
+    fun discardTextPending(ctx: Context) {
+        val token = GuardEngine.getOrCreateFamilyToken(ctx)
+        FamilyEvidence(ctx).use { db -> db.discardPendingMatching(GuardEngine.getChannelTopic(ctx)) { wire -> carriesText(token, wire) } }
+    }
+
     private fun carriesText(token: String, wire: String): Boolean {
-        val json = GuardEngine.decryptPayload(token, wire) ?: return true   // unreadable: do not risk forwarding it
+        val outer = GuardEngine.decryptPayload(token, wire) ?: return true
+        val json = (outer.opt("child_signed") as? String)?.let { try { JSONObject(it) } catch (_: Exception) { return true } } ?: outer
         return when (json.optString("type")) {
             "captured_message", "alert_fragment" -> true
             "alert" -> !json.optBoolean("relay_control") && json.optString("reason") in messageReasons && json.optString("text").isNotEmpty()
@@ -646,8 +652,7 @@ internal object RiskLocal {
         LocalVault.preferences(ctx)
         if (!receiptPrefs(ctx).edit().putString("receipt", LocalVault.seal(ctx, RECEIPT_PURPOSE, receipt.toString())).commit()) return@withSessionLock false
         // Only queued records that can carry message text go; tamper, unlock, pairing, heartbeat and control records stay.
-        val token = GuardEngine.getOrCreateFamilyToken(ctx)
-        FamilyEvidence(ctx).use { db -> db.discardPendingMatching(GuardEngine.getChannelTopic(ctx)) { wire -> carriesText(token, wire) } }
+        discardTextPending(ctx)
         // Text kept for the earlier method must not mix with the new one's: a method change deletes it (queued score reports stay).
         if (methodChanged) wipeData(ctx)
         prefs(ctx).edit().putString(CHANGE_NOTICE, "on").remove(RECONSENT_WIPED).remove(CAPTURE_HELD).commit()

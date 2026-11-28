@@ -250,7 +250,7 @@ object GuardEngine {
     }
     fun setCaptureOptions(ctx: Context, allowOutgoing: Boolean, allowTrustedContext: Boolean) = synchronized(pollLock) {
         check(isChildMode(ctx))
-        FamilyEvidence(ctx).use { it.discardPending(getChannelTopic(ctx)) }
+        RiskLocal.discardTextPending(ctx)
         val expands = allowOutgoing && !outgoingCaptureAllowed(ctx) || allowTrustedContext && !trustedContextAllowed(ctx)
         val editor=prefs(ctx).edit().putBoolean("capture_outgoing", allowOutgoing).putBoolean("capture_trusted_context", allowTrustedContext)
         if(expands)editor.remove("capture_local_ack_id")
