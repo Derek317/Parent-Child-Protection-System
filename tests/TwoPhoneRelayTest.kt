@@ -214,7 +214,7 @@ class TwoPhoneRelayTest {
     }
 
     private fun assertPaired(p: Phones) {
-        waitUntil("the child phone has M3") { p.result != null }
+        waitUntil("the child phone has M3", seen = { " (child=${p.child.machine.state}, refused=${p.child.refused}, refusals=${synchronized(relay) { relay.refusals.toList() }}, status=${GuardEngine.cpLastPollStatus})" }) { p.result != null }
         val r = p.result!!
         assertEquals(GuardEngine.getOrCreateFamilyToken(ctx), r.token)
         assertEquals(GuardEngine.pinnedChildKey(ctx), FamilySecurity.canonicalKeyText(r.childKey))
