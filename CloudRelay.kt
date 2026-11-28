@@ -104,7 +104,7 @@ object CloudRelay {
             try{connection(ctx,GuardEngine.getOrCreateFamilyToken(ctx)).retryNow()}catch(_:Exception){}
         }
     }
-    fun disconnect() {executor.execute{
+    fun disconnect() {GuardEngine.cancelOutboxRetryWake();executor.execute{
         active?.close();oldRoute?.close();active=null;oldRoute=null;parentAlert=null
     }
     }
