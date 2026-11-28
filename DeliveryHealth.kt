@@ -1,6 +1,7 @@
 package app.family.igguard
 
 import org.json.JSONObject
+import java.util.Locale
 
 /**
  * "Records not delivered" warning. A QR-paired child puts three fixed-width fields inside every signed heartbeat: how many of
@@ -34,8 +35,8 @@ object DeliveryHealth {
     /** The three heartbeat fields, always present and fixed width (2, 4 and 1 characters). */
     fun fields(waiting: Int, oldestEnqueuedAt: Long?, expired: Boolean, now: Long): JSONObject {
         val minutes = if (oldestEnqueuedAt == null) 0L else ((now - oldestEnqueuedAt).coerceAtLeast(0L) / 60_000L)
-        return JSONObject().put("waiting", "%02d".format(waiting.coerceIn(0, 99)))
-            .put("oldest_min", "%04d".format(minutes.coerceIn(0L, 9999L)))
+        return JSONObject().put("waiting", String.format(Locale.ROOT, "%02d", waiting.coerceIn(0, 99)))
+            .put("oldest_min", String.format(Locale.ROOT, "%04d", minutes.coerceIn(0L, 9999L)))
             .put("expired", if (expired) "1" else "0")
     }
 

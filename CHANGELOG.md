@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Child: a queued message text record is now recognised inside the signed wrapper of a QR-paired child, so agreeing to scores-only mode discards it; changing capture options discards only queued text, not tamper alerts, heartbeats or score reports.
+- Child: values the parent's strict checks refuse are no longer sent: a very confident score is capped at 100, the delivery-health numbers use plain digits on every phone language, and a phone clock that steps back no longer makes new captured messages from an open chat get rejected.
 
 ## 6.0.3 — documented 26 November 2026 (Hong Kong)
 

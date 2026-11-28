@@ -108,7 +108,7 @@ internal object RiskScoring {
         val best = q.indices.fold(0) { best, i -> if (q[i] > q[best]) i else best }
         val alert = q[2] + q[3]
         val levels = q[0] + q[1] + q[2] + q[3]
-        val report = if (best != 4 && levels > 0) 100 * (q[1] + 2 * q[2] + 3 * q[3]) / (3 * levels) else null
+        val report = if (best != 4 && levels > 0) (100 * (q[1] + 2 * q[2] + 3 * q[3]) / (3 * levels)).coerceIn(0.0, 100.0) else null
         return RiskWindowScore(alert, alert >= 0.5, RiskModelSpec.ANSWERS[best], report)
     }
 }

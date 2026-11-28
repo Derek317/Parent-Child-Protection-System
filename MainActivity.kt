@@ -1511,8 +1511,9 @@ object GuardEngine {
                         val overlap=ConversationCapture.overlap(previous,hashes)
                         val orderedScreen=windowKey!=null && rows.isNotEmpty() && rows.all{it.source=="visible_dm" && it.messageTime==0L && ConversationCapture.key(it.account,it.conversation,it.conversationKind)==windowKey}
                         val orderBase=prefs(ctx).getLong("capture_sequence",0)
-                        val anchor=if(orderedScreen && overlap.third>0 && window.anchor>0)window.anchor else now
-                        val start=if(orderedScreen && overlap.third>0 && window.anchor>0)window.start+overlap.first-overlap.second else orderBase+1
+                        val reuse=orderedScreen && overlap.third>0 && window.anchor>0 && window.anchor<=now
+                        val anchor=if(reuse)window.anchor else now
+                        val start=if(reuse)window.start+overlap.first-overlap.second else orderBase+1
                         val indices=if(windowKey!=null)ConversationCapture.newIndices(previous,hashes)else rows.indices.toList()
                         // A sequence gap after a failed SQLite transaction is harmless; timestamps remain unchanged.
                         if(indices.isNotEmpty())check(prefs(ctx).edit().putLong("capture_sequence",orderBase+indices.size).commit())
