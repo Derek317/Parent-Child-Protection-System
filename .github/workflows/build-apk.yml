@@ -411,6 +411,8 @@ jobs:
                 "$JAVA_HOME/bin/jstack" "$pid" > "/tmp/stack-$pid.txt" 2>&1 || continue
                 awk 'BEGIN{RS=""} /Test worker|Main Thread|main"/' "/tmp/stack-$pid.txt" | head -80 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g' | sed "s/^/::error title=Stack of hung test $hung::/"
               done
+              sleep 30
+              for pid in $("$JAVA_HOME/bin/jps" -l | awk '/GradleWorkerMain/ {print $1}'); do kill "$pid"; done
             done
           ) &
           gradle testDebugUnitTest lintDebug --no-daemon
